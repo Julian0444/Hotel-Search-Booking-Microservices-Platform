@@ -3,8 +3,9 @@ package hotels
 import (
 	"context"
 	"fmt"
-	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
 	"time"
+
+	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
 
 	"github.com/karlseguin/ccache"
 )
@@ -334,16 +335,16 @@ func (repository Cache) DeleteReservationsByHotelID(ctx context.Context, hotelID
 		// Si no hay reservas, no hay nada que eliminar
 		return nil
 	}
-	
+
 	// Eliminar cada reserva individual de la cache
 	for _, reservation := range reservations {
 		key := fmt.Sprintf("reservation:%s", reservation.ID)
 		repository.client.Delete(key)
 	}
-	
+
 	// Eliminar también la lista de reservas del hotel
 	hotelReservationsKey := fmt.Sprintf("reservations:hotel:%s", hotelID)
 	repository.client.Delete(hotelReservationsKey)
-	
+
 	return nil
 }

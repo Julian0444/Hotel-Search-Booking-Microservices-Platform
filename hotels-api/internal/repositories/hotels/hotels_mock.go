@@ -3,6 +3,7 @@ package hotels
 import (
 	"context"
 	"fmt"
+
 	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
 
 	"github.com/google/uuid"
