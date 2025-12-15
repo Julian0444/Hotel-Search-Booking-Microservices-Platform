@@ -3,7 +3,9 @@ package services
 import (
 	"context"
 	"testing"
+	"time"
 
+	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels"
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/repositories/hotels"
 )
@@ -13,15 +15,15 @@ type MockQueue struct{}
 
 func (mq MockQueue) Publish(hotelNew hotelsDomain.HotelNew) error { return nil }
 
-// Helper para crear el service con mocks separados
-func getTestService() Service {
+// Helper para crear el service con mocks reutilizables
+func getTestService() (Service, hotels.Mock, hotels.MockCache) {
 	mainRepo := hotels.NewMock()       // Repositorio principal
 	cacheRepo := hotels.NewMockCache() // Cache
-	return NewService(mainRepo, cacheRepo, MockQueue{})
+	return NewService(mainRepo, cacheRepo, MockQueue{}), mainRepo, cacheRepo
 }
 
 func TestCreateAndGetHotel(t *testing.T) {
-	service := getTestService()
+	service, _, _ := getTestService()
 	ctx := context.Background()
 
 	hotel := hotelsDomain.Hotel{
@@ -42,7 +44,7 @@ func TestCreateAndGetHotel(t *testing.T) {
 }
 
 func TestUpdateHotel(t *testing.T) {
-	service := getTestService()
+	service, _, _ := getTestService()
 	ctx := context.Background()
 
 	hotel := hotelsDomain.Hotel{Name: "Old Name"}
@@ -59,7 +61,7 @@ func TestUpdateHotel(t *testing.T) {
 }
 
 func TestDeleteHotel(t *testing.T) {
-	service := getTestService()
+	service, _, _ := getTestService()
 	ctx := context.Background()
 
 	hotel := hotelsDomain.Hotel{Name: "ToDelete"}
@@ -82,7 +84,8 @@ func TestDeleteHotel(t *testing.T) {
 }
 
 func TestCreateReservation(t *testing.T) {
-	service := getTestService()
+
+	service, _, _ := getTestService()
 	ctx := context.Background()
 
 	hotel := hotelsDomain.Hotel{Name: "HotelRes"}
@@ -112,7 +115,7 @@ func TestCreateReservation(t *testing.T) {
 }
 
 func TestCancelReservation(t *testing.T) {
-	service := getTestService()
+	service, _, _ := getTestService()
 	ctx := context.Background()
 
 	hotel := hotelsDomain.Hotel{Name: "HotelResCancel"}
@@ -137,7 +140,7 @@ func TestCancelReservation(t *testing.T) {
 }
 
 func TestGetReservationsByHotelID(t *testing.T) {
-	service := getTestService()
+	service, _, _ := getTestService()
 	ctx := context.Background()
 
 	hotel := hotelsDomain.Hotel{Name: "HotelRes2"}
@@ -157,7 +160,7 @@ func TestGetReservationsByHotelID(t *testing.T) {
 }
 
 func TestGetReservationsByUserID(t *testing.T) {
-	service := getTestService()
+	service, _, _ := getTestService()
 	ctx := context.Background()
 
 	hotel := hotelsDomain.Hotel{Name: "HotelRes3"}
@@ -177,7 +180,7 @@ func TestGetReservationsByUserID(t *testing.T) {
 }
 
 func TestGetReservationsByUserAndHotelID(t *testing.T) {
-	service := getTestService()
+	service, _, _ := getTestService()
 	ctx := context.Background()
 
 	hotel := hotelsDomain.Hotel{Name: "HotelRes4"}
@@ -197,10 +200,13 @@ func TestGetReservationsByUserAndHotelID(t *testing.T) {
 }
 
 func TestGetAvailability(t *testing.T) {
-	service := getTestService()
+	service, _, _ := getTestService()
 	ctx := context.Background()
 
-	hotel := hotelsDomain.Hotel{Name: "HotelAvail"}
+	hotel := hotelsDomain.Hotel{
+		Name:          "HotelAvail",
+		AvaiableRooms: 1, // necesario para que IsHotelAvailable devuelva true
+	}
 	hotelID, _ := service.Create(ctx, hotel)
 	availability, err := service.GetAvailability(ctx, []string{hotelID}, "2024-01-01", "2024-01-02")
 	if err != nil {
@@ -209,4 +215,121 @@ func TestGetAvailability(t *testing.T) {
 	if !availability[hotelID] {
 		t.Errorf("expected hotel to be available")
 	}
+}
+
+// Cache-miss: obtiene de main y luego queda en cache
+func TestGetHotelByID_PopulatesCache(t *testing.T) {
+	// Crear repos separados para inyectarlos y reusarlos
+	mainRepo := hotels.NewMock()
+	cacheRepo := hotels.NewMockCache()
+	service := NewService(mainRepo, cacheRepo, MockQueue{})
+	ctx := context.Background()
+
+	// Crear hotel solo en el repo principal (no en cache)
+	hotelID, err := mainRepo.Create(ctx, hotelsDAO.Hotel{Name: "Cacheable Hotel"})
+	if err != nil {
+		t.Fatalf("error creating hotel in main repo: %v", err)
+	}
+
+	// Primer acceso: debería leer de main y poblar cache
+	got, err := service.GetHotelByID(ctx, hotelID)
+	if err != nil {
+		t.Fatalf("error getting hotel: %v", err)
+	}
+	if got.ID != hotelID {
+		t.Fatalf("expected hotel ID %s, got %s", hotelID, got.ID)
+	}
+
+	// Segundo acceso: debe estar en cache
+	_, err = cacheRepo.GetHotelByID(ctx, hotelID)
+	if err != nil {
+		t.Fatalf("expected hotel to be cached, got error: %v", err)
+	}
+}
+
+// Cache-miss en reserva: obtiene de main y luego queda en cache
+func TestGetReservationByID_PopulatesCache(t *testing.T) {
+	mainRepo := hotels.NewMock()
+	cacheRepo := hotels.NewMockCache()
+	service := NewService(mainRepo, cacheRepo, MockQueue{})
+	ctx := context.Background()
+
+	// Crear hotel en main para asociar reserva
+	hotelID, err := mainRepo.Create(ctx, hotelsDAO.Hotel{Name: "HotelForReservation"})
+	if err != nil {
+		t.Fatalf("error creating hotel in main repo: %v", err)
+	}
+	// Crear reserva solo en main
+	resID, err := mainRepo.CreateReservation(ctx, hotelsDAO.Reservation{
+		HotelID: hotelID,
+		UserID:  "user-cache",
+	})
+	if err != nil {
+		t.Fatalf("error creating reservation in main repo: %v", err)
+	}
+
+	// Primer acceso: debería leer de main y poblar cache
+	got, err := service.GetReservationByID(ctx, resID)
+	if err != nil {
+		t.Fatalf("error getting reservation: %v", err)
+	}
+	if got.ID != resID {
+		t.Fatalf("expected reservation ID %s, got %s", resID, got.ID)
+	}
+
+	// Segundo acceso: debe estar en cache
+	_, err = cacheRepo.GetReservationByID(ctx, resID)
+	if err != nil {
+		t.Fatalf("expected reservation to be cached, got error: %v", err)
+	}
+}
+
+// Disponibilidad con reservas que ocupan una noche (checkout excluido)
+func TestAvailabilityWithReservation(t *testing.T) {
+	service, _, _ := getTestService()
+	ctx := context.Background()
+
+	hotelID, _ := service.Create(ctx, hotelsDomain.Hotel{
+		Name:          "HotelOcc",
+		AvaiableRooms: 1,
+	})
+
+	// Reserva 2024-01-01 a 2024-01-02 ocupa la noche del 1
+	_, err := service.CreateReservation(ctx, hotelsDomain.Reservation{
+		HotelID:  hotelID,
+		UserID:   "user-occ",
+		CheckIn:  parseDate(t, "2024-01-01"),
+		CheckOut: parseDate(t, "2024-01-02"),
+	})
+	if err != nil {
+		t.Fatalf("error creating reservation: %v", err)
+	}
+
+	// Mismo rango debe estar no disponible
+	availability, err := service.GetAvailability(ctx, []string{hotelID}, "2024-01-01", "2024-01-02")
+	if err != nil {
+		t.Fatalf("error getting availability: %v", err)
+	}
+	if availability[hotelID] {
+		t.Errorf("expected hotel to be unavailable for occupied night")
+	}
+
+	// Checkout excluido: el día 2024-01-02 ya libre para check-in
+	availability, err = service.GetAvailability(ctx, []string{hotelID}, "2024-01-02", "2024-01-03")
+	if err != nil {
+		t.Fatalf("error getting availability (checkout exclusion): %v", err)
+	}
+	if !availability[hotelID] {
+		t.Errorf("expected hotel to be available after checkout")
+	}
+}
+
+// parseDate helper para tests de fechas
+func parseDate(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		t.Fatalf("invalid date in test: %v", err)
+	}
+	return parsed
 }

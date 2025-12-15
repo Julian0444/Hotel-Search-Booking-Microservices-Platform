@@ -1,0 +1,66 @@
+version: "3.8"
+
+services:
+  mongo:
+    image: mongo:6
+    container_name: hotels-mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - app-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: hotels-rabbit
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: root
+      RABBITMQ_DEFAULT_PASS: root
+    networks:
+      - app-network
+
+  hotels-api:
+    build:
+      context: ./hotels-api
+      dockerfile: Dockerfile
+    image: hotels-api:latest
+    container_name: hotels-api-container
+    ports:
+      - "8083:8081"
+    depends_on:
+      - mongo
+      - rabbitmq
+    environment:
+      MONGO_HOST: mongo
+      MONGO_PORT: "27017"
+      MONGO_USERNAME: root
+      MONGO_PASSWORD: root
+      MONGO_DATABASE: hotels-api
+      MONGO_COLLECTION_HOTELS: hotels
+      MONGO_COLLECTION_RESERVATIONS: reservations
+      CACHE_MAX_SIZE: "100000"
+      CACHE_ITEMS_TO_PRUNE: "100"
+      CACHE_DURATION: "30s"
+      RABBIT_HOST: rabbitmq
+      RABBIT_PORT: "5672"
+      RABBIT_USERNAME: root
+      RABBIT_PASSWORD: root
+      RABBIT_QUEUE_NAME: hotels-news
+      JWT_SECRET: ThisIsAnExampleJWTKey!
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mongo_data:

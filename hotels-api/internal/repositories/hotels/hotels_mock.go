@@ -3,6 +3,7 @@ package hotels
 import (
 	"context"
 	"fmt"
+	"time"
 
 	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
 
@@ -131,8 +132,11 @@ func (m Mock) GetReservationsByUserID(ctx context.Context, userID string) ([]hot
 func (m Mock) GetAvailability(ctx context.Context, hotelIDs []string, checkIn, checkOut string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	for _, id := range hotelIDs {
-		_, ok := m.hotels[id]
-		result[id] = ok
+		available, err := m.IsHotelAvailable(ctx, id, checkIn, checkOut)
+		if err != nil {
+			return nil, fmt.Errorf("error checking availability for hotel %s: %w", id, err)
+		}
+		result[id] = available
 	}
 	return result, nil
 }
@@ -155,6 +159,56 @@ func (m Mock) DeleteReservationsByHotelID(ctx context.Context, hotelID string) e
 	return nil
 }
 
+// IsHotelAvailable replica la lógica de disponibilidad (excluye checkout).
+func (m Mock) IsHotelAvailable(ctx context.Context, hotelID, checkIn, checkOut string) (bool, error) {
+	hotel, ok := m.hotels[hotelID]
+	if !ok {
+		return false, fmt.Errorf("hotel with ID %s not found", hotelID)
+	}
+
+	checkInTime, err := time.Parse("2006-01-02", checkIn)
+	if err != nil {
+		return false, fmt.Errorf("error parsing check-in date: %w", err)
+	}
+	checkOutTime, err := time.Parse("2006-01-02", checkOut)
+	if err != nil {
+		return false, fmt.Errorf("error parsing check-out date: %w", err)
+	}
+
+	checkInTime = normalizeDate(checkInTime)
+	checkOutTime = normalizeDate(checkOutTime)
+
+	if !checkOutTime.After(checkInTime) {
+		return false, fmt.Errorf("check-out date must be after check-in date")
+	}
+
+	reservationsByDay := make(map[time.Time]int)
+	for _, reservation := range m.reservas {
+		if reservation.HotelID != hotelID {
+			continue
+		}
+
+		resCheckIn := normalizeDate(reservation.CheckIn)
+		resCheckOut := normalizeDate(reservation.CheckOut)
+
+		if resCheckOut.After(checkInTime) && resCheckIn.Before(checkOutTime) {
+			for date := resCheckIn; date.Before(resCheckOut); date = date.AddDate(0, 0, 1) {
+				if !date.Before(checkInTime) && date.Before(checkOutTime) {
+					reservationsByDay[date]++
+				}
+			}
+		}
+	}
+
+	for date := checkInTime; date.Before(checkOutTime); date = date.AddDate(0, 0, 1) {
+		if reservationsByDay[date] >= hotel.AvaiableRooms {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
 // ===== MOCK CACHE (comportamiento como la cache real) =====
 
 // La cache NO crea hoteles, solo los almacena
@@ -166,6 +220,7 @@ func (m MockCache) Create(ctx context.Context, hotel hotelsDAO.Hotel) (string, e
 // La cache NO crea reservas, solo las almacena
 func (m MockCache) CreateReservation(ctx context.Context, reservation hotelsDAO.Reservation) (string, error) {
 	m.reservas[reservation.ID] = reservation
+
 	return reservation.ID, nil
 }
 
@@ -202,8 +257,14 @@ func (m MockCache) Delete(ctx context.Context, id string) error {
 }
 
 func (m MockCache) CancelReservation(ctx context.Context, id string) error {
-	// La cache real no devuelve error si no existe
+	if _, ok := m.reservas[id]; !ok {
+		// La cache real no devuelve error si no existe
+		delete(m.reservas, id)
+		return nil
+	}
+
 	delete(m.reservas, id)
+
 	return nil
 }
 
@@ -249,13 +310,67 @@ func (m MockCache) GetReservationsByUserID(ctx context.Context, userID string) (
 func (m MockCache) GetAvailability(ctx context.Context, hotelIDs []string, checkIn, checkOut string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	for _, id := range hotelIDs {
-		_, ok := m.hotels[id]
-		if !ok {
+		if _, ok := m.hotels[id]; !ok {
 			return nil, fmt.Errorf("hotel with ID %s not found or expired in cache", id)
 		}
-		result[id] = true
+
+		available, err := m.IsHotelAvailable(ctx, id, checkIn, checkOut)
+		if err != nil {
+			return nil, fmt.Errorf("error checking availability for hotel %s: %w", id, err)
+		}
+		result[id] = available
 	}
 	return result, nil
+}
+
+// IsHotelAvailable replica la lógica de la caché real: excluye el día de checkout y normaliza fechas.
+func (m MockCache) IsHotelAvailable(ctx context.Context, hotelID, checkIn, checkOut string) (bool, error) {
+	hotel, ok := m.hotels[hotelID]
+	if !ok {
+		return false, fmt.Errorf("error getting hotel from cache: not found item with key hotel:%s", hotelID)
+	}
+
+	checkInTime, err := time.Parse("2006-01-02", checkIn)
+	if err != nil {
+		return false, fmt.Errorf("error parsing check-in date: %w", err)
+	}
+	checkOutTime, err := time.Parse("2006-01-02", checkOut)
+	if err != nil {
+		return false, fmt.Errorf("error parsing check-out date: %w", err)
+	}
+
+	checkInTime = normalizeDate(checkInTime)
+	checkOutTime = normalizeDate(checkOutTime)
+
+	if !checkOutTime.After(checkInTime) {
+		return false, fmt.Errorf("check-out date must be after check-in date")
+	}
+
+	reservationsByDay := make(map[time.Time]int)
+	for _, reservation := range m.reservas {
+		if reservation.HotelID != hotelID {
+			continue
+		}
+
+		resCheckIn := normalizeDate(reservation.CheckIn)
+		resCheckOut := normalizeDate(reservation.CheckOut)
+
+		if resCheckOut.After(checkInTime) && resCheckIn.Before(checkOutTime) {
+			for date := resCheckIn; date.Before(resCheckOut); date = date.AddDate(0, 0, 1) {
+				if !date.Before(checkInTime) && date.Before(checkOutTime) {
+					reservationsByDay[date]++
+				}
+			}
+		}
+	}
+
+	for date := checkInTime; date.Before(checkOutTime); date = date.AddDate(0, 0, 1) {
+		if reservationsByDay[date] >= hotel.AvaiableRooms {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 // Elimina todas las reservas de un hotel del mock cache
