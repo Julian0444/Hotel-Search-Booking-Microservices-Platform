@@ -3,7 +3,8 @@ package users
 import (
 	"fmt"
 	"time"
-	"users-api/dao/users"
+
+	usersDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/dao/users"
 
 	"github.com/karlseguin/ccache"
 )
@@ -26,13 +27,13 @@ func NewCache(config CacheConfig) Cache {
 	}
 }
 
-func (repository Cache) GetAll() ([]users.User, error) {
+func (repository Cache) GetAll() ([]usersDAO.User, error) {
 	// Since it's not typical to cache all users in one request, you might skip caching here
 	// Alternatively, you can cache a summary list if needed
 	return nil, fmt.Errorf("GetAll not implemented in cache")
 }
 
-func (repository Cache) GetByID(id int64) (users.User, error) {
+func (repository Cache) GetByID(id int64) (usersDAO.User, error) {
 	// Convert ID to string for cache key
 	idKey := fmt.Sprintf("user:id:%d", id)
 
@@ -40,18 +41,18 @@ func (repository Cache) GetByID(id int64) (users.User, error) {
 	item := repository.client.Get(idKey)
 	if item != nil && !item.Expired() {
 		// Return cached value
-		user, ok := item.Value().(users.User)
+		user, ok := item.Value().(usersDAO.User)
 		if !ok {
-			return users.User{}, fmt.Errorf("failed to cast cached value to user")
+			return usersDAO.User{}, fmt.Errorf("failed to cast cached value to user")
 		}
 		return user, nil
 	}
 
 	// If not found, return cache miss error
-	return users.User{}, fmt.Errorf("cache miss for user ID %d", id)
+	return usersDAO.User{}, fmt.Errorf("%w: user ID %d", ErrCacheMiss, id)
 }
 
-func (repository Cache) GetByUsername(username string) (users.User, error) {
+func (repository Cache) GetByUsername(username string) (usersDAO.User, error) {
 	// Use username as cache key
 	userKey := fmt.Sprintf("user:username:%s", username)
 
@@ -59,18 +60,18 @@ func (repository Cache) GetByUsername(username string) (users.User, error) {
 	item := repository.client.Get(userKey)
 	if item != nil && !item.Expired() {
 		// Return cached value
-		user, ok := item.Value().(users.User)
+		user, ok := item.Value().(usersDAO.User)
 		if !ok {
-			return users.User{}, fmt.Errorf("failed to cast cached value to user")
+			return usersDAO.User{}, fmt.Errorf("failed to cast cached value to user")
 		}
 		return user, nil
 	}
 
 	// If not found, return cache miss error
-	return users.User{}, fmt.Errorf("cache miss for username %s", username)
+	return usersDAO.User{}, fmt.Errorf("%w: username %s", ErrCacheMiss, username)
 }
 
-func (repository Cache) Create(user users.User) (int64, error) {
+func (repository Cache) Create(user usersDAO.User) (int64, error) {
 	// Cache user by ID and by username after creation
 	idKey := fmt.Sprintf("user:id:%d", user.ID)
 	userKey := fmt.Sprintf("user:username:%s", user.Username)
@@ -83,7 +84,7 @@ func (repository Cache) Create(user users.User) (int64, error) {
 	return user.ID, nil
 }
 
-func (repository Cache) Update(user users.User) error {
+func (repository Cache) Update(user usersDAO.User) error {
 	// Update both the ID and username keys in cache
 	idKey := fmt.Sprintf("user:id:%d", user.ID)
 	userKey := fmt.Sprintf("user:username:%s", user.Username)
@@ -99,18 +100,16 @@ func (repository Cache) Delete(id int64) error {
 	// Delete user by ID and username from cache
 	idKey := fmt.Sprintf("user:id:%d", id)
 
-	// Try to get user by ID to retrieve username
-	user, err := repository.GetByID(id)
-	if err != nil {
-		return fmt.Errorf("error retrieving user by ID for deletion: %w", err)
+	// Best-effort: also delete the username key if we can read it from the cached user.
+	item := repository.client.Get(idKey)
+	if item != nil && !item.Expired() {
+		if user, ok := item.Value().(usersDAO.User); ok {
+			userKey := fmt.Sprintf("user:username:%s", user.Username)
+			repository.client.Delete(userKey)
+		}
 	}
 
-	// Delete by ID
 	repository.client.Delete(idKey)
-
-	// Delete by username
-	userKey := fmt.Sprintf("user:username:%s", user.Username)
-	repository.client.Delete(userKey)
 
 	return nil
 }

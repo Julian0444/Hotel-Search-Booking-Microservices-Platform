@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"users-api/dao/users"
+
+	usersDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/dao/users"
 
 	"github.com/bradfitz/gomemcache/memcache"
 )
@@ -34,52 +35,52 @@ func NewMemcached(config MemcachedConfig) Memcached {
 	return Memcached{client: client}
 }
 
-func (repository Memcached) GetAll() ([]users.User, error) {
+func (repository Memcached) GetAll() ([]usersDAO.User, error) {
 	// In Memcached, you typically don’t have a way to retrieve "all" keys
 	// You might need to store the list of all IDs in a separate cache entry
 	return nil, fmt.Errorf("GetAll not supported in Memcached")
 }
 
-func (repository Memcached) GetByID(id int64) (users.User, error) {
+func (repository Memcached) GetByID(id int64) (usersDAO.User, error) {
 	// Retrieve the user from Memcached
 	key := idKey(id)
 	item, err := repository.client.Get(key)
 	if err != nil {
 		if errors.Is(err, memcache.ErrCacheMiss) {
-			return users.User{}, fmt.Errorf("user not found")
+			return usersDAO.User{}, fmt.Errorf("%w: user ID %d", ErrCacheMiss, id)
 		}
-		return users.User{}, fmt.Errorf("error fetching user from memcached: %w", err)
+		return usersDAO.User{}, fmt.Errorf("error fetching user from memcached: %w", err)
 	}
 
 	// Deserialize the data
-	var user users.User
+	var user usersDAO.User
 	if err := json.Unmarshal(item.Value, &user); err != nil {
-		return users.User{}, fmt.Errorf("error unmarshaling user: %w", err)
+		return usersDAO.User{}, fmt.Errorf("error unmarshaling user: %w", err)
 	}
 	return user, nil
 }
 
-func (repository Memcached) GetByUsername(username string) (users.User, error) {
+func (repository Memcached) GetByUsername(username string) (usersDAO.User, error) {
 	// Assume we store users with "username:<username>" as key
 	key := usernameKey(username)
 	item, err := repository.client.Get(key)
 	if err != nil {
 		if errors.Is(err, memcache.ErrCacheMiss) {
-			return users.User{}, fmt.Errorf("user not found")
+			return usersDAO.User{}, fmt.Errorf("%w: username %s", ErrCacheMiss, username)
 		}
-		return users.User{}, fmt.Errorf("error fetching user by username from memcached: %w", err)
+		return usersDAO.User{}, fmt.Errorf("error fetching user by username from memcached: %w", err)
 	}
 
 	// Deserialize the data
-	var user users.User
+	var user usersDAO.User
 	if err := json.Unmarshal(item.Value, &user); err != nil {
-		return users.User{}, fmt.Errorf("error unmarshaling user: %w", err)
+		return usersDAO.User{}, fmt.Errorf("error unmarshaling user: %w", err)
 	}
 
 	return user, nil
 }
 
-func (repository Memcached) Create(user users.User) (int64, error) {
+func (repository Memcached) Create(user usersDAO.User) (int64, error) {
 	// Serialize user data
 	data, err := json.Marshal(user)
 	if err != nil {
@@ -101,7 +102,7 @@ func (repository Memcached) Create(user users.User) (int64, error) {
 	return user.ID, nil
 }
 
-func (repository Memcached) Update(user users.User) error {
+func (repository Memcached) Update(user usersDAO.User) error {
 	// Assume update is similar to Create: overwrite the existing user
 	// Serialize user data
 	data, err := json.Marshal(user)
@@ -125,38 +126,18 @@ func (repository Memcached) Update(user users.User) error {
 }
 
 func (repository Memcached) Delete(id int64) error {
-	// Get the user by ID
-	idKey := idKey(id)
-	item, err := repository.client.Get(idKey)
-	if err != nil {
-		if errors.Is(err, memcache.ErrCacheMiss) {
-			return fmt.Errorf("user not found")
+	// Best-effort delete: caches should not fail the request flow.
+	keyByID := idKey(id)
+	item, err := repository.client.Get(keyByID)
+	if err == nil {
+		// Deserialize the user to delete the username key too
+		var user usersDAO.User
+		if err := json.Unmarshal(item.Value, &user); err == nil {
+			keyByUsername := usernameKey(user.Username)
+			_ = repository.client.Delete(keyByUsername) // ignore cache miss
 		}
-		return fmt.Errorf("error fetching user from memcached: %w", err)
 	}
 
-	// Deserialize the user
-	var user users.User
-	if err := json.Unmarshal(item.Value, &user); err != nil {
-		return fmt.Errorf("error unmarshaling user: %w", err)
-	}
-
-	// Delete the user by username
-	usernameKey := usernameKey(user.Username)
-	if err := repository.client.Delete(usernameKey); err != nil {
-		if !errors.Is(err, memcache.ErrCacheMiss) {
-			return fmt.Errorf("error deleting username from memcached: %w", err)
-		}
-		return fmt.Errorf("error deleting user from memcached: %w", err)
-	}
-
-	// Delete the user by ID
-	if err := repository.client.Delete(idKey); err != nil {
-		if errors.Is(err, memcache.ErrCacheMiss) {
-			return fmt.Errorf("user not found when trying to delete by ID")
-		}
-		return fmt.Errorf("error deleting user from memcached: %w", err)
-	}
-
+	_ = repository.client.Delete(keyByID) // ignore cache miss
 	return nil
 }

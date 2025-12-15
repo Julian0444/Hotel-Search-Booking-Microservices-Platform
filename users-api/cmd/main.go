@@ -3,17 +3,19 @@ package main
 import (
 	"log"
 	"time"
-	config "users-api/config"
-	controllers "users-api/controllers/users"
-	"users-api/internal/tokenizers"
-	repositories "users-api/repositories/users"
-	services "users-api/services/users"
-	"users-api/utils"
+
+	config "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/config"
+	controllers "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/controllers/users"
+	repositories "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/repositories/users"
+	services "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/services/users"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/tokenizers"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
 
-func main() {// MySQL
+func main() {
+	// MySQL
 	mySQLRepo := repositories.NewMySQL(
 		repositories.MySQLConfig{
 			Host:     config.MySQLHost,
@@ -26,7 +28,7 @@ func main() {// MySQL
 
 	// Cache
 	cacheRepo := repositories.NewCache(repositories.CacheConfig{
-		TTL: 1 * time.Minute,
+		TTL: config.CacheTTL,
 	})
 
 	// Memcached
@@ -44,7 +46,7 @@ func main() {// MySQL
 	)
 
 	// Services
-	service := services.NewService(mySQLRepo, cacheRepo, memcachedRepo, jwtTokenizer)
+	service := services.NewService(mySQLRepo, cacheRepo, memcachedRepo, jwtTokenizer, config.BcryptCost)
 
 	// Handlers
 	controller := controllers.NewController(service)
@@ -62,8 +64,17 @@ func main() {// MySQL
 	router.PUT("/users/:id", controller.Update)
 	router.POST("/login", controller.Login)
 
+	// Health check endpoint
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":    "ok",
+			"service":   "users-api",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	})
+
 	// Run application
-	if err := router.Run(":8080"); err != nil {
+	if err := router.Run(":" + config.Port); err != nil {
 		log.Panicf("Error running application: %v", err)
 	}
 }
