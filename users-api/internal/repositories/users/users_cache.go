@@ -49,7 +49,7 @@ func (repository Cache) GetByID(id int64) (usersDAO.User, error) {
 	}
 
 	// If not found, return cache miss error
-	return usersDAO.User{}, fmt.Errorf("%w: user ID %d", ErrCacheMiss, id)
+	return usersDAO.User{}, fmt.Errorf("cache miss for user ID %d", id)
 }
 
 func (repository Cache) GetByUsername(username string) (usersDAO.User, error) {
@@ -68,7 +68,7 @@ func (repository Cache) GetByUsername(username string) (usersDAO.User, error) {
 	}
 
 	// If not found, return cache miss error
-	return usersDAO.User{}, fmt.Errorf("%w: username %s", ErrCacheMiss, username)
+	return usersDAO.User{}, fmt.Errorf("cache miss for username %s", username)
 }
 
 func (repository Cache) Create(user usersDAO.User) (int64, error) {
@@ -100,7 +100,7 @@ func (repository Cache) Delete(id int64) error {
 	// Delete user by ID and username from cache
 	idKey := fmt.Sprintf("user:id:%d", id)
 
-	// Best-effort: also delete the username key if we can read it from the cached user.
+	// Best-effort: no fallar si no existe en cache
 	item := repository.client.Get(idKey)
 	if item != nil && !item.Expired() {
 		if user, ok := item.Value().(usersDAO.User); ok {

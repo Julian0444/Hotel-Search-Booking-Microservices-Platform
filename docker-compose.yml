@@ -1,6 +1,23 @@
-version: "3.8"
-
 services:
+  mysql:
+    image: mysql:8
+    container_name: users-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: users-api
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  memcached:
+    image: memcached:1.6-alpine
+    container_name: users-memcached
+    networks:
+      - app-network
+    restart: unless-stopped
+
   mongo:
     image: mongo:6
     container_name: hotels-mongo
@@ -29,7 +46,7 @@ services:
   hotels-api:
     build:
       context: ./hotels-api
-      dockerfile: Dockerfile
+      dockerfile: dockerfile
     image: hotels-api:latest
     container_name: hotels-api-container
     ports:
@@ -58,9 +75,35 @@ services:
       - app-network
     restart: unless-stopped
 
+  users-api:
+    build:
+      context: ./users-api
+      dockerfile: Dockerfile
+    image: users-api:latest
+    container_name: users-api-container
+    ports:
+      - "8082:8082"
+    depends_on:
+      - mysql
+      - memcached
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: users-api
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: root
+      MEMCACHED_HOST: memcached
+      MEMCACHED_PORT: "11211"
+      JWT_SECRET: ThisIsAnExampleJWTKey!
+      PORT: "8082"
+    networks:
+      - app-network
+    restart: unless-stopped
+
 networks:
   app-network:
     driver: bridge
 
 volumes:
   mongo_data:
+  mysql_data:

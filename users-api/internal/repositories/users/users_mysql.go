@@ -24,6 +24,12 @@ type MySQL struct {
 }
 
 var (
+	// ErrUserNotFound representa que el usuario no existe en el repositorio principal.
+	// Se usa para mapear a HTTP 404 en controllers mediante `errors.Is`.
+	ErrUserNotFound = errors.New("user not found")
+)
+
+var (
 	migrate = []interface{}{
 		usersDAO.User{},
 	}

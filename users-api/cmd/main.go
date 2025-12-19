@@ -28,7 +28,7 @@ func main() {
 
 	// Cache
 	cacheRepo := repositories.NewCache(repositories.CacheConfig{
-		TTL: config.CacheTTL,
+		TTL: config.CacheDuration,
 	})
 
 	// Memcached
@@ -62,6 +62,7 @@ func main() {
 	router.GET("/users/:id", controller.GetByID)
 	router.POST("/users", controller.Create)
 	router.PUT("/users/:id", controller.Update)
+	router.DELETE("/users/:id", controller.Delete)
 	router.POST("/login", controller.Login)
 
 	// Health check endpoint

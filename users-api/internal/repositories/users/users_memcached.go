@@ -20,11 +20,11 @@ type Memcached struct {
 }
 
 func idKey(id int64) string {
-	return fmt.Sprintf("id:%d", id)
+	return fmt.Sprintf("user:id:%d", id)
 }
 
 func usernameKey(username string) string {
-	return fmt.Sprintf("username:%s", username)
+	return fmt.Sprintf("user:username:%s", username)
 }
 
 func NewMemcached(config MemcachedConfig) Memcached {
@@ -47,7 +47,7 @@ func (repository Memcached) GetByID(id int64) (usersDAO.User, error) {
 	item, err := repository.client.Get(key)
 	if err != nil {
 		if errors.Is(err, memcache.ErrCacheMiss) {
-			return usersDAO.User{}, fmt.Errorf("%w: user ID %d", ErrCacheMiss, id)
+			return usersDAO.User{}, fmt.Errorf("cache miss for user ID %d", id)
 		}
 		return usersDAO.User{}, fmt.Errorf("error fetching user from memcached: %w", err)
 	}
@@ -66,7 +66,7 @@ func (repository Memcached) GetByUsername(username string) (usersDAO.User, error
 	item, err := repository.client.Get(key)
 	if err != nil {
 		if errors.Is(err, memcache.ErrCacheMiss) {
-			return usersDAO.User{}, fmt.Errorf("%w: username %s", ErrCacheMiss, username)
+			return usersDAO.User{}, fmt.Errorf("cache miss for username %s", username)
 		}
 		return usersDAO.User{}, fmt.Errorf("error fetching user by username from memcached: %w", err)
 	}
@@ -126,18 +126,15 @@ func (repository Memcached) Update(user usersDAO.User) error {
 }
 
 func (repository Memcached) Delete(id int64) error {
-	// Best-effort delete: caches should not fail the request flow.
+	// Best-effort delete: no fallar por cache miss
 	keyByID := idKey(id)
 	item, err := repository.client.Get(keyByID)
 	if err == nil {
-		// Deserialize the user to delete the username key too
 		var user usersDAO.User
 		if err := json.Unmarshal(item.Value, &user); err == nil {
-			keyByUsername := usernameKey(user.Username)
-			_ = repository.client.Delete(keyByUsername) // ignore cache miss
+			_ = repository.client.Delete(usernameKey(user.Username))
 		}
 	}
-
-	_ = repository.client.Delete(keyByID) // ignore cache miss
+	_ = repository.client.Delete(keyByID)
 	return nil
 }
