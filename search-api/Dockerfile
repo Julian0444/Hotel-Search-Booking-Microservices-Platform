@@ -1,0 +1,22 @@
+# Use the Go image with Alpine for building and running the application
+FROM golang:1.22-alpine
+
+# Install netcat for health checks
+RUN apk add --no-cache netcat-openbsd
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Copy go.mod and go.sum and download dependencies
+COPY go.mod go.sum ./
+RUN go mod tidy
+
+# Copy the rest of the code and build the application
+COPY . .
+RUN go build -o app ./main.go
+
+# Expose the port on which the app will run
+EXPOSE 8082
+
+# Command to run the binary
+CMD ["./app"]

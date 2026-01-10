@@ -1,7 +1,10 @@
 services:
+  # --- Databases ---
   mysql:
     image: mysql:8
     container_name: users-mysql
+    ports:
+      - "3307:3306"
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: users-api
@@ -10,10 +13,17 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   memcached:
     image: memcached:1.6-alpine
     container_name: users-memcached
+    ports:
+      - "11211:11211"
     networks:
       - app-network
     restart: unless-stopped
@@ -30,6 +40,12 @@ services:
       - mongo_data:/data/db
     networks:
       - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -42,39 +58,14 @@ services:
       RABBITMQ_DEFAULT_PASS: root
     networks:
       - app-network
-
-  hotels-api:
-    build:
-      context: ./hotels-api
-      dockerfile: dockerfile
-    image: hotels-api:latest
-    container_name: hotels-api-container
-    ports:
-      - "8083:8081"
-    depends_on:
-      - mongo
-      - rabbitmq
-    environment:
-      MONGO_HOST: mongo
-      MONGO_PORT: "27017"
-      MONGO_USERNAME: root
-      MONGO_PASSWORD: root
-      MONGO_DATABASE: hotels-api
-      MONGO_COLLECTION_HOTELS: hotels
-      MONGO_COLLECTION_RESERVATIONS: reservations
-      CACHE_MAX_SIZE: "100000"
-      CACHE_ITEMS_TO_PRUNE: "100"
-      CACHE_DURATION: "30s"
-      RABBIT_HOST: rabbitmq
-      RABBIT_PORT: "5672"
-      RABBIT_USERNAME: root
-      RABBIT_PASSWORD: root
-      RABBIT_QUEUE_NAME: hotels-news
-      JWT_SECRET: ThisIsAnExampleJWTKey!
-    networks:
-      - app-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # --- APIs ---
   users-api:
     build:
       context: ./users-api
@@ -84,18 +75,69 @@ services:
     ports:
       - "8082:8082"
     depends_on:
-      - mysql
-      - memcached
+      mysql:
+        condition: service_healthy
+      memcached:
+        condition: service_started
     environment:
+      # MySQL
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
       MYSQL_DATABASE: users-api
       MYSQL_USERNAME: root
       MYSQL_PASSWORD: root
+      # Memcached
       MEMCACHED_HOST: memcached
       MEMCACHED_PORT: "11211"
+      # JWT - debe coincidir con hotels-api
       JWT_SECRET: ThisIsAnExampleJWTKey!
+      JWT_DURATION: "24h"
+      # Cache
+      CACHE_DURATION: "30s"
+      # Server
       PORT: "8082"
+      # CORS
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173"
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  hotels-api:
+    build:
+      context: ./hotels-api
+      dockerfile: dockerfile
+    image: hotels-api:latest
+    container_name: hotels-api-container
+    ports:
+      - "8081:8081"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      # MongoDB
+      MONGO_HOST: mongo
+      MONGO_PORT: "27017"
+      MONGO_USERNAME: root
+      MONGO_PASSWORD: root
+      MONGO_DATABASE: hotels-api
+      MONGO_COLLECTION_HOTELS: hotels
+      MONGO_COLLECTION_RESERVATIONS: reservations
+      # Cache
+      CACHE_MAX_SIZE: "100000"
+      CACHE_ITEMS_TO_PRUNE: "100"
+      CACHE_DURATION: "30s"
+      # RabbitMQ
+      RABBIT_HOST: rabbitmq
+      RABBIT_PORT: "5672"
+      RABBIT_USERNAME: root
+      RABBIT_PASSWORD: root
+      RABBIT_QUEUE_NAME: hotels-news
+      # JWT - debe coincidir con users-api
+      JWT_SECRET: ThisIsAnExampleJWTKey!
+      # Server
+      PORT: "8081"
     networks:
       - app-network
     restart: unless-stopped

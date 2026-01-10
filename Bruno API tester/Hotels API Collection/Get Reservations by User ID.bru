@@ -1,0 +1,15 @@
+meta {
+  name: Get Reservations by User ID
+  type: http
+  seq: 5
+}
+
+get {
+  url: http://localhost:8081/users/{{user_id}}/reservations
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+}

@@ -9,7 +9,7 @@ The Hotels API is a microservice designed to manage hotel information and reserv
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     HTTP Handlers                           │
-│              (Controllers - Future Implementation)          │
+│             (Gin Controllers + JWT middlewares)             │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
@@ -17,12 +17,12 @@ The Hotels API is a microservice designed to manage hotel information and reserv
 │              (Business Logic & Orchestration)               │
 │  - Cache-aside pattern implementation                       │
 │  - DAO ↔ Domain conversions                                 │
-│  - Event publishing                                         │
+│  - Event publishing (RabbitMQ) for hotel CRUD               │
 └─────────────┬───────────────────────┬───────────────────────┘
               │                       │
     ┌─────────▼────────┐    ┌────────▼─────────┐
     │  Cache Repository│    │  Main Repository │
-    │   (ccache/Redis) │    │    (MongoDB)     │
+    │ (ccache in-memory)    │    (MongoDB)     │
     └──────────────────┘    └──────────────────┘
 ```
 
@@ -30,7 +30,7 @@ The Hotels API is a microservice designed to manage hotel information and reserv
 
 ### Hotel Management
 - ✅ Create, Read, Update, Delete (CRUD) operations
-- ✅ Multi-layered caching (in-memory + Redis ready)
+- ✅ In-memory caching (ccache) with TTL (cache-aside)
 - ✅ Availability checking across multiple hotels
 - ✅ Concurrent operations using goroutines
 
@@ -43,7 +43,42 @@ The Hotels API is a microservice designed to manage hotel information and reserv
 ### Performance Optimization
 - ✅ Cache-aside pattern for read operations
 - ✅ Concurrent availability checking
-- ✅ Efficient database indexing strategy
+- ✅ Recommended MongoDB indexes (manual)
+
+---
+
+## 🌐 HTTP API Endpoints
+
+All routes are implemented in `cmd/main.go` using Gin.
+
+### Public
+- `GET /health`
+- `GET /hotels/:hotel_id`
+- `GET /hotels/:hotel_id/reservations`
+- `POST /hotels/availability`
+
+### Authenticated user (JWT required)
+Requires `Authorization: Bearer <token>` with claims:
+- `user_id`: user identifier (number or string)
+- `tipo`: user role (e.g. `cliente`, `administrador`)
+
+Routes:
+- `POST /reservations`
+- `DELETE /reservations/:id`
+- `GET /users/:user_id/reservations`
+- `GET /users/:user_id/hotels/:hotel_id/reservations`
+
+### Admin only (JWT required)
+Requires `tipo=administrador`.
+
+Routes:
+- `POST /admin/hotels`
+- `PUT /admin/hotels/:hotel_id`
+- `DELETE /admin/hotels/:hotel_id`
+- `GET /admin/microservices`
+- `POST /admin/microservices/scale`
+- `GET /admin/microservices/:service_name/logs`
+- `POST /admin/microservices/:service_name/restart`
 
 ---
 
@@ -128,7 +163,7 @@ newHotel := Hotel{
     Name:          "Grand Plaza Hotel",
     City:          "New York",
     PricePerNight: 299.99,
-    AvailableRooms: 50,
+    AvaiableRooms: 50,
 }
 id, err := service.Create(ctx, newHotel)
 ```
@@ -141,7 +176,7 @@ id, err := service.Create(ctx, newHotel)
 **Flow:**
 1. Convert Domain → DAO
 2. Update in MongoDB
-3. Update cache (or invalidate)
+3. Update cache
 4. Return result
 
 **Use Case:** Admin modifies hotel details (price change, room count update, etc.).
@@ -149,7 +184,7 @@ id, err := service.Create(ctx, newHotel)
 **Example:**
 ```go
 hotel.PricePerNight = 349.99
-hotel.AvailableRooms = 45
+hotel.AvaiableRooms = 45
 err := service.Update(ctx, hotel)
 ```
 
@@ -278,7 +313,7 @@ if len(existing) > 0 {
 1. For each hotel (using goroutines):
    - Get hotel details (available rooms count)
    - Count active reservations overlapping with requested dates
-   - Available = (AvailableRooms - ActiveReservations) > 0
+   - Available = (AvaiableRooms - ActiveReservations) > 0
 2. Return map[hotelID]bool indicating availability
 
 **Use Case:** Search results page showing which hotels have availability.
@@ -358,7 +393,7 @@ mongodb://[username:password@]host:port/database
 CacheConfig{
     MaxSize:       1000,        // Max items
     ItemsToPrune:  100,         // Items to remove when full
-    Duration:      5 * time.Minute, // TTL
+    Duration:      30 * time.Second, // TTL
 }
 ```
 
@@ -373,8 +408,10 @@ CacheConfig{
 
 **Usage:**
 ```go
-mock := hotels.NewMock()
-service := services.NewService(mock, mockCache, nil)
+mainRepo := hotels.NewMock()
+cacheRepo := hotels.NewMockCache()
+events := queues.NewMock()
+service := services.NewService(mainRepo, cacheRepo, &events)
 // Run tests...
 ```
 
@@ -384,32 +421,37 @@ service := services.NewService(mock, mockCache, nil)
 
 ### Test Types
 
-#### 1. Service Tests (`hotels_service_test.go`)
-**What:** Test business logic using mock repositories.
+#### 1. Controller Tests (`internal/controllers/**`)
+**What:** Lightweight API integration tests (Gin + `httptest`) with a mocked `Service`.
+
+**Coverage:**
+- ✅ Routing (paths + params)
+- ✅ JSON binding (400 on invalid payloads)
+- ✅ AuthN/AuthZ (401/403 via JWT middleware + roles)
+- ✅ Response status codes
+
+**Run:**
+```bash
+go test ./internal/controllers/... -v
+```
+
+#### 2. Service Tests (`internal/services/**`)
+**What:** Unit tests for business logic using mock repositories (main + cache) and a mock queue.
 
 **Coverage:**
 - ✅ Hotel CRUD operations
 - ✅ Reservation lifecycle
-- ✅ Cache-aside pattern behavior
-- ✅ Error handling
+- ✅ Cache-aside behavior (including cache population)
+- ✅ Availability date logic (checkout is excluded)
 
 **Run:**
 ```bash
 go test ./internal/services -v
 ```
 
-#### 2. Integration Tests (Optional)
-**What:** Test repository implementations against real infrastructure.
-
-**When to run:**
-- Before deployment (CI/CD)
-- When changing database schemas
-- Manual validation during development
-
-**Run:**
+#### All tests
 ```bash
-# MongoDB integration tests
-MONGO_INTEGRATION=1 go test ./internal/repositories/hotels -run TestMongo -v
+go test ./... -v
 ```
 
 ---
@@ -430,11 +472,13 @@ mongoRepo := hotels.NewMongo(MongoConfig{
 
 cacheRepo := hotels.NewCache(CacheConfig{
     MaxSize:  1000,
-    Duration: 5 * time.Minute,
+    Duration: 30 * time.Second,
 })
 
 // 2. Create service
-hotelService := services.NewService(mongoRepo, cacheRepo, nil)
+// NOTE: the service publishes hotel events; provide a Queue implementation (RabbitMQ or mock).
+events := queues.NewMock()
+hotelService := services.NewService(mongoRepo, cacheRepo, &events)
 
 // 3. Create a new hotel
 newHotel := domain.Hotel{
@@ -443,7 +487,7 @@ newHotel := domain.Hotel{
     Country:       "USA",
     Rating:        4.5,
     PricePerNight: 199.99,
-    AvailableRooms: 30,
+    AvaiableRooms: 30,
     Amenities:     []string{"WiFi", "Pool", "Spa", "Restaurant"},
 }
 
@@ -489,39 +533,27 @@ err = hotelService.CancelReservation(context.Background(), resID)
 
 ## 🔐 Error Handling
 
-### Common Errors
+### HTTP error responses
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| `hotel not found` | Invalid hotel ID | Verify ID exists before operations |
-| `reservation not found` | Invalid reservation ID | Check reservation exists |
-| `error creating hotel` | Database connection issue | Verify MongoDB is running |
-| `error caching hotel` | Cache full or unavailable | Non-critical, operation continues |
+Controllers return JSON with an `error` field. Typical status codes:
 
-### Error Handling Pattern
-```go
-hotel, err := service.GetHotelByID(ctx, id)
-if err != nil {
-    if errors.Is(err, ErrNotFound) {
-        // Return 404
-    } else {
-        // Return 500
-    }
-}
-```
+- **400 Bad Request**: invalid JSON/body
+- **401 Unauthorized**: missing/invalid `Authorization: Bearer <token>`
+- **403 Forbidden**: role/user mismatch (e.g. non-admin calling `/admin/*`, user creating/canceling a reservation for another user)
+- **404 Not Found**: hotel/reservation not found
+- **500 Internal Server Error**: unexpected service/repository failure
 
 ---
 
 ## 📊 Performance Considerations
 
 ### Cache Strategy
-- **Cache Hit:** ~1ms response time
-- **Cache Miss + DB:** ~10-50ms response time
-- **TTL:** 5 minutes (configurable)
+- Cache-aside pattern for hotel/reservation reads
+- TTL is configurable (default: 30s)
 
 ### Concurrent Operations
 - Availability checking uses goroutines (1 per hotel)
-- Potential speedup: N hotels checked in ~same time as 1 hotel
+- Parallel checks improve throughput when querying multiple hotels
 
 ### Database Indexes
 **Recommended MongoDB indexes:**
@@ -546,7 +578,8 @@ db.reservations.createIndex({ "check_in": 1, "check_out": 1 })
 - [ ] Real-time availability updates via WebSockets
 - [ ] Hotel search with filters (price range, rating, amenities)
 - [ ] Pagination for large result sets
-- [ ] Rate limiting and authentication
+- [x] JWT authentication + role-based access (admin vs logged user)
+- [ ] Rate limiting
 - [ ] Metrics and monitoring (Prometheus)
 
 ### Event-Driven Architecture
@@ -559,12 +592,13 @@ db.reservations.createIndex({ "check_in": 1, "check_out": 1 })
 
 ```go
 // Core
-go.mongodb.org/mongo-driver  // MongoDB driver
-github.com/karlseguin/ccache  // In-memory cache
-github.com/google/uuid        // UUID generation
-
-// Testing
-github.com/stretchr/testify  // Assertion library
+github.com/gin-gonic/gin         // HTTP framework
+github.com/gin-contrib/cors      // CORS middleware
+github.com/golang-jwt/jwt/v5     // JWT validation
+go.mongodb.org/mongo-driver      // MongoDB driver
+github.com/karlseguin/ccache     // In-memory cache
+github.com/streadway/amqp        // RabbitMQ client
+github.com/google/uuid           // UUID generation (mocks)
 ```
 
 ---
@@ -590,4 +624,4 @@ This project demonstrates:
 
 ---
 
-**Last Updated:** October 2025
+**Last Updated:** January 2026

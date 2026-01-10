@@ -22,7 +22,8 @@ type Service interface {
 	CancelReservation(ctx context.Context, id string) error
 	GetReservationsByHotelID(ctx context.Context, hotelID string) ([]hotelsDomain.Reservation, error)
 	GetReservationsByUserID(ctx context.Context, userID string) ([]hotelsDomain.Reservation, error)
-	GetReservationsByUserAndHotelID(ctx context.Context, userID, hotelID string) ([]hotelsDomain.Reservation, error)
+	// IMPORTANT: el orden semántico es (hotelID, userID) para mantener consistencia con el service/repositories.
+	GetReservationsByUserAndHotelID(ctx context.Context, hotelID, userID string) ([]hotelsDomain.Reservation, error)
 	GetAvailability(ctx context.Context, hotelIDs []string, checkIn, checkOut string) (map[string]bool, error)
 }
 
@@ -254,6 +255,36 @@ func (controller Controller) GetReservationsByUserID(ctx *gin.Context) {
 	// Valida el ID del usuario que viene en la URL
 	userID := strings.TrimSpace(ctx.Param("user_id"))
 
+	// Ownership: solo admin puede consultar reservas de otros usuarios
+	userTypeAny, exists := ctx.Get("userType")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User type not found in token"})
+		return
+	}
+	userType, ok := userTypeAny.(string)
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user type format in token"})
+		return
+	}
+
+	userIDAny, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in token"})
+		return
+	}
+	userIDFromToken, ok := userIDAny.(string)
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID format in token"})
+		return
+	}
+
+	if userType != "administrador" && userIDFromToken != userID {
+		ctx.JSON(http.StatusForbidden, gin.H{
+			"error": "Users can only view their own reservations",
+		})
+		return
+	}
+
 	// Obtiene las reservas por ID de usuario
 	reservations, err := controller.service.GetReservationsByUserID(ctx.Request.Context(), userID)
 	if err != nil {
@@ -271,6 +302,36 @@ func (controller Controller) GetReservationsByUserAndHotelID(ctx *gin.Context) {
 	// Valida el ID del usuario que viene en la URL
 	userID := strings.TrimSpace(ctx.Param("user_id"))
 	hotelID := strings.TrimSpace(ctx.Param("hotel_id"))
+
+	// Ownership: solo admin puede consultar reservas de otros usuarios
+	userTypeAny, exists := ctx.Get("userType")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User type not found in token"})
+		return
+	}
+	userType, ok := userTypeAny.(string)
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user type format in token"})
+		return
+	}
+
+	userIDAny, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in token"})
+		return
+	}
+	userIDFromToken, ok := userIDAny.(string)
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID format in token"})
+		return
+	}
+
+	if userType != "administrador" && userIDFromToken != userID {
+		ctx.JSON(http.StatusForbidden, gin.H{
+			"error": "Users can only view their own reservations",
+		})
+		return
+	}
 
 	// Obtiene las reservas por ID de usuario y hotel
 	reservations, err := controller.service.GetReservationsByUserAndHotelID(ctx.Request.Context(), hotelID, userID)

@@ -1,29 +1,22 @@
 package users
 
-type UserResponse struct {
+// LoginRequest se usa para autenticación y registro de usuarios.
+// Para registro, el campo Tipo es opcional (default: "cliente").
+type LoginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+	Tipo     string `json:"tipo,omitempty"` // Solo usado en registro: "cliente" | "administrador"
+}
+
+// User representa la información pública de un usuario (sin password).
+type User struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
 	Tipo     string `json:"tipo"`
 }
 
-type UserCreateRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-	// Tipo es opcional. Si viene vacío se asume "cliente".
-	Tipo string `json:"tipo"`
-}
-
-type UserUpdateRequest struct {
-	Username *string `json:"username,omitempty"`
-	Password *string `json:"password,omitempty"`
-	Tipo     *string `json:"tipo,omitempty"`
-}
-
-type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-}
-
+// LoginResponse es la respuesta al endpoint /login.
+// Incluye el JWT token compatible con hotels-api.
 type LoginResponse struct {
 	UserID   int64  `json:"user_id"`
 	Username string `json:"username"`

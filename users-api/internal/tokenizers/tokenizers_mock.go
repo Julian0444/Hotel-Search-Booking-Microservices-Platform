@@ -2,6 +2,7 @@ package tokenizers
 
 import "github.com/stretchr/testify/mock"
 
+// Mock implementa la interfaz Tokenizer para testing.
 type Mock struct {
 	mock.Mock
 }

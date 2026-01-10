@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// Repository define las operaciones de persistencia de usuarios.
 type Repository interface {
 	GetAll() ([]usersDAO.User, error)
 	GetByID(id int64) (usersDAO.User, error)
@@ -20,15 +21,17 @@ type Repository interface {
 	Delete(id int64) error
 }
 
+// Tokenizer define la generación de JWT tokens.
 type Tokenizer interface {
 	GenerateToken(username string, userID int64, tipo string) (string, error)
 }
 
+// Errores exportados para manejo en controller.
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrNoFieldsToUpdate   = errors.New("no fields to update")
 )
 
+// Service encapsula la lógica de negocio de usuarios.
 type Service struct {
 	mainRepository      Repository
 	cacheRepository     Repository
@@ -37,6 +40,7 @@ type Service struct {
 	bcryptCost          int
 }
 
+// NewService crea una nueva instancia del servicio.
 func NewService(
 	mainRepository Repository,
 	cacheRepository Repository,
@@ -53,39 +57,33 @@ func NewService(
 	}
 }
 
-func (service Service) GetAll() ([]usersDomain.UserResponse, error) {
-	users, err := service.mainRepository.GetAll()
+// GetAll retorna todos los usuarios (sin passwords).
+func (s Service) GetAll() ([]usersDomain.User, error) {
+	users, err := s.mainRepository.GetAll()
 	if err != nil {
 		return nil, fmt.Errorf("error getting all users: %w", err)
 	}
 
-	result := make([]usersDomain.UserResponse, 0, len(users))
+	result := make([]usersDomain.User, 0, len(users))
 	for _, user := range users {
-		result = append(result, service.toUserResponse(user))
+		result = append(result, s.toUser(user))
 	}
 
 	return result, nil
 }
 
-func (service Service) GetByID(id int64) (usersDomain.UserResponse, error) {
-	user, err := service.getByIDDAO(id)
+// GetByID retorna un usuario por ID (sin password).
+func (s Service) GetByID(id int64) (usersDomain.User, error) {
+	user, err := s.getByIDFromCaches(id)
 	if err != nil {
-		return usersDomain.UserResponse{}, fmt.Errorf("error getting user by ID: %w", err)
+		return usersDomain.User{}, fmt.Errorf("error getting user by ID: %w", err)
 	}
 
-	return service.toUserResponse(user), nil
+	return s.toUser(user), nil
 }
 
-func (service Service) GetByUsername(username string) (usersDomain.UserResponse, error) {
-	user, err := service.getByUsernameDAO(username)
-	if err != nil {
-		return usersDomain.UserResponse{}, fmt.Errorf("error getting user by username: %w", err)
-	}
-
-	return service.toUserResponse(user), nil
-}
-
-func (service Service) Create(request usersDomain.UserCreateRequest) (int64, error) {
+// Create registra un nuevo usuario con password hasheado.
+func (s Service) Create(request usersDomain.LoginRequest) (int64, error) {
 	if request.Username == "" {
 		return 0, fmt.Errorf("username is required")
 	}
@@ -93,6 +91,7 @@ func (service Service) Create(request usersDomain.UserCreateRequest) (int64, err
 		return 0, fmt.Errorf("password is required")
 	}
 
+	// Default tipo = cliente
 	tipo := request.Tipo
 	if tipo == "" {
 		tipo = "cliente"
@@ -101,7 +100,8 @@ func (service Service) Create(request usersDomain.UserCreateRequest) (int64, err
 		return 0, err
 	}
 
-	passwordHash, err := service.hashPassword(request.Password)
+	// Hash password
+	passwordHash, err := s.hashPassword(request.Password)
 	if err != nil {
 		return 0, err
 	}
@@ -112,117 +112,38 @@ func (service Service) Create(request usersDomain.UserCreateRequest) (int64, err
 		Tipo:     tipo,
 	}
 
-	id, err := service.mainRepository.Create(newUser)
+	// Persistir en DB
+	id, err := s.mainRepository.Create(newUser)
 	if err != nil {
 		return 0, fmt.Errorf("error creating user: %w", err)
 	}
 
+	// Best-effort: poblar caches
 	newUser.ID = id
-	if _, err := service.cacheRepository.Create(newUser); err != nil {
-		log.Printf("warn: cache create failed (user_id=%d): %v", newUser.ID, err)
-	}
-	if _, err := service.memcachedRepository.Create(newUser); err != nil {
-		log.Printf("warn: memcached create failed (user_id=%d): %v", newUser.ID, err)
-	}
+	s.populateCaches(newUser)
 
 	return id, nil
 }
 
-func (service Service) Update(id int64, request usersDomain.UserUpdateRequest) error {
-	if request.Username == nil && request.Password == nil && request.Tipo == nil {
-		return ErrNoFieldsToUpdate
-	}
-
-	existingUser, err := service.mainRepository.GetByID(id)
-	if err != nil {
-		return fmt.Errorf("error retrieving existing user: %w", err)
-	}
-
-	updated := usersDAO.User{
-		ID:       existingUser.ID,
-		Username: existingUser.Username,
-		Password: existingUser.Password,
-		Tipo:     existingUser.Tipo,
-	}
-
-	if request.Username != nil {
-		if *request.Username == "" {
-			return fmt.Errorf("username is required")
-		}
-		updated.Username = *request.Username
-	}
-
-	if request.Tipo != nil {
-		if *request.Tipo == "" {
-			return fmt.Errorf("tipo is required")
-		}
-		if err := validateTipo(*request.Tipo); err != nil {
-			return err
-		}
-		updated.Tipo = *request.Tipo
-	}
-
-	if request.Password != nil {
-		if *request.Password == "" {
-			return fmt.Errorf("password is required")
-		}
-		hash, err := service.hashPassword(*request.Password)
-		if err != nil {
-			return err
-		}
-		updated.Password = hash
-	}
-
-	if err := service.mainRepository.Update(updated); err != nil {
-		return fmt.Errorf("error updating user: %w", err)
-	}
-
-	// Best-effort: limpiar mapping viejo (username) y setear mapping nuevo en ambos caches.
-	// Truco: “seed” con existingUser para asegurar que Delete(id) pueda borrar el username viejo.
-	if _, err := service.cacheRepository.Create(existingUser); err != nil {
-		log.Printf("warn: cache seed failed (user_id=%d): %v", existingUser.ID, err)
-	}
-	if _, err := service.memcachedRepository.Create(existingUser); err != nil {
-		log.Printf("warn: memcached seed failed (user_id=%d): %v", existingUser.ID, err)
-	}
-	if err := service.cacheRepository.Delete(id); err != nil {
-		log.Printf("warn: cache delete failed (user_id=%d): %v", id, err)
-	}
-	if err := service.memcachedRepository.Delete(id); err != nil {
-		log.Printf("warn: memcached delete failed (user_id=%d): %v", id, err)
-	}
-	if err := service.cacheRepository.Update(updated); err != nil {
-		log.Printf("warn: cache update failed (user_id=%d): %v", id, err)
-	}
-	if err := service.memcachedRepository.Update(updated); err != nil {
-		log.Printf("warn: memcached update failed (user_id=%d): %v", id, err)
-	}
-
-	return nil
-}
-
-func (service Service) Delete(id int64) error {
-	if err := service.mainRepository.Delete(id); err != nil {
+// Delete elimina un usuario por ID.
+func (s Service) Delete(id int64) error {
+	if err := s.mainRepository.Delete(id); err != nil {
 		return fmt.Errorf("error deleting user: %w", err)
 	}
 
-	// Best-effort cache invalidation
-	if err := service.cacheRepository.Delete(id); err != nil {
-		log.Printf("warn: cache delete failed (user_id=%d): %v", id, err)
-	}
-	if err := service.memcachedRepository.Delete(id); err != nil {
-		log.Printf("warn: memcached delete failed (user_id=%d): %v", id, err)
-	}
+	// Best-effort: invalidar caches
+	s.invalidateCaches(id)
 
 	return nil
 }
 
-func (service Service) Login(username string, password string) (usersDomain.LoginResponse, error) {
+// Login valida credenciales y retorna un JWT token.
+func (s Service) Login(username, password string) (usersDomain.LoginResponse, error) {
 	if username == "" || password == "" {
 		return usersDomain.LoginResponse{}, ErrInvalidCredentials
 	}
 
-	user, err := service.getByUsernameDAO(username)
+	user, err := s.getByUsernameFromCaches(username)
 	if err != nil {
 		return usersDomain.LoginResponse{}, ErrInvalidCredentials
 	}
@@ -231,7 +152,7 @@ func (service Service) Login(username string, password string) (usersDomain.Logi
 		return usersDomain.LoginResponse{}, ErrInvalidCredentials
 	}
 
-	token, err := service.tokenizer.GenerateToken(user.Username, user.ID, user.Tipo)
+	token, err := s.tokenizer.GenerateToken(user.Username, user.ID, user.Tipo)
 	if err != nil {
 		return usersDomain.LoginResponse{}, fmt.Errorf("error generating token: %w", err)
 	}
@@ -244,60 +165,75 @@ func (service Service) Login(username string, password string) (usersDomain.Logi
 	}, nil
 }
 
-func (service Service) getByIDDAO(id int64) (usersDAO.User, error) {
-	if user, err := service.cacheRepository.GetByID(id); err == nil {
+// --- Métodos internos ---
+
+// getByIDFromCaches busca en L1 -> L2 -> DB y puebla caches en miss.
+func (s Service) getByIDFromCaches(id int64) (usersDAO.User, error) {
+	// L1: cache in-process
+	if user, err := s.cacheRepository.GetByID(id); err == nil {
 		return user, nil
 	}
 
-	if user, err := service.memcachedRepository.GetByID(id); err == nil {
-		if _, err := service.cacheRepository.Create(user); err != nil {
-			log.Printf("warn: cache create after memcached hit failed (user_id=%d): %v", id, err)
-		}
+	// L2: memcached
+	if user, err := s.memcachedRepository.GetByID(id); err == nil {
+		s.cacheRepository.Create(user) // best-effort
 		return user, nil
 	}
 
-	user, err := service.mainRepository.GetByID(id)
+	// DB: source of truth
+	user, err := s.mainRepository.GetByID(id)
 	if err != nil {
 		return usersDAO.User{}, err
 	}
 
-	if _, err := service.cacheRepository.Create(user); err != nil {
-		log.Printf("warn: cache create after db hit failed (user_id=%d): %v", id, err)
-	}
-	if _, err := service.memcachedRepository.Create(user); err != nil {
-		log.Printf("warn: memcached create after db hit failed (user_id=%d): %v", id, err)
-	}
-
+	s.populateCaches(user)
 	return user, nil
 }
 
-func (service Service) getByUsernameDAO(username string) (usersDAO.User, error) {
-	if user, err := service.cacheRepository.GetByUsername(username); err == nil {
+// getByUsernameFromCaches busca en L1 -> L2 -> DB y puebla caches en miss.
+func (s Service) getByUsernameFromCaches(username string) (usersDAO.User, error) {
+	// L1: cache in-process
+	if user, err := s.cacheRepository.GetByUsername(username); err == nil {
 		return user, nil
 	}
 
-	if user, err := service.memcachedRepository.GetByUsername(username); err == nil {
-		if _, err := service.cacheRepository.Create(user); err != nil {
-			log.Printf("warn: cache create after memcached hit failed (username=%s): %v", username, err)
-		}
+	// L2: memcached
+	if user, err := s.memcachedRepository.GetByUsername(username); err == nil {
+		s.cacheRepository.Create(user) // best-effort
 		return user, nil
 	}
 
-	user, err := service.mainRepository.GetByUsername(username)
+	// DB: source of truth
+	user, err := s.mainRepository.GetByUsername(username)
 	if err != nil {
 		return usersDAO.User{}, err
 	}
 
-	if _, err := service.cacheRepository.Create(user); err != nil {
-		log.Printf("warn: cache create after db hit failed (username=%s): %v", username, err)
-	}
-	if _, err := service.memcachedRepository.Create(user); err != nil {
-		log.Printf("warn: memcached create after db hit failed (username=%s): %v", username, err)
-	}
-
+	s.populateCaches(user)
 	return user, nil
 }
 
+// populateCaches agrega el usuario a L1 y L2 (best-effort).
+func (s Service) populateCaches(user usersDAO.User) {
+	if _, err := s.cacheRepository.Create(user); err != nil {
+		log.Printf("warn: cache create failed (user_id=%d): %v", user.ID, err)
+	}
+	if _, err := s.memcachedRepository.Create(user); err != nil {
+		log.Printf("warn: memcached create failed (user_id=%d): %v", user.ID, err)
+	}
+}
+
+// invalidateCaches elimina el usuario de L1 y L2 (best-effort).
+func (s Service) invalidateCaches(id int64) {
+	if err := s.cacheRepository.Delete(id); err != nil {
+		log.Printf("warn: cache delete failed (user_id=%d): %v", id, err)
+	}
+	if err := s.memcachedRepository.Delete(id); err != nil {
+		log.Printf("warn: memcached delete failed (user_id=%d): %v", id, err)
+	}
+}
+
+// validateTipo verifica que el tipo sea válido.
 func validateTipo(tipo string) error {
 	switch tipo {
 	case "cliente", "administrador":
@@ -307,8 +243,9 @@ func validateTipo(tipo string) error {
 	}
 }
 
-func (service Service) hashPassword(plain string) (string, error) {
-	cost := service.bcryptCost
+// hashPassword genera un hash bcrypt del password.
+func (s Service) hashPassword(plain string) (string, error) {
+	cost := s.bcryptCost
 	if cost == 0 {
 		cost = bcrypt.DefaultCost
 	}
@@ -320,8 +257,9 @@ func (service Service) hashPassword(plain string) (string, error) {
 	return string(hash), nil
 }
 
-func (service Service) toUserResponse(user usersDAO.User) usersDomain.UserResponse {
-	return usersDomain.UserResponse{
+// toUser convierte el DAO a domain (sin password).
+func (s Service) toUser(user usersDAO.User) usersDomain.User {
+	return usersDomain.User{
 		ID:       user.ID,
 		Username: user.Username,
 		Tipo:     user.Tipo,

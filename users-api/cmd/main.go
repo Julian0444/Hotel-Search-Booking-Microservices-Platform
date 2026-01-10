@@ -15,7 +15,9 @@ import (
 )
 
 func main() {
-	// MySQL
+	log.Printf("Starting users-api on port %s...", config.Port)
+
+	// MySQL repository (source of truth)
 	mySQLRepo := repositories.NewMySQL(
 		repositories.MySQLConfig{
 			Host:     config.MySQLHost,
@@ -26,18 +28,18 @@ func main() {
 		},
 	)
 
-	// Cache
+	// Cache L1 (in-process)
 	cacheRepo := repositories.NewCache(repositories.CacheConfig{
 		TTL: config.CacheDuration,
 	})
 
-	// Memcached
+	// Memcached L2 (distributed)
 	memcachedRepo := repositories.NewMemcached(repositories.MemcachedConfig{
 		Host: config.MemcachedHost,
 		Port: config.MemcachedPort,
 	})
 
-	// Tokenizer
+	// JWT Tokenizer
 	jwtTokenizer := tokenizers.NewTokenizer(
 		tokenizers.JWTConfig{
 			Key:      config.JWTKey,
@@ -45,27 +47,24 @@ func main() {
 		},
 	)
 
-	// Services
+	// Service
 	service := services.NewService(mySQLRepo, cacheRepo, memcachedRepo, jwtTokenizer, config.BcryptCost)
 
-	// Handlers
+	// Controller
 	controller := controllers.NewController(service)
 
-	// Create router
+	// Router
 	router := gin.Default()
-
-	// Use CORS middleware
 	router.Use(utils.CorsMiddleware())
 
-	// URL mappings
+	// Routes
 	router.GET("/users", controller.GetAll)
 	router.GET("/users/:id", controller.GetByID)
 	router.POST("/users", controller.Create)
-	router.PUT("/users/:id", controller.Update)
 	router.DELETE("/users/:id", controller.Delete)
 	router.POST("/login", controller.Login)
 
-	// Health check endpoint
+	// Health check
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status":    "ok",
@@ -74,8 +73,8 @@ func main() {
 		})
 	})
 
-	// Run application
+	// Run server
 	if err := router.Run(":" + config.Port); err != nil {
-		log.Panicf("Error running application: %v", err)
+		log.Fatalf("Failed to start server: %v", err)
 	}
 }

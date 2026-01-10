@@ -69,7 +69,6 @@ func main() {
 	// Configuración de rutas
 	router.GET("/hotels/:hotel_id", hotelsController.GetHotelByID)
 	router.GET("/hotels/:hotel_id/reservations", hotelsController.GetReservationsByHotelID)
-	router.GET("/users/:user_id/hotels/:hotel_id/reservations", hotelsController.GetReservationsByUserAndHotelID)
 	router.POST("/hotels/availability", hotelsController.GetAvailability)
 
 	// Rutas protegidas para usuarios autenticados
@@ -78,6 +77,7 @@ func main() {
 		userRoutes.POST("/reservations", hotelsController.CreateReservation)
 		userRoutes.DELETE("/reservations/:id", hotelsController.CancelReservation)
 		userRoutes.GET("/users/:user_id/reservations", hotelsController.GetReservationsByUserID)
+		userRoutes.GET("/users/:user_id/hotels/:hotel_id/reservations", hotelsController.GetReservationsByUserAndHotelID)
 	}
 
 	// Rutas protegidas para administradores
