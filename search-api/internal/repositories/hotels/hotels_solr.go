@@ -5,8 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"search-api/dao/hotels"
 	"time"
+
+	"search-api/internal/dao/hotels"
 
 	"github.com/stevenferrer/solr-go"
 )

@@ -1,0 +1,24 @@
+meta {
+  name: Get Microservices Status
+  type: http
+  seq: 12
+}
+
+get {
+  url: http://localhost:8081/admin/microservices
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_jwt_token}}
+}
+
+docs {
+  Obtiene el estado de todos los microservicios del sistema.
+  Requiere autenticación JWT de administrador.
+}
+
+settings {
+  encodeUrl: true
+}

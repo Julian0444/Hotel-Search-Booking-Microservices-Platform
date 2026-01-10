@@ -13,7 +13,7 @@ RUN go mod tidy
 
 # Copy the rest of the code and build the application
 COPY . .
-RUN go build -o app ./main.go
+RUN go build -o app ./cmd/main.go
 
 # Expose the port on which the app will run
 EXPOSE 8082

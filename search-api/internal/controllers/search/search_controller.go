@@ -1,11 +1,12 @@
-package users
+package search
 
 import (
 	"context"
 	"fmt"
 	"net/http"
-	hotelsDomain "search-api/domain/hotels"
 	"strconv"
+
+	hotelsDomain "search-api/internal/domain/hotels"
 
 	"github.com/gin-gonic/gin"
 )

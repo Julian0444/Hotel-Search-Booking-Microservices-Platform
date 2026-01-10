@@ -1,0 +1,33 @@
+meta {
+  name: Post Scale Service
+  type: http
+  seq: 13
+}
+
+post {
+  url: http://localhost:8081/admin/microservices/scale
+  body: json
+  auth: bearer
+}
+
+body:json {
+  {
+    "service_name": "users-api",
+    "replicas": 3
+  }
+}
+
+auth:bearer {
+  token: {{admin_jwt_token}}
+}
+
+docs {
+  Escala un servicio (aumenta o disminuye el número de réplicas).
+  Requiere autenticación JWT de administrador.
+  - service_name: nombre del servicio (ej: "users-api")
+  - replicas: número de réplicas (mínimo 1, máximo 10)
+}
+
+settings {
+  encodeUrl: true
+}

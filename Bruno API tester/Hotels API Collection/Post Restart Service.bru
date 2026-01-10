@@ -1,0 +1,34 @@
+meta {
+  name: Post Restart Service
+  type: http
+  seq: 15
+}
+
+post {
+  url: http://localhost:8081/admin/microservices/{{service_name}}/restart?instance_id={{instance_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_jwt_token}}
+}
+
+docs {
+  Reinicia un servicio específico.
+  Requiere autenticación JWT de administrador.
+  - service_name: nombre del servicio (ej: "users-api", "hotels-api")
+  - instance_id: (opcional) ID de la instancia específica a reiniciar
+}
+
+params:path {
+  service_name: users-api
+}
+
+params:query {
+  instance_id: users-api-1
+}
+
+settings {
+  encodeUrl: true
+}

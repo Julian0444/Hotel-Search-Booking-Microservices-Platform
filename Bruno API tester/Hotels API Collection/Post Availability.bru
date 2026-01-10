@@ -1,0 +1,30 @@
+meta {
+  name: Post Availability
+  type: http
+  seq: 5
+}
+
+post {
+  url: http://localhost:8081/hotels/availability
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "hotel_ids": ["hotel123", "hotel456"],
+    "check_in": "2024-12-25T14:00:00Z",
+    "check_out": "2024-12-30T11:00:00Z"
+  }
+}
+
+docs {
+  Verifica la disponibilidad de múltiples hoteles para un rango de fechas.
+  - hotel_ids: array de IDs de hoteles a verificar
+  - check_in: fecha de entrada en formato ISO 8601
+  - check_out: fecha de salida en formato ISO 8601
+}
+
+settings {
+  encodeUrl: true
+}

@@ -1,16 +1,45 @@
 meta {
-  name: Post hotel
+  name: Post Hotel (Admin)
   type: http
-  seq: 2
+  seq: 9
 }
 
 post {
-  url: 
-  body: none
-  auth: inherit
+  url: http://localhost:8081/admin/hotels
+  body: json
+  auth: bearer
+}
+
+body:json {
+  {
+    "name": "Hotel Ejemplo",
+    "description": "Un hotel de ejemplo con todas las comodidades",
+    "address": "Calle Principal 123",
+    "city": "Madrid",
+    "state": "Madrid",
+    "country": "España",
+    "phone": "+34 123 456 789",
+    "email": "info@hotelejemplo.com",
+    "price_per_night": 150.50,
+    "rating": 4.5,
+    "avaiable_rooms": 10,
+    "check_in_time": "2024-01-01T14:00:00Z",
+    "check_out_time": "2024-01-01T11:00:00Z",
+    "amenities": ["WiFi", "Piscina", "Gimnasio", "Spa"],
+    "images": ["https://example.com/image1.jpg", "https://example.com/image2.jpg"]
+  }
+}
+
+auth:bearer {
+  token: {{admin_jwt_token}}
+}
+
+docs {
+  Crea un nuevo hotel. Requiere autenticación JWT de administrador.
+  El token debe tener tipo "administrador" en sus claims.
+  Obtén el token usando POST /login de users-api con un usuario administrador.
 }
 
 settings {
   encodeUrl: true
-  timeout: 0
 }

@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"search-api/domain/hotels"
+
+	"search-api/internal/domain/hotels"
 
 	"github.com/streadway/amqp"
 )

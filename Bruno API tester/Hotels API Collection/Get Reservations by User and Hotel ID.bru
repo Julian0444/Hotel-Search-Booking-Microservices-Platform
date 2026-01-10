@@ -1,0 +1,31 @@
+meta {
+  name: Get Reservations by User and Hotel ID
+  type: http
+  seq: 4
+}
+
+get {
+  url: http://localhost:8081/users/{{user_id}}/hotels/{{hotel_id}}/reservations
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{jwt_token}}
+}
+
+docs {
+  Obtiene las reservas de un usuario específico en un hotel específico.
+  Requiere autenticación JWT.
+  Solo puedes ver tus propias reservas (a menos que seas administrador).
+  Cambia user_id y hotel_id en la URL según necesites.
+}
+
+params:path {
+  user_id: 1
+  hotel_id: hotel123
+}
+
+settings {
+  encodeUrl: true
+}

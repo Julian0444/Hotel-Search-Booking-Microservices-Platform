@@ -3,8 +3,9 @@ package search
 import (
 	"context"
 	"fmt"
-	hotelsDAO "search-api/dao/hotels"
-	hotelsDomain "search-api/domain/hotels"
+
+	hotelsDAO "search-api/internal/dao/hotels"
+	hotelsDomain "search-api/internal/domain/hotels"
 )
 
 // Funciones de solr

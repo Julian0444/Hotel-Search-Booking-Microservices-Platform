@@ -2,12 +2,11 @@ package main
 
 import (
 	"log"
-	"search-api/clients/queues"
-	controllers "search-api/controllers/search"
-	repositories "search-api/repositories/hotels"
-	services "search-api/services/search"
-
-	"search-api/utils"
+	"search-api/internal/clients/queues"
+	controllers "search-api/internal/controllers/search"
+	repositories "search-api/internal/repositories/hotels"
+	services "search-api/internal/services/search"
+	"search-api/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )

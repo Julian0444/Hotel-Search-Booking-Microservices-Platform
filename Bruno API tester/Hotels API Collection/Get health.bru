@@ -1,16 +1,19 @@
 meta {
   name: Get health
   type: http
-  seq: 2
+  seq: 1
 }
 
 get {
-  url: http://localhost:8083/health
+  url: http://localhost:8081/health
   body: none
-  auth: inherit
+  auth: none
+}
+
+docs {
+  Health check del servicio hotels-api
 }
 
 settings {
   encodeUrl: true
-  timeout: 0
 }

@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	hotelsDomain "search-api/domain/hotels"
+
+	hotelsDomain "search-api/internal/domain/hotels"
 )
 
 type HTTPConfig struct {
