@@ -29,12 +29,12 @@ func NewRabbit(config RabbitConfig) Rabbit {
 	//Dial crea una nueva conexion a RabbitMQ
 	connection, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%s/", config.Username, config.Password, config.Host, config.Port))
 	if err != nil {
-		log.Fatalf("error getting Rabbit connection: %w", err)
+		log.Fatalf("error getting Rabbit connection: %v", err)
 	}
 	// Channel crea un nuevo canal de comunic
 	channel, err := connection.Channel()
 	if err != nil {
-		log.Fatalf("error creating Rabbit channel: %w", err)
+		log.Fatalf("error creating Rabbit channel: %v", err)
 	}
 	// QueueDeclare crea una nueva cola en RabbitMQ
 	queue, err := channel.QueueDeclare(config.QueueName, true, false, false, false, nil)

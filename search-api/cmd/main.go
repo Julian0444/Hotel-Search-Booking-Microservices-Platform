@@ -2,7 +2,10 @@ package main
 
 import (
 	"log"
+	"time"
+
 	"search-api/internal/clients/queues"
+	"search-api/internal/config"
 	controllers "search-api/internal/controllers/search"
 	repositories "search-api/internal/repositories/hotels"
 	services "search-api/internal/services/search"
@@ -12,27 +15,28 @@ import (
 )
 
 func main() {
+	log.Printf("Starting search-api on port %s...", config.Port)
+
 	// Solr
 	solrRepo := repositories.NewSolr(repositories.SolrConfig{
-		Host:       "solr",   // Solr host
-		Port:       "8983",   // Solr port
-		Collection: "hotels", // Collection name
+		Host:       config.SolrHost,
+		Port:       config.SolrPort,
+		Collection: config.SolrCollection,
 	})
 
-	// Rabbit
-	//Este es el que consume de la cola de rabbit
+	// Rabbit - consume de la cola de RabbitMQ
 	eventsQueue := queues.NewRabbit(queues.RabbitConfig{
-		Host:      "rabbitmq",
-		Port:      "5672",
-		Username:  "root",
-		Password:  "root",
-		QueueName: "hotels-news",
+		Host:      config.RabbitHost,
+		Port:      config.RabbitPort,
+		Username:  config.RabbitUsername,
+		Password:  config.RabbitPassword,
+		QueueName: config.RabbitQueueName,
 	})
 
 	// Hotels API
 	hotelsAPI := repositories.NewHTTP(repositories.HTTPConfig{
-		Host: "hotels-api",
-		Port: "8081",
+		Host: config.HotelsAPIHost,
+		Port: config.HotelsAPIPort,
 	})
 
 	// Services
@@ -52,8 +56,20 @@ func main() {
 	// Use CORS middleware
 	router.Use(utils.CorsMiddleware())
 
+	// Routes
 	router.GET("/search", controller.Search)
-	if err := router.Run(":8082"); err != nil {
+
+	// Health check
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":    "ok",
+			"service":   "search-api",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// Run server
+	if err := router.Run(":" + config.Port); err != nil {
 		log.Fatalf("Error running application: %v", err)
 	}
 }

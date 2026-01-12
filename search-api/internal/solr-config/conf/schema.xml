@@ -10,16 +10,33 @@
         <field name="country" type="text_general" indexed="true" stored="true"/>
         <field name="phone" type="text_general" indexed="true" stored="true"/>
         <field name="email" type="text_general" indexed="true" stored="true"/>
-        <field name="price_per_night" type="float" indexed="true" stored="true"/>
-        <field name="rating" type="float" indexed="true" stored="true"/>
-        <field name="chech_in" type="date" indexed="true" stored="true"/>
-        <field name="check_out" type="date" indexed="true" stored="true"/>
-        <field name="amenities" type="text_general" indexed="true" stored="true" multiValued="true"/>
-        <field name="images" type="text_general" indexed="true" stored="true" multiValued="true"/>
+        <field name="price_per_night" type="pfloat" indexed="true" stored="true"/>
+        <field name="rating" type="pfloat" indexed="true" stored="true"/>
+        <field name="avaiable_rooms" type="pint" indexed="true" stored="true"/>
+        <field name="check_in_time" type="pdate" indexed="true" stored="true"/>
+        <field name="check_out_time" type="pdate" indexed="true" stored="true"/>
+        <field name="amenities" type="string" indexed="true" stored="true" multiValued="true"/>
+        <field name="images" type="string" indexed="true" stored="true" multiValued="true"/>
+        <!-- Campo requerido por Solr -->
+        <field name="_version_" type="plong" indexed="false" stored="false"/>
     </fields>
 
     <uniqueKey>id</uniqueKey>
 
-    <defaultSearchField>name</defaultSearchField>
-    <similarity class="solr.ClassicSimilarity"/>
+    <!-- Tipos de campo -->
+    <fieldType name="string" class="solr.StrField" sortMissingLast="true"/>
+    <fieldType name="text_general" class="solr.TextField" positionIncrementGap="100">
+        <analyzer type="index">
+            <tokenizer class="solr.StandardTokenizerFactory"/>
+            <filter class="solr.LowerCaseFilterFactory"/>
+        </analyzer>
+        <analyzer type="query">
+            <tokenizer class="solr.StandardTokenizerFactory"/>
+            <filter class="solr.LowerCaseFilterFactory"/>
+        </analyzer>
+    </fieldType>
+    <fieldType name="pfloat" class="solr.FloatPointField" docValues="true"/>
+    <fieldType name="pint" class="solr.IntPointField" docValues="true"/>
+    <fieldType name="plong" class="solr.LongPointField" docValues="true"/>
+    <fieldType name="pdate" class="solr.DatePointField" docValues="true"/>
 </schema>
