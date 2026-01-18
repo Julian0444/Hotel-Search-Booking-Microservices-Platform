@@ -5,9 +5,22 @@ meta {
 }
 
 get {
-  url: http://localhost:8082/login
+  url: http://localhost/users/{{user_id}}
   body: none
-  auth: inherit
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+vars:pre-request {
+  user_id: 1
+}
+
+docs {
+  Obtiene un usuario por su ID.
+  Requiere autenticación.
 }
 
 settings {

@@ -1,0 +1,28 @@
+meta {
+  name: Search Hotels
+  type: http
+  seq: 1
+}
+
+get {
+  url: http://localhost/search?q={{query}}&offset=0&limit=20
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  query: Miami
+}
+
+docs {
+  Busca hoteles por ciudad, nombre o descripción.
+  
+  Parámetros:
+  - q: término de búsqueda
+  - offset: paginación (default: 0)
+  - limit: cantidad de resultados (default: 20)
+}
+
+settings {
+  encodeUrl: true
+}

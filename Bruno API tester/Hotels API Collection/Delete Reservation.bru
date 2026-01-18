@@ -5,23 +5,22 @@ meta {
 }
 
 delete {
-  url: http://localhost:8081/reservations/{{reservation_id}}
+  url: http://localhost/reservations/{{reservation_id}}
   body: none
   auth: bearer
 }
 
 auth:bearer {
-  token: {{jwt_token}}
+  token: {{token}}
+}
+
+vars:pre-request {
+  reservation_id: 
 }
 
 docs {
-  Cancela una reserva por su ID. Requiere autenticación JWT.
-  Solo puedes cancelar tus propias reservas.
-  Cambia el reservation_id en la URL según necesites.
-}
-
-params:path {
-  reservation_id: res123
+  Cancela una reservación.
+  Requiere autenticación.
 }
 
 settings {

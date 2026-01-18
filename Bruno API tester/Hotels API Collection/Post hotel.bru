@@ -1,45 +1,43 @@
 meta {
-  name: Post Hotel (Admin)
+  name: Post hotel (Admin)
   type: http
-  seq: 9
+  seq: 3
 }
 
 post {
-  url: http://localhost:8081/admin/hotels
+  url: http://localhost/admin/hotels
   body: json
   auth: bearer
 }
 
+auth:bearer {
+  token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Njg4MDM0OTQsImlhdCI6MTc2ODcxNzA5NCwidGlwbyI6ImFkbWluaXN0cmFkb3IiLCJ1c2VyX2lkIjoyLCJ1c2VybmFtZSI6Ikp1bGlhbiJ9.U1x_MOKAKRk4M-WMqrr1T5Un6oGwpj3qDE7qDaWzvsw
+}
+
 body:json {
   {
-    "name": "Hotel Ejemplo",
-    "description": "Un hotel de ejemplo con todas las comodidades",
-    "address": "Calle Principal 123",
-    "city": "Madrid",
-    "state": "Madrid",
-    "country": "España",
-    "phone": "+34 123 456 789",
-    "email": "info@hotelejemplo.com",
-    "price_per_night": 150.50,
+    "name": "Test Hotel",
+    "description": "A beautiful test hotel",
+    "address": "123 Test Street",
+    "city": "Test City",
+    "state": "TS",
+    "country": "USA",
+    "phone": "+1-555-0123",
+    "email": "test@hotel.com",
+    "price_per_night": 199,
     "rating": 4.5,
-    "avaiable_rooms": 10,
-    "check_in_time": "2024-01-01T14:00:00Z",
-    "check_out_time": "2024-01-01T11:00:00Z",
-    "amenities": ["WiFi", "Piscina", "Gimnasio", "Spa"],
-    "images": ["https://example.com/image1.jpg", "https://example.com/image2.jpg"]
+    "avaiable_rooms": 50,
+    "amenities": ["wifi", "pool", "gym"],
+    "images": ["https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800"]
   }
-}
-
-auth:bearer {
-  token: {{admin_jwt_token}}
-}
-
-docs {
-  Crea un nuevo hotel. Requiere autenticación JWT de administrador.
-  El token debe tener tipo "administrador" en sus claims.
-  Obtén el token usando POST /login de users-api con un usuario administrador.
 }
 
 settings {
   encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Crea un nuevo hotel.
+  Requiere token de administrador.
 }

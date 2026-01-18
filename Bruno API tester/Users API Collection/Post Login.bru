@@ -5,9 +5,21 @@ meta {
 }
 
 post {
-  url: http://localhost:8082/
-  body: none
-  auth: inherit
+  url: http://localhost/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "testuser",
+    "password": "testpassword123"
+  }
+}
+
+docs {
+  Login de usuario.
+  Retorna un JWT token para autenticación.
 }
 
 settings {

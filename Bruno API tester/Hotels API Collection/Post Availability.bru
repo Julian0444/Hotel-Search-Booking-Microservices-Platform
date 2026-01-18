@@ -1,28 +1,32 @@
 meta {
   name: Post Availability
   type: http
-  seq: 5
+  seq: 11
 }
 
 post {
-  url: http://localhost:8081/hotels/availability
+  url: http://localhost/hotels/availability
   body: json
   auth: none
 }
 
 body:json {
   {
-    "hotel_ids": ["hotel123", "hotel456"],
-    "check_in": "2024-12-25T14:00:00Z",
-    "check_out": "2024-12-30T11:00:00Z"
+    "hotel_ids": ["696c81443c5fac7ca348ae44"],
+    "check_in": "2025-02-01",
+    "check_out": "2025-02-05"
   }
 }
 
 docs {
-  Verifica la disponibilidad de múltiples hoteles para un rango de fechas.
-  - hotel_ids: array de IDs de hoteles a verificar
-  - check_in: fecha de entrada en formato ISO 8601
-  - check_out: fecha de salida en formato ISO 8601
+  Verifica disponibilidad de hoteles para fechas específicas.
+  
+  NO requiere autenticación.
+  
+  Parámetros:
+  - hotel_ids: array de IDs de hoteles (ObjectID de MongoDB)
+  - check_in: fecha de entrada (formato YYYY-MM-DD)
+  - check_out: fecha de salida (formato YYYY-MM-DD)
 }
 
 settings {

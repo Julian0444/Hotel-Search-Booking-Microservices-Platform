@@ -1,26 +1,26 @@
 meta {
   name: Delete Hotel (Admin)
   type: http
-  seq: 11
+  seq: 5
 }
 
 delete {
-  url: http://localhost:8081/admin/hotels/{{hotel_id}}
+  url: http://localhost/admin/hotels/{{hotel_id}}
   body: none
   auth: bearer
 }
 
 auth:bearer {
-  token: {{admin_jwt_token}}
+  token: {{token}}
+}
+
+vars:pre-request {
+  hotel_id: 
 }
 
 docs {
-  Elimina un hotel por su ID. Requiere autenticación JWT de administrador.
-  Cambia el hotel_id en la URL según necesites.
-}
-
-params:path {
-  hotel_id: hotel123
+  Elimina un hotel.
+  Requiere token de administrador.
 }
 
 settings {

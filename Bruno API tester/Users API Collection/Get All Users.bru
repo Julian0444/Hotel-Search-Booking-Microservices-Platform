@@ -5,9 +5,18 @@ meta {
 }
 
 get {
-  url: 
+  url: http://localhost/users
   body: none
-  auth: inherit
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Obtiene todos los usuarios.
+  Requiere autenticación.
 }
 
 settings {

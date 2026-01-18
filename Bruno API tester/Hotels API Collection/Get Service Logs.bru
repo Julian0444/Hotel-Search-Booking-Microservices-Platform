@@ -1,32 +1,32 @@
 meta {
   name: Get Service Logs
   type: http
-  seq: 14
+  seq: 13
 }
 
 get {
-  url: http://localhost:8081/admin/microservices/{{service_name}}/logs?instance_id={{instance_id}}
+  url: http://localhost/admin/microservices/{{service_name}}/logs
   body: none
   auth: bearer
 }
 
 auth:bearer {
-  token: {{admin_jwt_token}}
+  token: {{token}}
+}
+
+vars:pre-request {
+  service_name: hotels-api
 }
 
 docs {
   Obtiene los logs de un servicio específico.
-  Requiere autenticación JWT de administrador.
-  - service_name: nombre del servicio (ej: "users-api", "hotels-api")
-  - instance_id: (opcional) ID de la instancia específica
-}
-
-params:path {
-  service_name: users-api
-}
-
-params:query {
-  instance_id: users-api-1
+  
+  ⚠️ REQUIERE TOKEN DE ADMINISTRADOR
+  
+  Servicios válidos:
+  - hotels-api
+  - search-api
+  - users-api
 }
 
 settings {

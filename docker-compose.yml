@@ -141,6 +141,7 @@ services:
       CACHE_DURATION: "30s"
       PORT: "8082"
       INSTANCE_ID: "users-api-1"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
       mysql:
         condition: service_healthy
@@ -169,6 +170,7 @@ services:
       CACHE_DURATION: "30s"
       PORT: "8082"
       INSTANCE_ID: "users-api-2"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
       mysql:
         condition: service_healthy
@@ -197,6 +199,7 @@ services:
       CACHE_DURATION: "30s"
       PORT: "8082"
       INSTANCE_ID: "users-api-3"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
       mysql:
         condition: service_healthy
@@ -273,6 +276,24 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+
+  # ===========================================
+  # FRONTEND (Disabled for local development)
+  # ===========================================
+  # Uncomment to run frontend in Docker:
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   image: staylux-frontend:latest
+  #   container_name: staylux-frontend
+  #   ports:
+  #     - "5173:80"
+  #   depends_on:
+  #     - nginx
+  #   networks:
+  #     - app-network
+  #   restart: unless-stopped
 
 networks:
   app-network:

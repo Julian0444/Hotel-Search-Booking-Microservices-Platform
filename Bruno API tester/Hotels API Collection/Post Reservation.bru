@@ -5,29 +5,33 @@ meta {
 }
 
 post {
-  url: http://localhost:8081/reservations
+  url: http://localhost/reservations
   body: json
   auth: bearer
 }
 
+auth:bearer {
+  token: {{token}}
+}
+
 body:json {
   {
-    "hotel_id": "hotel123",
-    "hotel_name": "Hotel Ejemplo",
-    "user_id": "1",
-    "check_in": "2024-12-25T14:00:00Z",
-    "check_out": "2024-12-30T11:00:00Z"
+    "hotel_id": "{{hotel_id}}",
+    "hotel_name": "Test Hotel",
+    "user_id": "{{user_id}}",
+    "check_in": "2025-02-01T15:00:00Z",
+    "check_out": "2025-02-05T11:00:00Z"
   }
 }
 
-auth:bearer {
-  token: {{jwt_token}}
-}
-
 docs {
-  Crea una nueva reserva. Requiere autenticación JWT.
-  El user_id debe coincidir con el user_id del token JWT.
-  Obtén el token usando el endpoint POST /login de users-api.
+  Crea una nueva reservación.
+  Requiere autenticación con token JWT.
+  
+  IMPORTANTE:
+  - user_id debe coincidir con el ID del usuario del token
+  - check_in y check_out deben estar en formato RFC3339 (con hora y zona horaria)
+  - Ejemplo: "2025-02-01T15:00:00Z"
 }
 
 settings {

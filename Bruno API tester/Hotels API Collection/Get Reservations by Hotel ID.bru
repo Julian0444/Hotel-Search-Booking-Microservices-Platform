@@ -1,22 +1,25 @@
 meta {
   name: Get Reservations by Hotel ID
   type: http
-  seq: 3
+  seq: 8
 }
 
 get {
-  url: http://localhost:8081/hotels/{{hotel_id}}/reservations
+  url: http://localhost/hotels/{{hotel_id}}/reservations
   body: none
-  auth: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+vars:pre-request {
+  hotel_id: 
 }
 
 docs {
-  Obtiene todas las reservas de un hotel específico.
-  Cambia el hotel_id en la URL según necesites.
-}
-
-params:path {
-  hotel_id: hotel123
+  Obtiene todas las reservaciones de un hotel específico.
 }
 
 settings {

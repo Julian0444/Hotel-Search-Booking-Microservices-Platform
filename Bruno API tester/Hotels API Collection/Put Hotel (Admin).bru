@@ -1,45 +1,38 @@
 meta {
   name: Put Hotel (Admin)
   type: http
-  seq: 10
+  seq: 4
 }
 
 put {
-  url: http://localhost:8081/admin/hotels/{{hotel_id}}
+  url: http://localhost/admin/hotels/{{hotel_id}}
   body: json
   auth: bearer
 }
 
+auth:bearer {
+  token: {{token}}
+}
+
 body:json {
   {
-    "name": "Hotel Actualizado",
-    "description": "Descripción actualizada del hotel",
-    "address": "Calle Principal 123",
-    "city": "Madrid",
-    "state": "Madrid",
-    "country": "España",
-    "phone": "+34 123 456 789",
-    "email": "info@hotelejemplo.com",
-    "price_per_night": 175.00,
+    "name": "Updated Hotel Name",
+    "description": "Updated description",
+    "price_per_night": 249,
     "rating": 4.7,
-    "avaiable_rooms": 15,
-    "check_in_time": "2024-01-01T14:00:00Z",
-    "check_out_time": "2024-01-01T11:00:00Z",
-    "amenities": ["WiFi", "Piscina", "Gimnasio", "Spa", "Parking"],
-    "images": ["https://example.com/image1.jpg", "https://example.com/image2.jpg"]
+    "avaiable_rooms": 45
   }
 }
 
-auth:bearer {
-  token: {{admin_jwt_token}}
+vars:pre-request {
+  hotel_id: 
 }
 
 docs {
-  Actualiza un hotel existente. Requiere autenticación JWT de administrador.
-  El hotel_id en la URL se asignará automáticamente al objeto hotel.
-  Cambia el hotel_id en la URL según necesites.
+  Actualiza un hotel existente.
+  Requiere token de administrador.
 }
 
-params:path {
-  hotel_id: hotel123
+settings {
+  encodeUrl: true
 }

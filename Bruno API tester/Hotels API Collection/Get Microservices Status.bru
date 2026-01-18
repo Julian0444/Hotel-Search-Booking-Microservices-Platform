@@ -5,18 +5,21 @@ meta {
 }
 
 get {
-  url: http://localhost:8081/admin/microservices
+  url: http://localhost/admin/microservices
   body: none
   auth: bearer
 }
 
 auth:bearer {
-  token: {{admin_jwt_token}}
+  token: {{token}}
 }
 
 docs {
-  Obtiene el estado de todos los microservicios del sistema.
-  Requiere autenticación JWT de administrador.
+  Obtiene el estado de todos los microservicios.
+  
+  ⚠️ REQUIERE TOKEN DE ADMINISTRADOR
+  - Usuarios con tipo "cliente" NO pueden acceder
+  - Solo usuarios con tipo "administrador" tienen acceso
 }
 
 settings {

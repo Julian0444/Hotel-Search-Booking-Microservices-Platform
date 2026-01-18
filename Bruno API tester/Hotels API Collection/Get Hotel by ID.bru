@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: http://localhost:8081/hotels/{{hotel_id}}
+  url: http://localhost/hotels/{{hotel_id}}
   body: none
   auth: none
 }
@@ -15,8 +15,8 @@ docs {
   Cambia el hotel_id en la URL según necesites.
 }
 
-params:path {
-  hotel_id: hotel123
+vars:pre-request {
+  hotel_id: 
 }
 
 settings {

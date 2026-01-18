@@ -1,13 +1,26 @@
 meta {
-  name: Post User
+  name: Post User (Register)
   type: http
   seq: 2
 }
 
-get {
-  url: http://localhost:8082/users
-  body: none
-  auth: inherit
+post {
+  url: http://localhost/users
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "testuser",
+    "password": "testpassword123",
+    "tipo": "cliente"
+  }
+}
+
+docs {
+  Registra un nuevo usuario.
+  tipo: "cliente" o "administrador"
 }
 
 settings {
