@@ -58,7 +58,7 @@ const amenityDetails = {
 const HotelDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
 
   const [hotel, setHotel] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -115,7 +115,10 @@ const HotelDetail = () => {
 
     try {
       setBookingLoading(true);
-      await reservationsService.create(hotel.id, hotel.name, checkIn, checkOut);
+      // Convert dates to ISO 8601 format with time for Go's time.Time parsing
+      const checkInDateTime = new Date(checkIn + 'T15:00:00Z').toISOString();
+      const checkOutDateTime = new Date(checkOut + 'T11:00:00Z').toISOString();
+      await reservationsService.create(hotel.id, hotel.name, String(user.id), checkInDateTime, checkOutDateTime);
       setSnackbar({ open: true, message: 'Reservation created successfully!', severity: 'success' });
       handleBookingClose();
     } catch (err) {

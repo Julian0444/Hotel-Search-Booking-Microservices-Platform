@@ -18,14 +18,16 @@ const reservationsService = {
    * Create a new reservation
    * @param {string} hotelId - Hotel ID
    * @param {string} hotelName - Hotel name
-   * @param {string} checkIn - Check-in date
-   * @param {string} checkOut - Check-out date
+   * @param {string} userId - User ID
+   * @param {string} checkIn - Check-in date (ISO format)
+   * @param {string} checkOut - Check-out date (ISO format)
    * @returns {Promise<{ id: string }>} Created reservation ID
    */
-  create: async (hotelId, hotelName, checkIn, checkOut) => {
+  create: async (hotelId, hotelName, userId, checkIn, checkOut) => {
     const response = await api.post('/reservations', {
       hotel_id: hotelId,
       hotel_name: hotelName,
+      user_id: userId,
       check_in: checkIn,
       check_out: checkOut,
     });

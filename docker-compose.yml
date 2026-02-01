@@ -152,9 +152,6 @@ services:
     restart: unless-stopped
 
   users-api-2:
-    build:
-      context: ./users-api
-      dockerfile: Dockerfile
     image: users-api:latest
     container_name: users-api-2
     environment:
@@ -172,6 +169,8 @@ services:
       INSTANCE_ID: "users-api-2"
       CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
+      users-api-1:
+        condition: service_started
       mysql:
         condition: service_healthy
       memcached:
@@ -181,9 +180,6 @@ services:
     restart: unless-stopped
 
   users-api-3:
-    build:
-      context: ./users-api
-      dockerfile: Dockerfile
     image: users-api:latest
     container_name: users-api-3
     environment:
@@ -201,6 +197,8 @@ services:
       INSTANCE_ID: "users-api-3"
       CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
+      users-api-1:
+        condition: service_started
       mysql:
         condition: service_healthy
       memcached:
