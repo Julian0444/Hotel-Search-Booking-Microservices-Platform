@@ -15,21 +15,24 @@ import api from './api';
  */
 const reservationsService = {
   /**
-   * Create a new reservation
+   * Create a new reservation. The hotel name and total price are derived
+   * server-side; num_rooms/num_guests default to 1 when omitted.
    * @param {string} hotelId - Hotel ID
-   * @param {string} hotelName - Hotel name
    * @param {string} userId - User ID
-   * @param {string} checkIn - Check-in date (ISO format)
-   * @param {string} checkOut - Check-out date (ISO format)
+   * @param {string} checkIn - Check-in date (YYYY-MM-DD)
+   * @param {string} checkOut - Check-out date (YYYY-MM-DD)
+   * @param {number} [numRooms=1] - Number of rooms
+   * @param {number} [numGuests=1] - Number of guests
    * @returns {Promise<{ id: string }>} Created reservation ID
    */
-  create: async (hotelId, hotelName, userId, checkIn, checkOut) => {
+  create: async (hotelId, userId, checkIn, checkOut, numRooms = 1, numGuests = 1) => {
     const response = await api.post('/reservations', {
       hotel_id: hotelId,
-      hotel_name: hotelName,
       user_id: userId,
       check_in: checkIn,
       check_out: checkOut,
+      num_rooms: numRooms,
+      num_guests: numGuests,
     });
     return response.data;
   },

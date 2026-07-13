@@ -3,10 +3,17 @@ package services
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"math"
+	"time"
 
 	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels"
 )
+
+// Moneda de los precios de la plataforma: los price_per_night del seed y la
+// demo están expresados en USD. TotalPrice viaja en centavos (int64).
+const reservationCurrency = "USD"
 
 // Estas funciones salen de los repositorios, se encargan de interactuar tanto de la base de datos como de la cache, ambas tienen las mismas funciones pero con diferentes implementaciones para cada cosa
 type Repository interface {
@@ -16,26 +23,38 @@ type Repository interface {
 	Delete(ctx context.Context, id string) error
 	CreateReservation(ctx context.Context, reservation hotelsDAO.Reservation) (string, error)
 	GetReservationByID(ctx context.Context, id string) (hotelsDAO.Reservation, error)
-	CancelReservation(ctx context.Context, id string) error
-	GetReservationsByHotelID(ctx context.Context, hotelID string) ([]hotelsDAO.Reservation, error)
-	GetReservationsByUserAndHotelID(ctx context.Context, hotelID string, userID string) ([]hotelsDAO.Reservation, error)
-	GetReservationsByUserID(ctx context.Context, userID string) ([]hotelsDAO.Reservation, error)
+	CancelReservation(ctx context.Context, id string) (hotelsDAO.Reservation, error)
+	GetReservationsByHotelID(ctx context.Context, hotelID string, limit, offset int64) ([]hotelsDAO.Reservation, error)
+	GetReservationsByUserAndHotelID(ctx context.Context, hotelID string, userID string, limit, offset int64) ([]hotelsDAO.Reservation, error)
+	GetReservationsByUserID(ctx context.Context, userID string, limit, offset int64) ([]hotelsDAO.Reservation, error)
 	DeleteReservationsByHotelID(ctx context.Context, hotelID string) error
 	GetAvailability(ctx context.Context, hotelIDs []string, checkIn, checkOut string) (map[string]bool, error)
 }
 
+// CacheRepository extiende Repository con los setters de listas completas:
+// las listas agregadas solo se escriben ENTERAS (desde el service, que sabe
+// cuándo una página es la lista completa) y se invalidan en cada escritura de
+// reserva — nunca se editan por-ítem (RV1/RV2).
+type CacheRepository interface {
+	Repository
+	SetReservationsByHotelID(ctx context.Context, hotelID string, reservations []hotelsDAO.Reservation)
+	SetReservationsByUserID(ctx context.Context, userID string, reservations []hotelsDAO.Reservation)
+	SetReservationsByUserAndHotelID(ctx context.Context, hotelID, userID string, reservations []hotelsDAO.Reservation)
+}
+
 type Queue interface {
 	Publish(hotelNew hotelsDomain.HotelNew) error
+	PublishReservation(reservationNew hotelsDomain.ReservationNew) error
 }
 
 type Service struct {
 	mainRepository  Repository
-	cacheRepository Repository
+	cacheRepository CacheRepository
 	eventsQueue     Queue
 }
 
 // Funcion que se encarga de crear un nuevo servicio con los repositorios y la cola de eventos
-func NewService(mainRepository Repository, cacheRepository Repository, eventsQueue Queue) Service {
+func NewService(mainRepository Repository, cacheRepository CacheRepository, eventsQueue Queue) Service {
 	return Service{
 		mainRepository:  mainRepository,
 		cacheRepository: cacheRepository,
@@ -53,9 +72,10 @@ func (service Service) GetHotelByID(ctx context.Context, id string) (hotelsDomai
 		if err != nil {
 			return hotelsDomain.Hotel{}, fmt.Errorf("error getting hotel from repository: %v", err)
 		}
-		// Se guarda el hotel en la cache
+		// Se guarda el hotel en la cache — best-effort (R3): un fallo de caché
+		// nunca falla una lectura ya resuelta
 		if _, err := service.cacheRepository.Create(ctx, hotelDAO); err != nil {
-			return hotelsDomain.Hotel{}, fmt.Errorf("error creating hotel in cache: %w", err)
+			slog.Warn("error caching hotel", "hotel_id", id, "error", err)
 		}
 	}
 
@@ -152,9 +172,10 @@ func (service Service) Update(ctx context.Context, hotel hotelsDomain.Hotel) err
 		return fmt.Errorf("error updating hotel in main repository: %w", err)
 	}
 
-	//INTENTA actualizar el hotel en el repositorio de cache
+	// Caché best-effort (D2): si el hotel expiró de la caché, loguear y seguir.
+	// Nunca fallar una escritura de DB exitosa — y el evento se publica SIEMPRE.
 	if err := service.cacheRepository.Update(ctx, record); err != nil {
-		return fmt.Errorf("error updating hotel in cache: %w", err)
+		slog.Warn("error updating hotel in cache (continuing)", "hotel_id", hotel.ID, "error", err)
 	}
 
 	// Publica un evento para notificar la actualización del hotel (RabbitMQ)
@@ -175,9 +196,9 @@ func (service Service) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("error deleting reservations for hotel %s from main repository: %w", id, err)
 	}
 
-	// Eliminar todas las reservas asociadas al hotel del repositorio de cache
+	// Eliminar las reservas del hotel de la cache — best-effort (D2)
 	if err := service.cacheRepository.DeleteReservationsByHotelID(ctx, id); err != nil {
-		return fmt.Errorf("error deleting reservations for hotel %s from cache: %w", id, err)
+		slog.Warn("error deleting hotel reservations from cache (continuing)", "hotel_id", id, "error", err)
 	}
 
 	// Intenta eliminar el hotel del repositorio principal (MongoDB)
@@ -186,9 +207,9 @@ func (service Service) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("error deleting hotel from main repository: %w", err)
 	}
 
-	// Intenta eliminar el hotel del repositorio de cache
+	// Eliminar el hotel de la cache — best-effort (D2)
 	if err := service.cacheRepository.Delete(ctx, id); err != nil {
-		return fmt.Errorf("error deleting hotel from cache: %w", err)
+		slog.Warn("error deleting hotel from cache (continuing)", "hotel_id", id, "error", err)
 	}
 
 	// Publica un evento para notificar la eliminación del hotel (RabbitMQ)
@@ -202,23 +223,102 @@ func (service Service) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (service Service) CreateReservation(ctx context.Context, reservation hotelsDomain.Reservation) (string, error) {
-	record := hotelsDAO.Reservation{
-		HotelName: reservation.HotelName,
-		HotelID:   reservation.HotelID,
-		UserID:    reservation.UserID,
-		CheckIn:   reservation.CheckIn,
-		CheckOut:  reservation.CheckOut,
+// reservationToDomain convierte el modelo DAO al de dominio para respuestas.
+func reservationToDomain(reservationDAO hotelsDAO.Reservation) hotelsDomain.Reservation {
+	return hotelsDomain.Reservation{
+		ID:          reservationDAO.ID,
+		HotelName:   reservationDAO.HotelName,
+		HotelID:     reservationDAO.HotelID,
+		UserID:      reservationDAO.UserID,
+		CheckIn:     reservationDAO.CheckIn,
+		CheckOut:    reservationDAO.CheckOut,
+		Status:      reservationDAO.Status,
+		NumRooms:    reservationDAO.NumRooms,
+		NumGuests:   reservationDAO.NumGuests,
+		TotalPrice:  reservationDAO.TotalPrice,
+		Currency:    reservationDAO.Currency,
+		CreatedAt:   reservationDAO.CreatedAt,
+		CancelledAt: reservationDAO.CancelledAt,
 	}
-	// Crea la reserva en el repositorio principal (base de datos -> MongoDB)
+}
+
+// normalizeToDay trunca a medianoche para comparar solo la parte fecha.
+func normalizeToDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
+// CreateReservation valida la reserva contra el hotel (DM2), deriva nombre y
+// precio del hotel (nunca del body) y delega el no-overbooking al claim
+// atómico del repositorio (D1), que devuelve ErrNoAvailability sin cupo.
+func (service Service) CreateReservation(ctx context.Context, reservation hotelsDomain.Reservation) (string, error) {
+	// El hotel tiene que existir (cache-aside vía GetHotelByID)
+	hotel, err := service.GetHotelByID(ctx, reservation.HotelID)
+	if err != nil {
+		return "", fmt.Errorf("error getting hotel for reservation: %w", err)
+	}
+
+	// Defaults y validaciones
+	if reservation.NumRooms == 0 {
+		reservation.NumRooms = 1
+	}
+	if reservation.NumGuests == 0 {
+		reservation.NumGuests = 1
+	}
+	checkIn := normalizeToDay(reservation.CheckIn)
+	checkOut := normalizeToDay(reservation.CheckOut)
+	if !checkOut.After(checkIn) {
+		return "", fmt.Errorf("check-out date must be after check-in date")
+	}
+	if checkIn.Before(normalizeToDay(time.Now().UTC())) {
+		return "", fmt.Errorf("check-in date must not be in the past")
+	}
+	if reservation.NumRooms < 1 || reservation.NumRooms > hotel.AvaiableRooms {
+		return "", fmt.Errorf("num_rooms must be between 1 and the hotel capacity (%d): %w", hotel.AvaiableRooms, hotelsDomain.ErrNoAvailability)
+	}
+	if reservation.NumGuests < 1 {
+		return "", fmt.Errorf("num_guests must be at least 1")
+	}
+
+	// Derivar precio total en centavos (nunca float para dinero): precio por
+	// noche redondeado a centavos × noches × habitaciones.
+	nights := int64(checkOut.Sub(checkIn).Hours() / 24)
+	totalPrice := int64(math.Round(hotel.PricePerNight*100)) * nights * int64(reservation.NumRooms)
+
+	record := hotelsDAO.Reservation{
+		HotelName:  hotel.Name, // derivado del hotel, no del body
+		HotelID:    reservation.HotelID,
+		UserID:     reservation.UserID,
+		CheckIn:    checkIn,
+		CheckOut:   checkOut,
+		Status:     hotelsDAO.StatusConfirmed,
+		NumRooms:   reservation.NumRooms,
+		NumGuests:  reservation.NumGuests,
+		TotalPrice: totalPrice,
+		Currency:   reservationCurrency,
+		CreatedAt:  time.Now().UTC(),
+	}
+
+	// Crea la reserva en el repositorio principal: el claim atómico del
+	// inventario pasa o devuelve ErrNoAvailability (el controller mapea 409)
 	id, err := service.mainRepository.CreateReservation(ctx, record)
 	if err != nil {
 		return "", fmt.Errorf("error creating reservation in main repository: %w", err)
 	}
-	// Crea la reserva en el repositorio de cache
+
+	// Caché best-effort (R3): la reserva ya está persistida
 	record.ID = id
 	if _, err := service.cacheRepository.CreateReservation(ctx, record); err != nil {
-		return "", fmt.Errorf("error creating reservation in cache: %w", err)
+		slog.Warn("error caching reservation (continuing)", "reservation_id", id, "error", err)
+	}
+
+	// Evento de reserva (DM5) por la cola reservations-news. Nadie la consume
+	// aún: un fallo de publish no puede tirar una reserva ya confirmada.
+	if err := service.eventsQueue.PublishReservation(hotelsDomain.ReservationNew{
+		Operation:     "CREATE",
+		ReservationID: id,
+		HotelID:       record.HotelID,
+	}); err != nil {
+		slog.Warn("error publishing reservation created event (continuing)", "reservation_id", id, "error", err)
 	}
 
 	return id, nil
@@ -233,135 +333,114 @@ func (service Service) GetReservationByID(ctx context.Context, id string) (hotel
 		if err != nil {
 			return hotelsDomain.Reservation{}, fmt.Errorf("error getting reservation from repository: %w", err)
 		}
-		// Se guarda la reserva en la cache
+		// Se guarda la reserva en la cache — best-effort (R3)
 		if _, err := service.cacheRepository.CreateReservation(ctx, reservationDAO); err != nil {
-			// Log error pero no fallar, ya que tenemos la reserva
-			fmt.Printf("Error caching reservation: %v\n", err)
+			slog.Warn("error caching reservation (continuing)", "reservation_id", id, "error", err)
 		}
 	}
 
 	// Se convierte la reserva de formato de base de datos a formato de dominio
-	reservation := hotelsDomain.Reservation{
-		ID:        reservationDAO.ID,
-		HotelName: reservationDAO.HotelName,
-		HotelID:   reservationDAO.HotelID,
-		UserID:    reservationDAO.UserID,
-		CheckIn:   reservationDAO.CheckIn,
-		CheckOut:  reservationDAO.CheckOut,
-	}
-
-	return reservation, nil
+	return reservationToDomain(reservationDAO), nil
 }
 
+// CancelReservation cancela en el repositorio principal (soft-delete
+// idempotente que libera el inventario) y refleja el cambio en la caché y en
+// la cola de eventos de forma best-effort.
 func (service Service) CancelReservation(ctx context.Context, id string) error {
-	// Intenta eliminar la reserva del repositorio principal (MongoDB)
-	err := service.mainRepository.CancelReservation(ctx, id)
+	cancelled, err := service.mainRepository.CancelReservation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("error canceling reservation from main repository: %w", err)
 	}
 
-	// Intenta eliminar la reserva del repositorio de cache
-	if err := service.cacheRepository.CancelReservation(ctx, id); err != nil {
-		return fmt.Errorf("error canceling reservation from cache: %w", err)
+	// Caché best-effort: setea la copia cancelada que devolvió Mongo e
+	// invalida las listas agregadas — funciona igual con la key individual
+	// evicted, cosa que Cache.CancelReservation no podía garantizar (RV3)
+	if _, err := service.cacheRepository.CreateReservation(ctx, cancelled); err != nil {
+		slog.Warn("error updating cancelled reservation in cache (continuing)", "reservation_id", id, "error", err)
+	}
+
+	// Evento de reserva (DM5) — best-effort, ver CreateReservation
+	if err := service.eventsQueue.PublishReservation(hotelsDomain.ReservationNew{
+		Operation:     "CANCEL",
+		ReservationID: id,
+		HotelID:       cancelled.HotelID,
+	}); err != nil {
+		slog.Warn("error publishing reservation cancelled event (continuing)", "reservation_id", id, "error", err)
 	}
 
 	return nil
 }
 
-func (service Service) GetReservationsByHotelID(ctx context.Context, hotelID string) ([]hotelsDomain.Reservation, error) {
+func (service Service) GetReservationsByHotelID(ctx context.Context, hotelID string, limit, offset int64) ([]hotelsDomain.Reservation, error) {
 	// Se intenta obtener las reservas del repositorio de cache
-	reservationsDAO, err := service.cacheRepository.GetReservationsByHotelID(ctx, hotelID)
+	reservationsDAO, err := service.cacheRepository.GetReservationsByHotelID(ctx, hotelID, limit, offset)
 	if err != nil {
 		// Si no se encuentran en la cache, se obtienen del repositorio principal
-		reservationsDAO, err = service.mainRepository.GetReservationsByHotelID(ctx, hotelID)
+		reservationsDAO, err = service.mainRepository.GetReservationsByHotelID(ctx, hotelID, limit, offset)
 		if err != nil {
 			return nil, fmt.Errorf("error getting reservations from repository: %v", err)
 		}
-		// Se guardan las reservas en la cache
-		for _, reservationDAO := range reservationsDAO {
-			if _, err := service.cacheRepository.CreateReservation(ctx, reservationDAO); err != nil {
-				return nil, fmt.Errorf("error creating reservation in cache: %w", err)
-			}
+		// Se guarda en la cache SOLO si esta página es la lista completa
+		// (offset 0 y menos resultados que el límite); cachear una página
+		// parcial envenenaría la lista agregada. El setter guarda la lista
+		// entera como copia (RV1/RV2). Best-effort (R3).
+		if offset == 0 && int64(len(reservationsDAO)) < limit {
+			service.cacheRepository.SetReservationsByHotelID(ctx, hotelID, reservationsDAO)
 		}
 	}
 
 	// Se convierten las reservas de formato de base de datos a formato de dominio
 	reservations := make([]hotelsDomain.Reservation, 0)
 	for _, reservationDAO := range reservationsDAO {
-		reservations = append(reservations, hotelsDomain.Reservation{
-			ID:        reservationDAO.ID,
-			HotelName: reservationDAO.HotelName,
-			HotelID:   reservationDAO.HotelID,
-			UserID:    reservationDAO.UserID,
-			CheckIn:   reservationDAO.CheckIn,
-			CheckOut:  reservationDAO.CheckOut,
-		})
+		reservations = append(reservations, reservationToDomain(reservationDAO))
 	}
 
 	return reservations, nil
 }
 
-func (service Service) GetReservationsByUserAndHotelID(ctx context.Context, hotelID string, userID string) ([]hotelsDomain.Reservation, error) {
+func (service Service) GetReservationsByUserAndHotelID(ctx context.Context, hotelID string, userID string, limit, offset int64) ([]hotelsDomain.Reservation, error) {
 	// Se intenta obtener las reservas del repositorio de cache
-	reservationsDAO, err := service.cacheRepository.GetReservationsByUserAndHotelID(ctx, hotelID, userID)
+	reservationsDAO, err := service.cacheRepository.GetReservationsByUserAndHotelID(ctx, hotelID, userID, limit, offset)
 	if err != nil {
 		// Si no se encuentran en la cache, se obtienen del repositorio principal
-		reservationsDAO, err = service.mainRepository.GetReservationsByUserAndHotelID(ctx, hotelID, userID)
+		reservationsDAO, err = service.mainRepository.GetReservationsByUserAndHotelID(ctx, hotelID, userID, limit, offset)
 		if err != nil {
 			return nil, fmt.Errorf("error getting reservations from repository: %v", err)
 		}
-		// Se guardan las reservas en la cache
-		for _, reservationDAO := range reservationsDAO {
-			if _, err := service.cacheRepository.CreateReservation(ctx, reservationDAO); err != nil {
-				return nil, fmt.Errorf("error creating reservation in cache: %w", err)
-			}
+		// Ver GetReservationsByHotelID: solo se cachea la lista completa; best-effort (R3)
+		if offset == 0 && int64(len(reservationsDAO)) < limit {
+			service.cacheRepository.SetReservationsByUserAndHotelID(ctx, hotelID, userID, reservationsDAO)
 		}
 	}
 
 	// Se convierten las reservas de formato de base de datos a formato de dominio
 	reservations := make([]hotelsDomain.Reservation, 0)
 	for _, reservationDAO := range reservationsDAO {
-		reservations = append(reservations, hotelsDomain.Reservation{
-			ID:        reservationDAO.ID,
-			HotelName: reservationDAO.HotelName,
-			HotelID:   reservationDAO.HotelID,
-			UserID:    reservationDAO.UserID,
-			CheckIn:   reservationDAO.CheckIn,
-			CheckOut:  reservationDAO.CheckOut,
-		})
+		reservations = append(reservations, reservationToDomain(reservationDAO))
 	}
 
 	return reservations, nil
 }
 
-func (service Service) GetReservationsByUserID(ctx context.Context, userID string) ([]hotelsDomain.Reservation, error) {
+func (service Service) GetReservationsByUserID(ctx context.Context, userID string, limit, offset int64) ([]hotelsDomain.Reservation, error) {
 	// Se intenta obtener las reservas del repositorio de cache
-	reservationsDAO, err := service.cacheRepository.GetReservationsByUserID(ctx, userID)
+	reservationsDAO, err := service.cacheRepository.GetReservationsByUserID(ctx, userID, limit, offset)
 	if err != nil {
 		// Si no se encuentran en la cache, se obtienen del repositorio principal
-		reservationsDAO, err = service.mainRepository.GetReservationsByUserID(ctx, userID)
+		reservationsDAO, err = service.mainRepository.GetReservationsByUserID(ctx, userID, limit, offset)
 		if err != nil {
 			return nil, fmt.Errorf("error getting reservations from repository: %v", err)
 		}
-		// Se guardan las reservas en la cache
-		for _, reservationDAO := range reservationsDAO {
-			if _, err := service.cacheRepository.CreateReservation(ctx, reservationDAO); err != nil {
-				return nil, fmt.Errorf("error creating reservation in cache: %w", err)
-			}
+		// Ver GetReservationsByHotelID: solo se cachea la lista completa; best-effort (R3)
+		if offset == 0 && int64(len(reservationsDAO)) < limit {
+			service.cacheRepository.SetReservationsByUserID(ctx, userID, reservationsDAO)
 		}
 	}
 
 	// Se convierten las reservas de formato de base de datos a formato de dominio
 	reservations := make([]hotelsDomain.Reservation, 0)
 	for _, reservationDAO := range reservationsDAO {
-		reservations = append(reservations, hotelsDomain.Reservation{
-			ID:        reservationDAO.ID,
-			HotelName: reservationDAO.HotelName,
-			HotelID:   reservationDAO.HotelID,
-			UserID:    reservationDAO.UserID,
-			CheckIn:   reservationDAO.CheckIn,
-			CheckOut:  reservationDAO.CheckOut,
-		})
+		reservations = append(reservations, reservationToDomain(reservationDAO))
 	}
 
 	return reservations, nil

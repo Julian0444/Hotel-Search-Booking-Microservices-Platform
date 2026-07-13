@@ -92,4 +92,4 @@ docker compose logs hotels-api | grep -c "running in .debug. mode"   # → 0
 
 ## Al terminar
 
-Tildá el plan 05 en `plans/README.md`. Commit sugerido: `observability: slog JSON, request-id propagation, livez/readyz, gin release mode, container healthchecks (O1-O4,I5)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

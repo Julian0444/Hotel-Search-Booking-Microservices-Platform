@@ -1,7 +1,9 @@
 package users_test
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	usersDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/dao/users"
@@ -33,11 +35,13 @@ func TestService_GetAll(t *testing.T) {
 			{ID: 1, Username: "user1", Password: "hash1", Tipo: "cliente"},
 			{ID: 2, Username: "admin", Password: "hash2", Tipo: "administrador"},
 		}
-		mainRepo.On("GetAll").Return(mockUsers, nil).Once()
+		mainRepo.On("GetAll", mock.Anything, 20, 0).Return(mockUsers, nil).Once()
+		mainRepo.On("CountAll", mock.Anything).Return(int64(2), nil).Once()
 
-		result, err := svc.GetAll()
+		result, total, err := svc.GetAll(context.Background(), 20, 0)
 
 		assert.NoError(t, err)
+		assert.Equal(t, int64(2), total)
 		assert.Len(t, result, 2)
 		assert.Equal(t, int64(1), result[0].ID)
 		assert.Equal(t, "user1", result[0].Username)
@@ -50,9 +54,9 @@ func TestService_GetAll(t *testing.T) {
 	t.Run("error", func(t *testing.T) {
 		svc, mainRepo, _, _, _ := newTestService()
 
-		mainRepo.On("GetAll").Return(nil, errors.New("db error")).Once()
+		mainRepo.On("GetAll", mock.Anything, 20, 0).Return(nil, errors.New("db error")).Once()
 
-		result, err := svc.GetAll()
+		result, _, err := svc.GetAll(context.Background(), 20, 0)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -67,9 +71,9 @@ func TestService_GetByID(t *testing.T) {
 		svc, _, cacheRepo, memRepo, _ := newTestService()
 
 		mockUser := usersDAO.User{ID: 1, Username: "user1", Password: "hash", Tipo: "cliente"}
-		cacheRepo.On("GetByID", int64(1)).Return(mockUser, nil).Once()
+		cacheRepo.On("GetByID", mock.Anything, int64(1)).Return(mockUser, nil).Once()
 
-		result, err := svc.GetByID(1)
+		result, err := svc.GetByID(context.Background(), 1)
 
 		assert.NoError(t, err)
 		assert.Equal(t, "user1", result.Username)
@@ -82,11 +86,11 @@ func TestService_GetByID(t *testing.T) {
 		svc, mainRepo, cacheRepo, memRepo, _ := newTestService()
 
 		mockUser := usersDAO.User{ID: 1, Username: "user1", Password: "hash", Tipo: "cliente"}
-		cacheRepo.On("GetByID", int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
-		memRepo.On("GetByID", int64(1)).Return(mockUser, nil).Once()
-		cacheRepo.On("Create", mockUser).Return(int64(1), nil).Once()
+		cacheRepo.On("GetByID", mock.Anything, int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
+		memRepo.On("GetByID", mock.Anything, int64(1)).Return(mockUser, nil).Once()
+		cacheRepo.On("Create", mock.Anything, mockUser).Return(int64(1), nil).Once()
 
-		result, err := svc.GetByID(1)
+		result, err := svc.GetByID(context.Background(), 1)
 
 		assert.NoError(t, err)
 		assert.Equal(t, "user1", result.Username)
@@ -98,13 +102,13 @@ func TestService_GetByID(t *testing.T) {
 		svc, mainRepo, cacheRepo, memRepo, _ := newTestService()
 
 		mockUser := usersDAO.User{ID: 1, Username: "user1", Password: "hash", Tipo: "cliente"}
-		cacheRepo.On("GetByID", int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
-		memRepo.On("GetByID", int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
-		mainRepo.On("GetByID", int64(1)).Return(mockUser, nil).Once()
-		cacheRepo.On("Create", mockUser).Return(int64(1), nil).Once()
-		memRepo.On("Create", mockUser).Return(int64(1), nil).Once()
+		cacheRepo.On("GetByID", mock.Anything, int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
+		memRepo.On("GetByID", mock.Anything, int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
+		mainRepo.On("GetByID", mock.Anything, int64(1)).Return(mockUser, nil).Once()
+		cacheRepo.On("Create", mock.Anything, mockUser).Return(int64(1), nil).Once()
+		memRepo.On("Create", mock.Anything, mockUser).Return(int64(1), nil).Once()
 
-		result, err := svc.GetByID(1)
+		result, err := svc.GetByID(context.Background(), 1)
 
 		assert.NoError(t, err)
 		assert.Equal(t, int64(1), result.ID)
@@ -114,11 +118,11 @@ func TestService_GetByID(t *testing.T) {
 	t.Run("DB error", func(t *testing.T) {
 		svc, mainRepo, cacheRepo, memRepo, _ := newTestService()
 
-		cacheRepo.On("GetByID", int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
-		memRepo.On("GetByID", int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
-		mainRepo.On("GetByID", int64(1)).Return(usersDAO.User{}, errors.New("not found")).Once()
+		cacheRepo.On("GetByID", mock.Anything, int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
+		memRepo.On("GetByID", mock.Anything, int64(1)).Return(usersDAO.User{}, errors.New("miss")).Once()
+		mainRepo.On("GetByID", mock.Anything, int64(1)).Return(usersDAO.User{}, errors.New("not found")).Once()
 
-		result, err := svc.GetByID(1)
+		result, err := svc.GetByID(context.Background(), 1)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "error getting user by ID")
@@ -132,20 +136,20 @@ func TestService_Create(t *testing.T) {
 
 		var created usersDAO.User
 		mainRepo.
-			On("Create", mock.Anything).
-			Run(func(args mock.Arguments) { created = args.Get(0).(usersDAO.User) }).
+			On("Create", mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) { created = args.Get(1).(usersDAO.User) }).
 			Return(int64(1), nil).
 			Once()
 
-		cacheRepo.On("Create", mock.MatchedBy(func(u usersDAO.User) bool {
+		cacheRepo.On("Create", mock.Anything, mock.MatchedBy(func(u usersDAO.User) bool {
 			return u.ID == 1 && u.Username == "newuser" && u.Tipo == "cliente"
 		})).Return(int64(1), nil).Once()
 
-		memRepo.On("Create", mock.MatchedBy(func(u usersDAO.User) bool {
+		memRepo.On("Create", mock.Anything, mock.MatchedBy(func(u usersDAO.User) bool {
 			return u.ID == 1 && u.Username == "newuser" && u.Tipo == "cliente"
 		})).Return(int64(1), nil).Once()
 
-		id, err := svc.Create(usersDomain.LoginRequest{Username: "newuser", Password: "password"})
+		id, err := svc.Create(context.Background(), usersDomain.LoginRequest{Username: "newuser", Password: "password"})
 
 		assert.NoError(t, err)
 		assert.Equal(t, int64(1), id)
@@ -158,13 +162,13 @@ func TestService_Create(t *testing.T) {
 	t.Run("success with admin tipo", func(t *testing.T) {
 		svc, mainRepo, cacheRepo, memRepo, _ := newTestService()
 
-		mainRepo.On("Create", mock.MatchedBy(func(u usersDAO.User) bool {
+		mainRepo.On("Create", mock.Anything, mock.MatchedBy(func(u usersDAO.User) bool {
 			return u.Tipo == "administrador"
 		})).Return(int64(2), nil).Once()
-		cacheRepo.On("Create", mock.Anything).Return(int64(2), nil).Once()
-		memRepo.On("Create", mock.Anything).Return(int64(2), nil).Once()
+		cacheRepo.On("Create", mock.Anything, mock.Anything).Return(int64(2), nil).Once()
+		memRepo.On("Create", mock.Anything, mock.Anything).Return(int64(2), nil).Once()
 
-		id, err := svc.Create(usersDomain.LoginRequest{
+		id, err := svc.Create(context.Background(), usersDomain.LoginRequest{
 			Username: "admin",
 			Password: "password",
 			Tipo:     "administrador",
@@ -177,7 +181,7 @@ func TestService_Create(t *testing.T) {
 	t.Run("invalid tipo", func(t *testing.T) {
 		svc, mainRepo, _, _, _ := newTestService()
 
-		id, err := svc.Create(usersDomain.LoginRequest{Username: "u", Password: "p", Tipo: "hacker"})
+		id, err := svc.Create(context.Background(), usersDomain.LoginRequest{Username: "u", Password: "p", Tipo: "hacker"})
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid tipo")
@@ -189,7 +193,7 @@ func TestService_Create(t *testing.T) {
 	t.Run("empty username", func(t *testing.T) {
 		svc, mainRepo, _, _, _ := newTestService()
 
-		id, err := svc.Create(usersDomain.LoginRequest{Username: "", Password: "p"})
+		id, err := svc.Create(context.Background(), usersDomain.LoginRequest{Username: "", Password: "p"})
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "username is required")
@@ -198,12 +202,25 @@ func TestService_Create(t *testing.T) {
 		mainRepo.AssertNotCalled(t, "Create", mock.Anything)
 	})
 
+	t.Run("password too long for bcrypt", func(t *testing.T) {
+		svc, mainRepo, _, _, _ := newTestService()
+
+		longPassword := strings.Repeat("a", 73) // bcrypt opera sobre 72 bytes
+		id, err := svc.Create(context.Background(), usersDomain.LoginRequest{Username: "u", Password: longPassword})
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "too long")
+		assert.Equal(t, int64(0), id)
+
+		mainRepo.AssertNotCalled(t, "Create", mock.Anything)
+	})
+
 	t.Run("DB error", func(t *testing.T) {
 		svc, mainRepo, cacheRepo, memRepo, _ := newTestService()
 
-		mainRepo.On("Create", mock.Anything).Return(int64(0), errors.New("db error")).Once()
+		mainRepo.On("Create", mock.Anything, mock.Anything).Return(int64(0), errors.New("db error")).Once()
 
-		id, err := svc.Create(usersDomain.LoginRequest{Username: "u", Password: "p"})
+		id, err := svc.Create(context.Background(), usersDomain.LoginRequest{Username: "u", Password: "p"})
 
 		assert.Error(t, err)
 		assert.Equal(t, int64(0), id)
@@ -217,11 +234,11 @@ func TestService_Delete(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		svc, mainRepo, cacheRepo, memRepo, _ := newTestService()
 
-		mainRepo.On("Delete", int64(1)).Return(nil).Once()
-		cacheRepo.On("Delete", int64(1)).Return(nil).Once()
-		memRepo.On("Delete", int64(1)).Return(nil).Once()
+		mainRepo.On("Delete", mock.Anything, int64(1)).Return(nil).Once()
+		cacheRepo.On("Delete", mock.Anything, int64(1)).Return(nil).Once()
+		memRepo.On("Delete", mock.Anything, int64(1)).Return(nil).Once()
 
-		err := svc.Delete(1)
+		err := svc.Delete(context.Background(), 1)
 
 		assert.NoError(t, err)
 		mainRepo.AssertExpectations(t)
@@ -232,9 +249,9 @@ func TestService_Delete(t *testing.T) {
 	t.Run("DB error", func(t *testing.T) {
 		svc, mainRepo, cacheRepo, memRepo, _ := newTestService()
 
-		mainRepo.On("Delete", int64(1)).Return(errors.New("db error")).Once()
+		mainRepo.On("Delete", mock.Anything, int64(1)).Return(errors.New("db error")).Once()
 
-		err := svc.Delete(1)
+		err := svc.Delete(context.Background(), 1)
 
 		assert.Error(t, err)
 		cacheRepo.AssertNotCalled(t, "Delete", mock.Anything)
@@ -251,10 +268,10 @@ func TestService_Login(t *testing.T) {
 		hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 		mockUser := usersDAO.User{ID: 1, Username: username, Password: string(hash), Tipo: "cliente"}
 
-		cacheRepo.On("GetByUsername", username).Return(mockUser, nil).Once()
+		cacheRepo.On("GetByUsername", mock.Anything, username).Return(mockUser, nil).Once()
 		tokenizer.On("GenerateToken", username, int64(1), "cliente").Return("token123", nil).Once()
 
-		resp, err := svc.Login(username, password)
+		resp, err := svc.Login(context.Background(), username, password)
 
 		assert.NoError(t, err)
 		assert.Equal(t, int64(1), resp.UserID)
@@ -272,10 +289,10 @@ func TestService_Login(t *testing.T) {
 		hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 		mockUser := usersDAO.User{ID: 2, Username: username, Password: string(hash), Tipo: "administrador"}
 
-		cacheRepo.On("GetByUsername", username).Return(mockUser, nil).Once()
+		cacheRepo.On("GetByUsername", mock.Anything, username).Return(mockUser, nil).Once()
 		tokenizer.On("GenerateToken", username, int64(2), "administrador").Return("admin_token", nil).Once()
 
-		resp, err := svc.Login(username, password)
+		resp, err := svc.Login(context.Background(), username, password)
 
 		assert.NoError(t, err)
 		assert.Equal(t, int64(2), resp.UserID)
@@ -290,9 +307,9 @@ func TestService_Login(t *testing.T) {
 		hash, _ := bcrypt.GenerateFromPassword([]byte("correct"), bcrypt.MinCost)
 		mockUser := usersDAO.User{ID: 1, Username: username, Password: string(hash), Tipo: "cliente"}
 
-		cacheRepo.On("GetByUsername", username).Return(mockUser, nil).Once()
+		cacheRepo.On("GetByUsername", mock.Anything, username).Return(mockUser, nil).Once()
 
-		resp, err := svc.Login(username, "wrong")
+		resp, err := svc.Login(context.Background(), username, "wrong")
 
 		assert.ErrorIs(t, err, service.ErrInvalidCredentials)
 		assert.Equal(t, usersDomain.LoginResponse{}, resp)
@@ -303,24 +320,45 @@ func TestService_Login(t *testing.T) {
 	t.Run("user not found", func(t *testing.T) {
 		svc, mainRepo, cacheRepo, memRepo, _ := newTestService()
 
-		cacheRepo.On("GetByUsername", "missing").Return(usersDAO.User{}, errors.New("miss")).Once()
-		memRepo.On("GetByUsername", "missing").Return(usersDAO.User{}, errors.New("miss")).Once()
-		mainRepo.On("GetByUsername", "missing").Return(usersDAO.User{}, errors.New("not found")).Once()
+		// Solo el sentinel ErrUserNotFound colapsa a credenciales inválidas (RV6)
+		cacheRepo.On("GetByUsername", mock.Anything, "missing").Return(usersDAO.User{}, errors.New("miss")).Once()
+		memRepo.On("GetByUsername", mock.Anything, "missing").Return(usersDAO.User{}, errors.New("miss")).Once()
+		mainRepo.On("GetByUsername", mock.Anything, "missing").Return(usersDAO.User{}, usersRepo.ErrUserNotFound).Once()
 
-		resp, err := svc.Login("missing", "password")
+		resp, err := svc.Login(context.Background(), "missing", "password")
 
 		assert.ErrorIs(t, err, service.ErrInvalidCredentials)
 		assert.Equal(t, usersDomain.LoginResponse{}, resp)
 	})
 
+	t.Run("infra error is NOT invalid credentials (RV6)", func(t *testing.T) {
+		svc, mainRepo, cacheRepo, memRepo, tokenizer := newTestService()
+
+		// MySQL caído: connection refused NO es 401 — se propaga para que el
+		// controller responda 5xx
+		infraErr := errors.New("dial tcp 172.19.0.2:3306: connect: connection refused")
+		cacheRepo.On("GetByUsername", mock.Anything, "user1").Return(usersDAO.User{}, errors.New("miss")).Once()
+		memRepo.On("GetByUsername", mock.Anything, "user1").Return(usersDAO.User{}, errors.New("miss")).Once()
+		mainRepo.On("GetByUsername", mock.Anything, "user1").Return(usersDAO.User{}, infraErr).Once()
+
+		resp, err := svc.Login(context.Background(), "user1", "password")
+
+		assert.Error(t, err)
+		assert.NotErrorIs(t, err, service.ErrInvalidCredentials)
+		assert.Contains(t, err.Error(), "error getting user for login")
+		assert.Equal(t, usersDomain.LoginResponse{}, resp)
+
+		tokenizer.AssertNotCalled(t, "GenerateToken", mock.Anything, mock.Anything, mock.Anything)
+	})
+
 	t.Run("empty credentials", func(t *testing.T) {
 		svc, _, _, _, _ := newTestService()
 
-		resp, err := svc.Login("", "password")
+		resp, err := svc.Login(context.Background(), "", "password")
 		assert.ErrorIs(t, err, service.ErrInvalidCredentials)
 		assert.Equal(t, usersDomain.LoginResponse{}, resp)
 
-		resp, err = svc.Login("user", "")
+		resp, err = svc.Login(context.Background(), "user", "")
 		assert.ErrorIs(t, err, service.ErrInvalidCredentials)
 		assert.Equal(t, usersDomain.LoginResponse{}, resp)
 	})
@@ -333,13 +371,42 @@ func TestService_Login(t *testing.T) {
 		hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 		mockUser := usersDAO.User{ID: 1, Username: username, Password: string(hash), Tipo: "cliente"}
 
-		cacheRepo.On("GetByUsername", username).Return(mockUser, nil).Once()
+		cacheRepo.On("GetByUsername", mock.Anything, username).Return(mockUser, nil).Once()
 		tokenizer.On("GenerateToken", username, int64(1), "cliente").Return("", errors.New("token error")).Once()
 
-		resp, err := svc.Login(username, password)
+		resp, err := svc.Login(context.Background(), username, password)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "error generating token")
 		assert.Equal(t, usersDomain.LoginResponse{}, resp)
 	})
+}
+
+// RV9: BCRYPT_COST fuera del rango sano se clampea al default en vez de
+// romper todos los registros (32 hace fallar GenerateFromPassword; 0 era el
+// único caso defendido antes).
+func TestService_BcryptCostClamp(t *testing.T) {
+	for _, cost := range []int{32, 0} {
+		mainRepo := usersRepo.NewMock()
+		cacheRepo := usersRepo.NewMock()
+		memRepo := usersRepo.NewMock()
+		svc := service.NewService(mainRepo, cacheRepo, memRepo, tokenizers.NewMock(), cost)
+
+		var created usersDAO.User
+		mainRepo.
+			On("Create", mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) { created = args.Get(1).(usersDAO.User) }).
+			Return(int64(1), nil).
+			Once()
+		cacheRepo.On("Create", mock.Anything, mock.Anything).Return(int64(1), nil).Once()
+		memRepo.On("Create", mock.Anything, mock.Anything).Return(int64(1), nil).Once()
+
+		_, err := svc.Create(context.Background(), usersDomain.LoginRequest{Username: "u", Password: "password"})
+
+		assert.NoError(t, err, "cost %d must not fail", cost)
+		hashCost, costErr := bcrypt.Cost([]byte(created.Password))
+		assert.NoError(t, costErr)
+		assert.Equal(t, bcrypt.DefaultCost, hashCost, "cost %d must clamp to default", cost)
+		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(created.Password), []byte("password")))
+	}
 }

@@ -78,18 +78,17 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   /**
-   * Register new user
+   * Register new user (always a customer account; admins are seeded server-side)
    * @param {string} username
    * @param {string} password
-   * @param {string} tipo
    * @returns {Promise<{ success: boolean, error?: string }>}
    */
-  const register = useCallback(async (username, password, tipo = USER_ROLES.CLIENT) => {
+  const register = useCallback(async (username, password) => {
     setError(null);
     setLoading(true);
 
     try {
-      await authService.register(username, password, tipo);
+      await authService.register(username, password);
       // Auto-login after registration
       return await login(username, password);
     } catch (err) {

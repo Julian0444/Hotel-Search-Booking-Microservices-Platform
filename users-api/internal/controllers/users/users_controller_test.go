@@ -2,8 +2,10 @@ package users_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -22,34 +24,34 @@ type mockService struct {
 	mock.Mock
 }
 
-func (m *mockService) GetAll() ([]usersDomain.User, error) {
-	args := m.Called()
-	if err := args.Error(1); err != nil {
-		return nil, err
+func (m *mockService) GetAll(ctx context.Context, limit, offset int) ([]usersDomain.User, int64, error) {
+	args := m.Called(ctx, limit, offset)
+	if err := args.Error(2); err != nil {
+		return nil, 0, err
 	}
-	return args.Get(0).([]usersDomain.User), nil
+	return args.Get(0).([]usersDomain.User), args.Get(1).(int64), nil
 }
 
-func (m *mockService) GetByID(id int64) (usersDomain.User, error) {
-	args := m.Called(id)
+func (m *mockService) GetByID(ctx context.Context, id int64) (usersDomain.User, error) {
+	args := m.Called(ctx, id)
 	if err := args.Error(1); err != nil {
 		return usersDomain.User{}, err
 	}
 	return args.Get(0).(usersDomain.User), nil
 }
 
-func (m *mockService) Create(request usersDomain.LoginRequest) (int64, error) {
-	args := m.Called(request)
+func (m *mockService) Create(ctx context.Context, request usersDomain.LoginRequest) (int64, error) {
+	args := m.Called(ctx, request)
 	return args.Get(0).(int64), args.Error(1)
 }
 
-func (m *mockService) Delete(id int64) error {
-	args := m.Called(id)
+func (m *mockService) Delete(ctx context.Context, id int64) error {
+	args := m.Called(ctx, id)
 	return args.Error(0)
 }
 
-func (m *mockService) Login(username, password string) (usersDomain.LoginResponse, error) {
-	args := m.Called(username, password)
+func (m *mockService) Login(ctx context.Context, username, password string) (usersDomain.LoginResponse, error) {
+	args := m.Called(ctx, username, password)
 	if err := args.Error(1); err != nil {
 		return usersDomain.LoginResponse{}, err
 	}
@@ -77,16 +79,17 @@ func TestController_GetAll(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("GetAll").Return([]usersDomain.User{
+		svc.On("GetAll", mock.Anything, 20, 0).Return([]usersDomain.User{
 			{ID: 1, Username: "user1", Tipo: "cliente"},
 			{ID: 2, Username: "admin", Tipo: "administrador"},
-		}, nil).Once()
+		}, int64(2), nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/users", nil)
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "2", rr.Header().Get("X-Total-Count"))
 
 		var got []usersDomain.User
 		assert.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
@@ -101,7 +104,7 @@ func TestController_GetAll(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("GetAll").Return(nil, errors.New("db error")).Once()
+		svc.On("GetAll", mock.Anything, 20, 0).Return(nil, int64(0), errors.New("db error")).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/users", nil)
 		rr := httptest.NewRecorder()
@@ -129,7 +132,7 @@ func TestController_GetByID(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("GetByID", int64(999)).Return(usersDomain.User{}, usersRepo.ErrUserNotFound).Once()
+		svc.On("GetByID", mock.Anything, int64(999)).Return(usersDomain.User{}, usersRepo.ErrUserNotFound).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/users/999", nil)
 		rr := httptest.NewRecorder()
@@ -143,7 +146,7 @@ func TestController_GetByID(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("GetByID", int64(1)).Return(usersDomain.User{
+		svc.On("GetByID", mock.Anything, int64(1)).Return(usersDomain.User{
 			ID: 1, Username: "user1", Tipo: "cliente",
 		}, nil).Once()
 
@@ -176,31 +179,27 @@ func TestController_Create(t *testing.T) {
 		svc.AssertNotCalled(t, "Create", mock.Anything)
 	})
 
-	t.Run("validation error -> 400", func(t *testing.T) {
+	t.Run("weak password -> 400", func(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		body := `{"username":"u","password":"p","tipo":"hacker"}`
-		svc.On("Create", usersDomain.LoginRequest{
-			Username: "u", Password: "p", Tipo: "hacker",
-		}).Return(int64(0), errors.New("invalid tipo: hacker")).Once()
-
+		body := `{"username":"newuser","password":"1234567"}` // 7 chars < min 8
 		req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusBadRequest, rr.Code)
-		svc.AssertExpectations(t)
+		svc.AssertNotCalled(t, "Create", mock.Anything)
 	})
 
 	t.Run("success -> 201", func(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		body := `{"username":"newuser","password":"pass123"}`
-		svc.On("Create", usersDomain.LoginRequest{
-			Username: "newuser", Password: "pass123",
+		body := `{"username":"newuser","password":"password123"}`
+		svc.On("Create", mock.Anything, usersDomain.LoginRequest{
+			Username: "newuser", Password: "password123", Tipo: "cliente",
 		}).Return(int64(42), nil).Once()
 
 		req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString(body))
@@ -217,13 +216,14 @@ func TestController_Create(t *testing.T) {
 		svc.AssertExpectations(t)
 	})
 
-	t.Run("create admin -> 201", func(t *testing.T) {
+	t.Run("public register cannot self-assign admin", func(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		body := `{"username":"admin","password":"secret","tipo":"administrador"}`
-		svc.On("Create", usersDomain.LoginRequest{
-			Username: "admin", Password: "secret", Tipo: "administrador",
+		// El body pide administrador, pero el handler fuerza tipo=cliente (S1).
+		body := `{"username":"wannabeadmin","password":"supersecret1","tipo":"administrador"}`
+		svc.On("Create", mock.Anything, usersDomain.LoginRequest{
+			Username: "wannabeadmin", Password: "supersecret1", Tipo: "cliente",
 		}).Return(int64(1), nil).Once()
 
 		req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString(body))
@@ -253,7 +253,7 @@ func TestController_Delete(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("Delete", int64(1)).Return(errors.New("db error")).Once()
+		svc.On("Delete", mock.Anything, int64(1)).Return(errors.New("db error")).Once()
 
 		req := httptest.NewRequest(http.MethodDelete, "/users/1", nil)
 		rr := httptest.NewRecorder()
@@ -267,7 +267,7 @@ func TestController_Delete(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("Delete", int64(1)).Return(nil).Once()
+		svc.On("Delete", mock.Anything, int64(1)).Return(nil).Once()
 
 		req := httptest.NewRequest(http.MethodDelete, "/users/1", nil)
 		rr := httptest.NewRecorder()
@@ -302,7 +302,7 @@ func TestController_Login(t *testing.T) {
 		router := setupRouter(svc)
 
 		body := `{"username":"user","password":"wrong"}`
-		svc.On("Login", "user", "wrong").Return(usersDomain.LoginResponse{}, usersService.ErrInvalidCredentials).Once()
+		svc.On("Login", mock.Anything, "user", "wrong").Return(usersDomain.LoginResponse{}, usersService.ErrInvalidCredentials).Once()
 
 		req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -310,6 +310,23 @@ func TestController_Login(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusUnauthorized, rr.Code)
+		svc.AssertExpectations(t)
+	})
+
+	t.Run("mysql colgado (deadline) -> 503", func(t *testing.T) {
+		svc := &mockService{}
+		router := setupRouter(svc)
+
+		body := `{"username":"user","password":"pw"}`
+		wrapped := fmt.Errorf("error getting user for login: %w", context.DeadlineExceeded)
+		svc.On("Login", mock.Anything, "user", "pw").Return(usersDomain.LoginResponse{}, wrapped).Once()
+
+		req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
 		svc.AssertExpectations(t)
 	})
 
@@ -324,7 +341,7 @@ func TestController_Login(t *testing.T) {
 			Token:    "jwt.token.here",
 			Tipo:     "cliente",
 		}
-		svc.On("Login", "user", "correct").Return(expected, nil).Once()
+		svc.On("Login", mock.Anything, "user", "correct").Return(expected, nil).Once()
 
 		req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -351,7 +368,7 @@ func TestController_Login(t *testing.T) {
 			Token:    "admin.jwt.token",
 			Tipo:     "administrador",
 		}
-		svc.On("Login", "admin", "secret").Return(expected, nil).Once()
+		svc.On("Login", mock.Anything, "admin", "secret").Return(expected, nil).Once()
 
 		req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")

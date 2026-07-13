@@ -5,9 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
-	"search-api/internal/dao/hotels"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels"
 
 	"github.com/stevenferrer/solr-go"
 )
@@ -21,6 +22,7 @@ type SolrConfig struct {
 type Solr struct {
 	Client     *solr.JSONClient
 	Collection string
+	baseURL    string
 }
 
 // Funcion para crear una nueva conexion a Solr
@@ -34,34 +36,54 @@ func NewSolr(config SolrConfig) Solr {
 	return Solr{
 		Client:     client,
 		Collection: config.Collection,
+		baseURL:    baseURL,
 	}
+}
+
+// Ping golpea el admin/ping del core (lo usa el /readyz, O3). solr-go no
+// expone ping, así que va directo por HTTP.
+func (searchEngine Solr) Ping(ctx context.Context) error {
+	url := fmt.Sprintf("%s/solr/%s/admin/ping", searchEngine.baseURL, searchEngine.Collection)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("error building solr ping request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("error pinging solr: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("solr ping returned status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // Index crea un nuevo documento de hotel en la coleccion de Solr
 func (searchEngine Solr) Index(ctx context.Context, hotel hotels.Hotel) (string, error) {
 	// Prepara el documento para Solr
 	doc := map[string]interface{}{
-		"id":        hotel.ID,
-		"name":      hotel.Name,
-		"description": hotel.Description,
-		"address":   hotel.Address,
-		"city":      hotel.City,
-		"state":     hotel.State,
-		"country":   hotel.Country,
-		"phone":     hotel.Phone,
-		"email":     hotel.Email,
+		"id":              hotel.ID,
+		"name":            hotel.Name,
+		"description":     hotel.Description,
+		"address":         hotel.Address,
+		"city":            hotel.City,
+		"state":           hotel.State,
+		"country":         hotel.Country,
+		"phone":           hotel.Phone,
+		"email":           hotel.Email,
 		"price_per_night": hotel.PricePerNight,
-		"avaiable_rooms": hotel.AvaiableRooms,
-		"check_in_time": hotel.CheckInTime,
-		"check_out_time": hotel.CheckOutTime,
-		"rating":    hotel.Rating,
-		"amenities": hotel.Amenities,
-		"images":    hotel.Images,
+		"avaiable_rooms":  hotel.AvaiableRooms,
+		"check_in_time":   hotel.CheckInTime,
+		"check_out_time":  hotel.CheckOutTime,
+		"rating":          hotel.Rating,
+		"amenities":       hotel.Amenities,
+		"images":          hotel.Images,
 	}
 
 	// Prepara el request de indexacion
 	indexRequest := map[string]interface{}{
-		"add": []interface{}{doc}, // Usa "add" con una lista de documentos para indexar varios a la vez 
+		"add": []interface{}{doc}, // Usa "add" con una lista de documentos para indexar varios a la vez
 	}
 
 	// Indexa el documento en Solr (Lo pasa a JSON)
@@ -92,22 +114,22 @@ func (searchEngine Solr) Index(ctx context.Context, hotel hotels.Hotel) (string,
 func (searchEngine Solr) Update(ctx context.Context, hotel hotels.Hotel) error {
 	// Prepara el documento para Solr
 	doc := map[string]interface{}{
-		"id":        hotel.ID,
-		"name":      hotel.Name,
-		"description": hotel.Description,
-		"address":   hotel.Address,
-		"city":      hotel.City,
-		"state":     hotel.State,
-		"country":   hotel.Country,
-		"phone":     hotel.Phone,
-		"email":     hotel.Email,
+		"id":              hotel.ID,
+		"name":            hotel.Name,
+		"description":     hotel.Description,
+		"address":         hotel.Address,
+		"city":            hotel.City,
+		"state":           hotel.State,
+		"country":         hotel.Country,
+		"phone":           hotel.Phone,
+		"email":           hotel.Email,
 		"price_per_night": hotel.PricePerNight,
-		"rating":    hotel.Rating,
-		"avaiable_rooms": hotel.AvaiableRooms,
-		"check_in_time": hotel.CheckInTime,
-		"check_out_time": hotel.CheckOutTime,
-		"amenities": hotel.Amenities,
-		"images":    hotel.Images,
+		"rating":          hotel.Rating,
+		"avaiable_rooms":  hotel.AvaiableRooms,
+		"check_in_time":   hotel.CheckInTime,
+		"check_out_time":  hotel.CheckOutTime,
+		"amenities":       hotel.Amenities,
+		"images":          hotel.Images,
 	}
 
 	// Prepara el request de actualizacion
@@ -130,7 +152,7 @@ func (searchEngine Solr) Update(ctx context.Context, hotel hotels.Hotel) error {
 		return fmt.Errorf("failed to update hotel: %v", resp.Error)
 	}
 
-	// Hace commit de los cambios 
+	// Hace commit de los cambios
 	if err := searchEngine.Client.Commit(ctx, searchEngine.Collection); err != nil {
 		return fmt.Errorf("error committing changes to Solr: %w", err)
 	}
@@ -169,7 +191,6 @@ func (searchEngine Solr) Delete(ctx context.Context, id string) error {
 
 	return nil
 }
-
 
 // Funcion para buscar hoteles en Solr
 func (searchEngine Solr) Search(ctx context.Context, query string, limit int, offset int) ([]hotels.Hotel, error) {
@@ -210,22 +231,22 @@ func (searchEngine Solr) Search(ctx context.Context, query string, limit int, of
 
 		// Lo convierte en un objeto de tipo Hotel y lo agrega a la lista
 		hotel := hotels.Hotel{
-			ID:        getStringField(doc, "id"),
-			Name:      getStringField(doc, "name"),
-			Description: getStringField(doc, "description"),
-			Address:   getStringField(doc, "address"),
-			City:      getStringField(doc, "city"),
-			State:     getStringField(doc, "state"),
-			Country:   getStringField(doc, "country"),
-			Phone:     getStringField(doc, "phone"),
-			Email:     getStringField(doc, "email"),
+			ID:            getStringField(doc, "id"),
+			Name:          getStringField(doc, "name"),
+			Description:   getStringField(doc, "description"),
+			Address:       getStringField(doc, "address"),
+			City:          getStringField(doc, "city"),
+			State:         getStringField(doc, "state"),
+			Country:       getStringField(doc, "country"),
+			Phone:         getStringField(doc, "phone"),
+			Email:         getStringField(doc, "email"),
 			PricePerNight: getFloatField(doc, "price_per_night"),
 			AvaiableRooms: int(getFloatField(doc, "avaiable_rooms")),
-			CheckInTime: getTimeField(doc, "check_in_time"),
-			CheckOutTime: getTimeField(doc, "check_out_time"),
-			Rating:    getFloatField(doc, "rating"),
-			Amenities: amenities,
-			Images: images,
+			CheckInTime:   getTimeField(doc, "check_in_time"),
+			CheckOutTime:  getTimeField(doc, "check_out_time"),
+			Rating:        getFloatField(doc, "rating"),
+			Amenities:     amenities,
+			Images:        images,
 		}
 		// Agrega el hotel a la lista
 		hotelsList = append(hotelsList, hotel)
@@ -235,7 +256,6 @@ func (searchEngine Solr) Search(ctx context.Context, query string, limit int, of
 	return hotelsList, nil
 }
 
-
 // Funcion auxiliar para obtener campos de tipo time de un documento
 func getTimeField(doc map[string]interface{}, field string) time.Time {
 	if val, ok := doc[field].(time.Time); ok {
@@ -243,7 +263,6 @@ func getTimeField(doc map[string]interface{}, field string) time.Time {
 	}
 	return time.Time{}
 }
-
 
 // Funcion auxiliar para obtener campos de tipo string de un documento
 func getStringField(doc map[string]interface{}, field string) string {

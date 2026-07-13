@@ -72,7 +72,7 @@ server {
 }
 ```
 
-- Compose: publicar `443:443`, montar `certs/` (los `.pem` van al `.gitignore`; commitear solo un `certs/README.md` con el comando de generación).
+- Compose: publicar `443:443`, montar `certs/` (los `.pem` van al `.gitignore`; en el repo queda solo un `certs/README.md` con el comando de generación).
 - Frontend/docs: base URL a `https://localhost` (el browser avisará por el self-signed — documentarlo); nota en el README de producción: cert real (Let's Encrypt) + `redirect` ya listo (lo consolida el plan 12/P9).
 - El server de monitoreo `:8090` puede quedar HTTP-only interno.
 
@@ -100,4 +100,4 @@ docker compose exec nginx nginx -t   # config válida
 
 ## Al terminar
 
-Tildá el plan 10 en `plans/README.md`. Commit sugerido: `gateway: TLS+HSTS, real search cache, security headers on API routes, 429 on rate-limit (SD4,SD5,I3,I7)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

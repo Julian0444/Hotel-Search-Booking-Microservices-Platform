@@ -120,4 +120,4 @@ cd users-api && go test -race ./...
 
 ## Al terminar
 
-Tildá el plan 03 en `plans/README.md`. Commit sugerido: `persistence: versioned migrations, indexes, pools/timeouts, ctx propagation, DB pagination, demo seed (DB1-DB5,R1,P7)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

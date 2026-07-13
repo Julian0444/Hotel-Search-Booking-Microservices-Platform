@@ -5,21 +5,21 @@
 
 ## Cómo usar
 
-1. Abrí una sesión nueva y decí "empecemos con el NN".
+1. Abrí una sesión nueva y decí "empecemos con el NN". **Antes, leé la última sección de [`HANDOFF.md`](HANDOFF.md)** — ahí está el estado real (qué se hizo, qué está sin commitear, advertencias). Al terminar la sesión, agregale una sección nueva fechada (es un log acumulativo).
 2. Lo primero del archivo es su línea **Alcance:** — verificá de un vistazo qué IDs cubre y cruzá contra la tabla de abajo (ningún ID aparece en dos planes).
 3. **Antes de implementar, validá los snippets contra el código actual** (nombres de campos de config, nombres de servicios del compose, firmas): los planes fueron verificados contra el código de 2026-06-30, pero los planes anteriores pueden haber movido cosas.
-4. Al terminar un plan: corré su bloque **Verificar**, tildá el checkbox acá, y commiteá.
+4. Al terminar un plan: corré su bloque **Verificar**. El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git (nada de add/commit/push/merge — git solo lectura).
 5. Respetá el orden salvo que el plan diga que es independiente — las dependencias están pensadas para no rehacer trabajo.
 
 ## Orden de ejecución y estado
 
 | ✔ | Plan | Alcance en una línea | Depende de |
 |---|------|----------------------|------------|
-| [ ] | [01 — Seguridad: auth + secretos](01-seguridad-auth.md) | Middleware JWT en users-api, registro sin escalada, `JWT_SECRET` obligatorio, secretos a `.env`, validación de entrada + password policy, claims `iss/aud`, tests negativos de auth | — |
-| [ ] | [02 — CI/CD, tooling y módulo de contratos](02-ci-tooling-contratos.md) | `go.work`, `platform-contracts`, golangci-lint v2, GitHub Actions (vet/test `-race`/govulncheck/npm audit), contract test golden, testcontainers skeleton, script e2e endurecido, Makefile/LICENSE/.gitignore | — (hacerlo temprano: red de seguridad) |
-| [ ] | [03 — Persistencia + seed](03-persistencia-seed.md) | Migraciones versionadas, índices, pool/timeouts de driver, refactor `context` en users-api (incluye R1), paginación en DB, seed de hoteles + usuarios demo | 02 (recomendado) |
-| [ ] | [04 — Dominio: no-overbooking + reserva rica](04-dominio-reservas.md) | Inventario atómico por hotel-noche, `Reservation` con estado/cantidad/dinero, evento `ReservationNew`, caché best-effort en escrituras y lecturas, fechas canónicas, tests de repositorio | 03 |
-| [ ] | [05 — Observabilidad](05-observabilidad.md) | `slog` JSON, request-ID end-to-end, `/livez` + `/readyz` reales, Gin release mode, healthchecks del compose | 03 (recomendado) |
+| [x] | [01 — Seguridad: auth + secretos](01-seguridad-auth.md) | Middleware JWT en users-api, registro sin escalada, `JWT_SECRET` obligatorio, secretos a `.env`, validación de entrada + password policy, claims `iss/aud`, tests negativos de auth | — |
+| [x] | [02 — CI/CD, tooling y módulo de contratos](02-ci-tooling-contratos.md) | `go.work`, `platform-contracts`, golangci-lint v2, GitHub Actions (vet/test `-race`/govulncheck/npm audit), contract test golden, testcontainers skeleton, script e2e endurecido, Makefile/LICENSE/.gitignore | — (hacerlo temprano: red de seguridad) |
+| [x] | [03 — Persistencia + seed](03-persistencia-seed.md) | Migraciones versionadas, índices, pool/timeouts de driver, refactor `context` en users-api (incluye R1), paginación en DB, seed de hoteles + usuarios demo | 02 (recomendado) |
+| [x] | [04 — Dominio: no-overbooking + reserva rica](04-dominio-reservas.md) | Inventario atómico por hotel-noche, `Reservation` con estado/cantidad/dinero, evento `ReservationNew`, caché best-effort en escrituras y lecturas, fechas canónicas, tests de repositorio | 03 |
+| [x] | [05 — Observabilidad](05-observabilidad.md) | `slog` JSON, request-ID end-to-end, `/livez` + `/readyz` reales, Gin release mode, healthchecks del compose | 03 (recomendado) |
 | [ ] | [06 — Endurecer search-api](06-search-api.md) | Manual ack + DLQ, query Solr segura, backfill + `/reindex`, timeouts HTTP, reconexión del consumer, `getTimeField`, commit/schema Solr, bump de CVEs | 02, 05 |
 | [ ] | [07 — Contratos de API](07-contratos-api.md) | Envelope de error estándar, `/api/v1`, idempotencia, paginación/envelopes/semántica HTTP consistentes, tipo de `user_id`, content negotiation | 04, 06 |
 | [ ] | [08 — Resiliencia de runtime](08-resiliencia-runtime.md) | **Graceful shutdown/SIGTERM (prereq de k8s)**, deadlines Mongo/Solr/consumer, bulkhead del fan-out, circuit breaker, robustez fina del productor RabbitMQ | 04, 06 · **antes del 09** |
@@ -28,6 +28,14 @@
 | [ ] | [11 — Consistencia y limpieza de código](11-consistencia-limpieza.md) | CORS válido, panel microservices, endpoint con PII, `PORT`, errores tipados, TTL L2, 404 en delete, **rename `AvaiableRooms` (cambio coordinado atómico)**, mocks fuera del binario, layering, perfil frontend | 02 y 07 (obligatorios para C11) |
 | [ ] | [12 — Documentación y presentación](12-documentacion-portfolio.md) | README nuevo, capturas/GIF/diagrama, OpenAPI, traducción de `ProyectoBackend.md`, errores fácticos, badges, prep de entrevista | 01–11 (retrata el estado final) |
 | [ ] | [13 — Stretch: dominio extendido + frontend](13-stretch-dominio-frontend.md) | `Review` + rating derivado, pago stub, room-types, `User` con email, TS/lazy del frontend — **opcional** | 04, 07 (idempotencia de pagos), 11 (C11 antes de DM6) |
+
+### Fixes de la review externa (2026-07-11)
+
+Una review general post-planes 01–05 dejó hallazgos con IDs `RV1`–`RV31`, triageados en
+[`fixes/README.md`](fixes/README.md): los huérfanos tienen planes propios `F1`–`F4` en `fixes/`
+(F4 conviene **antes de que el CI corra por primera vez**; F1 antes de los planes 06/07), y el resto se ejecuta
+**dentro** del plan pendiente que ya tocaba ese código — al empezar los planes 06, 07, 08, 10,
+11 o 13, revisar su fila en esa tabla y sumar los `RV*` correspondientes al alcance.
 
 ### Grafo de dependencias (resumen)
 

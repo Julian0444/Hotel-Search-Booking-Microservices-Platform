@@ -28,14 +28,13 @@ const authService = {
   },
 
   /**
-   * Register new user
+   * Register new user (role is always assigned server-side as "cliente")
    * @param {string} username - Username
    * @param {string} password - Password
-   * @param {string} [tipo='cliente'] - User role
    * @returns {Promise<{ id: number }>} Created user ID
    */
-  register: async (username, password, tipo = 'cliente') => {
-    const response = await api.post('/users', { username, password, tipo });
+  register: async (username, password) => {
+    const response = await api.post('/users', { username, password });
     return response.data;
   },
 

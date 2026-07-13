@@ -1,0 +1,8 @@
+go 1.25.0
+
+use (
+	./hotels-api
+	./platform-contracts
+	./search-api
+	./users-api
+)

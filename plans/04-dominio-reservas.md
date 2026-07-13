@@ -117,4 +117,4 @@ cd hotels-api && go test -race ./... && go test -tags=integration ./...
 
 ## Al terminar
 
-Tildá el plan 04 en `plans/README.md`. Commit sugerido: `domain: atomic per-night inventory (no overbooking), reservation lifecycle+money, ReservationNew event, best-effort cache (D1-D4,DM1,DM2,DM5,C10,R3)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

@@ -66,7 +66,7 @@ Aplica a **users-api y search-api** (no solo users): `users_mock.go`, `tokenizer
 
 ### 10. C11 — Rename `AvaiableRooms` → `AvailableRooms`: **cambio coordinado atómico**
 
-**El ítem más peligroso del plan.** El typo vive en el contrato JSON/BSON completo y está propagado a Solr, frontend y golden test. Hacerlo **en un solo commit/PR**, con el stack corriendo para verificar al final. Puntos de contacto — la lista completa:
+**El ítem más peligroso del plan.** El typo vive en el contrato JSON/BSON completo y está propagado a Solr, frontend y golden test. Hacerlo **como un único cambio atómico** (el usuario lo versiona luego como una sola unidad — la sesión no ejecuta git), con el stack corriendo para verificar al final. Puntos de contacto — la lista completa:
 
 1. **`platform-contracts`** (plan 02 lo dejó con el typo a propósito): `AvaiableRooms` → `AvailableRooms` en el struct `Hotel` **y su tag** (verificar el literal exacto del tag en el código — json y bson pueden diferir). Los type-alias de hotels-api y search-api arrastran el cambio automáticamente.
 2. **hotels-api**: `grep -rn "Avaiable" hotels-api/` — domain (`hotels_domain.go:17`), dao (`hotels_dao.go:17`), service, controller, caché y cualquier `bson.M` literal que use el nombre del campo (p.ej. proyecciones o updates).
@@ -81,11 +81,11 @@ db.hotels.updateMany({}, { $rename: { "<tag_bson_viejo>": "available_rooms" } })
    Y actualizar `seed/mongo-init.js` (plan 03) al nombre nuevo.
 4. **search-api / Solr**: `grep -rn "Avaiable" search-api/` (espejo del grep de hotels-api del punto 2) — el mapeo del documento en `hotels_solr.go` + el campo en `schema.xml`. Tras el deploy: **reindexar** (`POST /reindex` del plan 06) o `docker compose down -v` para recrear el core.
 5. **Frontend**: `grep -rn "avaiable\|Avaiable" frontend/src/` — service layer, HotelDetail, formularios del admin.
-6. **Golden contract test (plan 02/T2)**: si el golden incluye el payload del hotel (fixture de `GET /hotels/:id` o del doc Solr en `testdata/`), actualizarlo **deliberadamente en este commit** — es el único momento legítimo en que los goldens cambian; el test en rojo antes de actualizar el golden confirma que protege el wire format.
+6. **Golden contract test (plan 02/T2)**: si el golden incluye el payload del hotel (fixture de `GET /hotels/:id` o del doc Solr en `testdata/`), actualizarlo **deliberadamente como parte de este mismo cambio** — es el único momento legítimo en que los goldens cambian; el test en rojo antes de actualizar el golden confirma que protege el wire format.
 7. **Docs/colecciones**: Bruno, `users.md`/`README` si muestran ejemplos de payload (la pasada completa es el plan 12; acá solo que no quede el typo en ejemplos ejecutables).
-8. **Estrategia de rotura**: con `/api/v1` (plan 07) el rename queda dentro de la misma versión — aceptable porque no hay consumidores externos; dejarlo dicho en el commit message. Si el plan 07 no corrió aún, NO hacer C11 todavía.
+8. **Estrategia de rotura**: con `/api/v1` (plan 07) el rename queda dentro de la misma versión — aceptable porque no hay consumidores externos; documentar la decisión (el usuario la refleja al versionar). Si el plan 07 no corrió aún, NO hacer C11 todavía.
 
-Verificación específica C11 (antes del commit):
+Verificación específica C11 (antes de dar por cerrado el cambio):
 
 ```bash
 grep -rni "avaiable" --exclude-dir=node_modules . | grep -v plantofinish | grep -v plans/   # → 0 hits
@@ -124,4 +124,4 @@ go list -deps ./users-api/cmd/... ./search-api/cmd/... | grep -c testify    # 0 
 
 ## Al terminar
 
-Tildá el plan 11 en `plans/README.md`. Commit sugerido (C11 puede ir en commit propio): `consistency: valid CORS, real admin panel, PII behind auth, typed errors, L2 TTL, atomic available_rooms rename (C1-C13 subset, CQ4, I8)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

@@ -45,7 +45,7 @@ location @api_error {
 
 - `v1 := router.Group("/api/v1")` en los 3 servicios; `health`/`livez`/`readyz` **fuera** del grupo.
 - nginx: prefijar cada `location` **y** su `proxy_pass` target, incluidas las 2 regex de `/users/{id}/reservations`.
-- Frontend en el **mismo commit**: base URL del service layer + proxy de Vite.
+- Frontend en el **mismo cambio atómico** (el usuario lo versiona como una unidad): base URL del service layer + proxy de Vite.
 - Documentar la estrategia de versionado en una línea del README (lo retoma el plan 12).
 
 ### 3. Idempotencia en POST (A3)
@@ -114,4 +114,4 @@ cd frontend && npm run build
 
 ## Al terminar
 
-Tildá el plan 07 en `plans/README.md`. Commit sugerido: `api: problem envelope, /api/v1, idempotency keys, consistent pagination/envelopes/semantics, user_id type (A1-A8)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

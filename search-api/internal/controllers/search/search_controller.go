@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	hotelsDomain "search-api/internal/domain/hotels"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,7 +24,6 @@ func NewController(service Service) Controller {
 		service: service,
 	}
 }
-
 
 // Funcion para buscar hoteles en Solr
 func (controller Controller) Search(c *gin.Context) {

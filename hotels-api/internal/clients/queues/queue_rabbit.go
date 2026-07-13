@@ -3,7 +3,7 @@ package queues
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -26,29 +26,33 @@ type RabbitConfig struct {
 	Username  string
 	Password  string
 	QueueName string
+	// Cola separada para eventos de reservas (DM5): search-api consume
+	// QueueName esperando HotelNew; mezclar tipos rompería su Unmarshal.
+	ReservationsQueueName string
 }
 
 type RabbitQueue struct {
-	config     RabbitConfig
-	connection *amqp.Connection
-	channel    *amqp.Channel
-	queueName  string
-	mu         sync.RWMutex
-	connected  bool
+	config                RabbitConfig
+	connection            *amqp.Connection
+	channel               *amqp.Channel
+	queueName             string
+	reservationsQueueName string
+	mu                    sync.RWMutex
+	connected             bool
 }
 
 // NewRabbit crea una nueva instancia de RabbitQueue con reconexión automática
 func NewRabbit(config RabbitConfig) *RabbitQueue {
 	rq := &RabbitQueue{
-		config:    config,
-		queueName: config.QueueName,
-		connected: false,
+		config:                config,
+		queueName:             config.QueueName,
+		reservationsQueueName: config.ReservationsQueueName,
+		connected:             false,
 	}
 
 	// Intentar conexión inicial con reintentos
 	if err := rq.connectWithRetry(); err != nil {
-		log.Printf("Warning: Initial RabbitMQ connection failed after %d retries: %v", maxRetries, err)
-		log.Printf("RabbitMQ will attempt to reconnect on next publish")
+		slog.Warn("initial RabbitMQ connection failed, will reconnect on next publish", "retries", maxRetries, "error", err)
 	}
 
 	return rq
@@ -60,14 +64,14 @@ func (rq *RabbitQueue) connectWithRetry() error {
 	backoff := initialBackoff
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		log.Printf("RabbitMQ connection attempt %d/%d...", attempt, maxRetries)
+		slog.Info("RabbitMQ connection attempt", "attempt", attempt, "max_retries", maxRetries)
 
 		if err := rq.connect(); err != nil {
 			lastErr = err
-			log.Printf("Connection attempt %d failed: %v", attempt, err)
+			slog.Warn("RabbitMQ connection attempt failed", "attempt", attempt, "error", err)
 
 			if attempt < maxRetries {
-				log.Printf("Retrying in %v...", backoff)
+				slog.Info("retrying RabbitMQ connection", "backoff", backoff.String())
 				time.Sleep(backoff)
 
 				// Incrementar backoff exponencialmente
@@ -77,7 +81,7 @@ func (rq *RabbitQueue) connectWithRetry() error {
 				}
 			}
 		} else {
-			log.Printf("Successfully connected to RabbitMQ on attempt %d", attempt)
+			slog.Info("connected to RabbitMQ", "attempt", attempt)
 			return nil
 		}
 	}
@@ -111,25 +115,32 @@ func (rq *RabbitQueue) connect() error {
 	// Crear canal
 	ch, err := conn.Channel()
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		rq.connected = false
 		return fmt.Errorf("error creating channel: %w", err)
 	}
 
-	// Declarar la cola
-	_, err = ch.QueueDeclare(
-		rq.config.QueueName, // name
-		true,                // durable
-		false,               // delete when unused
-		false,               // exclusive
-		false,               // no-wait
-		nil,                 // arguments
-	)
-	if err != nil {
-		ch.Close()
-		conn.Close()
-		rq.connected = false
-		return fmt.Errorf("error declaring queue: %w", err)
+	// Declarar las colas (la de reservas solo si está configurada; los tests
+	// unitarios construyen la config sin ella)
+	queueNames := []string{rq.config.QueueName}
+	if rq.config.ReservationsQueueName != "" {
+		queueNames = append(queueNames, rq.config.ReservationsQueueName)
+	}
+	for _, queueName := range queueNames {
+		_, err = ch.QueueDeclare(
+			queueName, // name
+			true,      // durable
+			false,     // delete when unused
+			false,     // exclusive
+			false,     // no-wait
+			nil,       // arguments
+		)
+		if err != nil {
+			_ = ch.Close()
+			_ = conn.Close()
+			rq.connected = false
+			return fmt.Errorf("error declaring queue %s: %w", queueName, err)
+		}
 	}
 
 	rq.connection = conn
@@ -155,16 +166,16 @@ func (rq *RabbitQueue) handleConnectionClose() {
 	// Esperar a que se cierre la conexión
 	closeErr := <-closeChan
 	if closeErr != nil {
-		log.Printf("RabbitMQ connection closed unexpectedly: %v", closeErr)
+		slog.Warn("RabbitMQ connection closed unexpectedly", "error", closeErr)
 
 		rq.mu.Lock()
 		rq.connected = false
 		rq.mu.Unlock()
 
 		// Intentar reconectar automáticamente
-		log.Printf("Attempting to reconnect to RabbitMQ...")
+		slog.Info("attempting to reconnect to RabbitMQ")
 		if err := rq.connectWithRetry(); err != nil {
-			log.Printf("Failed to reconnect to RabbitMQ: %v", err)
+			slog.Error("failed to reconnect to RabbitMQ", "error", err)
 		}
 	}
 }
@@ -182,21 +193,37 @@ func (rq *RabbitQueue) ensureConnection() error {
 		return nil
 	}
 
-	log.Printf("RabbitMQ not connected, attempting to reconnect...")
+	slog.Info("RabbitMQ not connected, attempting to reconnect")
 	return rq.connectWithRetry()
 }
 
-// Publish publica un mensaje en la cola con reintentos
+// Publish publica un evento de hotel en la cola hotels-news con reintentos
 func (rq *RabbitQueue) Publish(hotelNew hotelsDomain.HotelNew) error {
-	// Asegurar conexión antes de publicar
-	if err := rq.ensureConnection(); err != nil {
-		return fmt.Errorf("RabbitMQ connection unavailable: %w", err)
-	}
-
-	// Convertir el mensaje a JSON
 	body, err := json.Marshal(hotelNew)
 	if err != nil {
 		return fmt.Errorf("error marshaling message: %w", err)
+	}
+	return rq.publish(rq.queueName, body)
+}
+
+// PublishReservation publica un evento de reserva en la cola reservations-news
+// (separada de hotels-news: search-api espera HotelNew ahí)
+func (rq *RabbitQueue) PublishReservation(reservationNew hotelsDomain.ReservationNew) error {
+	if rq.reservationsQueueName == "" {
+		return fmt.Errorf("reservations queue name not configured")
+	}
+	body, err := json.Marshal(reservationNew)
+	if err != nil {
+		return fmt.Errorf("error marshaling message: %w", err)
+	}
+	return rq.publish(rq.reservationsQueueName, body)
+}
+
+// publish publica un mensaje en la cola indicada con reintentos
+func (rq *RabbitQueue) publish(queueName string, body []byte) error {
+	// Asegurar conexión antes de publicar
+	if err := rq.ensureConnection(); err != nil {
+		return fmt.Errorf("RabbitMQ connection unavailable: %w", err)
 	}
 
 	// Intentar publicar con reintentos
@@ -218,11 +245,11 @@ func (rq *RabbitQueue) Publish(hotelNew hotelsDomain.HotelNew) error {
 		}
 
 		// Publicar el mensaje
-		err = channel.Publish(
-			"",           // exchange
-			rq.queueName, // routing key
-			false,        // mandatory
-			false,        // immediate
+		err := channel.Publish(
+			"",        // exchange
+			queueName, // routing key
+			false,     // mandatory
+			false,     // immediate
 			amqp.Publishing{
 				ContentType:  "application/json",
 				DeliveryMode: amqp.Persistent,
@@ -234,7 +261,7 @@ func (rq *RabbitQueue) Publish(hotelNew hotelsDomain.HotelNew) error {
 		}
 
 		lastErr = err
-		log.Printf("Publish attempt %d failed: %v", attempt, err)
+		slog.Warn("publish attempt failed", "attempt", attempt, "error", err)
 
 		// Marcar como desconectado y reintentar
 		rq.mu.Lock()
@@ -252,11 +279,11 @@ func (rq *RabbitQueue) Publish(hotelNew hotelsDomain.HotelNew) error {
 // closeUnsafe cierra las conexiones sin bloqueo (debe llamarse con mu bloqueado)
 func (rq *RabbitQueue) closeUnsafe() {
 	if rq.channel != nil {
-		rq.channel.Close()
+		_ = rq.channel.Close()
 		rq.channel = nil
 	}
 	if rq.connection != nil {
-		rq.connection.Close()
+		_ = rq.connection.Close()
 		rq.connection = nil
 	}
 	rq.connected = false
@@ -267,5 +294,5 @@ func (rq *RabbitQueue) Close() {
 	rq.mu.Lock()
 	defer rq.mu.Unlock()
 	rq.closeUnsafe()
-	log.Printf("RabbitMQ connection closed")
+	slog.Info("RabbitMQ connection closed")
 }

@@ -1,0 +1,8 @@
+# Aplica a los builds con contexto raíz (hotels-api y search-api).
+# Allowlist: los Dockerfiles solo copian el módulo del servicio + platform-contracts.
+# Los .dockerignore por servicio llegan con el plan 09 (CN2).
+*
+!platform-contracts/
+!hotels-api/
+!search-api/
+**/coverage.out

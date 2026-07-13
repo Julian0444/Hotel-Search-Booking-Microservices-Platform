@@ -25,9 +25,9 @@ type mockService struct {
 	createReservationFn             func(context.Context, hotelsDomain.Reservation) (string, error)
 	getReservationByIDFn            func(context.Context, string) (hotelsDomain.Reservation, error)
 	cancelReservationFn             func(context.Context, string) error
-	getReservationsByHotelIDFn      func(context.Context, string) ([]hotelsDomain.Reservation, error)
-	getReservationsByUserIDFn       func(context.Context, string) ([]hotelsDomain.Reservation, error)
-	getReservationsByUserAndHotelFn func(context.Context, string, string) ([]hotelsDomain.Reservation, error)
+	getReservationsByHotelIDFn      func(context.Context, string, int64, int64) ([]hotelsDomain.Reservation, error)
+	getReservationsByUserIDFn       func(context.Context, string, int64, int64) ([]hotelsDomain.Reservation, error)
+	getReservationsByUserAndHotelFn func(context.Context, string, string, int64, int64) ([]hotelsDomain.Reservation, error)
 	getAvailabilityFn               func(context.Context, []string, string, string) (map[string]bool, error)
 }
 
@@ -73,21 +73,21 @@ func (m mockService) CancelReservation(ctx context.Context, id string) error {
 	}
 	return nil
 }
-func (m mockService) GetReservationsByHotelID(ctx context.Context, hotelID string) ([]hotelsDomain.Reservation, error) {
+func (m mockService) GetReservationsByHotelID(ctx context.Context, hotelID string, limit, offset int64) ([]hotelsDomain.Reservation, error) {
 	if m.getReservationsByHotelIDFn != nil {
-		return m.getReservationsByHotelIDFn(ctx, hotelID)
+		return m.getReservationsByHotelIDFn(ctx, hotelID, limit, offset)
 	}
 	return nil, nil
 }
-func (m mockService) GetReservationsByUserID(ctx context.Context, userID string) ([]hotelsDomain.Reservation, error) {
+func (m mockService) GetReservationsByUserID(ctx context.Context, userID string, limit, offset int64) ([]hotelsDomain.Reservation, error) {
 	if m.getReservationsByUserIDFn != nil {
-		return m.getReservationsByUserIDFn(ctx, userID)
+		return m.getReservationsByUserIDFn(ctx, userID, limit, offset)
 	}
 	return nil, nil
 }
-func (m mockService) GetReservationsByUserAndHotelID(ctx context.Context, hotelID, userID string) ([]hotelsDomain.Reservation, error) {
+func (m mockService) GetReservationsByUserAndHotelID(ctx context.Context, hotelID, userID string, limit, offset int64) ([]hotelsDomain.Reservation, error) {
 	if m.getReservationsByUserAndHotelFn != nil {
-		return m.getReservationsByUserAndHotelFn(ctx, hotelID, userID)
+		return m.getReservationsByUserAndHotelFn(ctx, hotelID, userID, limit, offset)
 	}
 	return nil, nil
 }
@@ -137,7 +137,10 @@ func makeJWT(t *testing.T, userType string, userID any) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"tipo":    userType,
 		"user_id": userID,
+		"iss":     "users-api",
+		"aud":     []string{"users-api", "hotels-api"},
 		"iat":     now.Unix(),
+		"nbf":     now.Unix(),
 		"exp":     now.Add(1 * time.Hour).Unix(),
 	})
 
@@ -305,7 +308,7 @@ func TestGetReservationsByUserID_ForbiddenWhenUserMismatch(t *testing.T) {
 
 func TestGetReservationsByUserID_OK(t *testing.T) {
 	svc := mockService{
-		getReservationsByUserIDFn: func(_ context.Context, userID string) ([]hotelsDomain.Reservation, error) {
+		getReservationsByUserIDFn: func(_ context.Context, userID string, _, _ int64) ([]hotelsDomain.Reservation, error) {
 			if userID != "1" {
 				t.Fatalf("expected userID=1, got %s", userID)
 			}
@@ -345,7 +348,7 @@ func TestGetReservationsByUserAndHotelID_UnauthorizedWithoutToken(t *testing.T) 
 
 func TestGetReservationsByUserAndHotelID_OK(t *testing.T) {
 	svc := mockService{
-		getReservationsByUserAndHotelFn: func(_ context.Context, hotelID, userID string) ([]hotelsDomain.Reservation, error) {
+		getReservationsByUserAndHotelFn: func(_ context.Context, hotelID, userID string, _, _ int64) ([]hotelsDomain.Reservation, error) {
 			if hotelID != "h1" {
 				t.Fatalf("expected hotelID=h1, got %s", hotelID)
 			}
@@ -377,7 +380,7 @@ func TestCreateReservation_UnauthorizedWithoutToken(t *testing.T) {
 	ctrl := NewController(mockService{})
 	r := setupRouter(ctrl)
 
-	body := `{"hotel_id":"h1","user_id":"1","check_in":"2024-01-01T00:00:00Z","check_out":"2024-01-02T00:00:00Z"}`
+	body := `{"hotel_id":"h1","user_id":"1","check_in":"2024-01-01","check_out":"2024-01-02"}`
 	req := httptest.NewRequest(http.MethodPost, "/reservations", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -393,7 +396,7 @@ func TestCreateReservation_ForbiddenWhenUserMismatch(t *testing.T) {
 	r := setupRouter(ctrl)
 
 	token := makeJWT(t, "cliente", int64(1))
-	body := `{"hotel_id":"h1","user_id":"2","check_in":"2024-01-01T00:00:00Z","check_out":"2024-01-02T00:00:00Z"}`
+	body := `{"hotel_id":"h1","user_id":"2","check_in":"2024-01-01","check_out":"2024-01-02"}`
 	req := httptest.NewRequest(http.MethodPost, "/reservations", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", authBearer(token))
@@ -415,6 +418,12 @@ func TestCreateReservation_Created(t *testing.T) {
 			if r.HotelID != "h1" {
 				t.Fatalf("expected reservation hotel_id=h1, got %q", r.HotelID)
 			}
+			if r.CheckIn.Format("2006-01-02") != "2024-01-01" || r.CheckOut.Format("2006-01-02") != "2024-01-02" {
+				t.Fatalf("unexpected parsed dates: %v - %v", r.CheckIn, r.CheckOut)
+			}
+			if r.NumRooms != 2 || r.NumGuests != 4 {
+				t.Fatalf("expected num_rooms=2 num_guests=4, got %d/%d", r.NumRooms, r.NumGuests)
+			}
 			return "res1", nil
 		},
 	}
@@ -423,7 +432,7 @@ func TestCreateReservation_Created(t *testing.T) {
 	r := setupRouter(ctrl)
 
 	token := makeJWT(t, "cliente", int64(1))
-	body := `{"hotel_id":"h1","user_id":"1","check_in":"2024-01-01T00:00:00Z","check_out":"2024-01-02T00:00:00Z"}`
+	body := `{"hotel_id":"h1","user_id":"1","check_in":"2024-01-01","check_out":"2024-01-02","num_rooms":2,"num_guests":4}`
 	req := httptest.NewRequest(http.MethodPost, "/reservations", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", authBearer(token))
@@ -436,6 +445,70 @@ func TestCreateReservation_Created(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `"id":"res1"`) {
 		t.Fatalf("expected id in body, got: %s", w.Body.String())
+	}
+}
+
+// El DTO exige fechas canónicas YYYY-MM-DD: un datetime RFC3339 es 400
+func TestCreateReservation_BadDateFormat(t *testing.T) {
+	ctrl := NewController(mockService{})
+	r := setupRouter(ctrl)
+
+	token := makeJWT(t, "cliente", int64(1))
+	body := `{"hotel_id":"h1","user_id":"1","check_in":"2024-01-01T00:00:00Z","check_out":"2024-01-02T00:00:00Z"}`
+	req := httptest.NewRequest(http.MethodPost, "/reservations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authBearer(token))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d want=%d body=%s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestCreateReservation_CheckOutNotAfterCheckIn(t *testing.T) {
+	ctrl := NewController(mockService{})
+	r := setupRouter(ctrl)
+
+	token := makeJWT(t, "cliente", int64(1))
+	body := `{"hotel_id":"h1","user_id":"1","check_in":"2024-01-02","check_out":"2024-01-02"}`
+	req := httptest.NewRequest(http.MethodPost, "/reservations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authBearer(token))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d want=%d body=%s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+// D1: ErrNoAvailability del service se mapea a 409 Conflict
+func TestCreateReservation_ConflictWhenNoAvailability(t *testing.T) {
+	svc := mockService{
+		createReservationFn: func(_ context.Context, _ hotelsDomain.Reservation) (string, error) {
+			return "", fmt.Errorf("error creating reservation in main repository: %w", hotelsDomain.ErrNoAvailability)
+		},
+	}
+	ctrl := NewController(svc)
+	r := setupRouter(ctrl)
+
+	token := makeJWT(t, "cliente", int64(1))
+	body := `{"hotel_id":"h1","user_id":"1","check_in":"2024-01-01","check_out":"2024-01-02"}`
+	req := httptest.NewRequest(http.MethodPost, "/reservations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authBearer(token))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("code=%d want=%d body=%s", w.Code, http.StatusConflict, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "no availability") {
+		t.Fatalf("expected availability error in body, got: %s", w.Body.String())
 	}
 }
 

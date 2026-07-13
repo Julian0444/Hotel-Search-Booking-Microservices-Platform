@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	controllers "search-api/internal/controllers/search"
-	hotelsDomain "search-api/internal/domain/hotels"
+	controllers "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/controllers/search"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"

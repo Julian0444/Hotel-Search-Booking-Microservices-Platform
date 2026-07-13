@@ -100,4 +100,4 @@ go test -race ./...   # via go.work
 
 ## Al terminar
 
-Tildá el plan 08 en `plans/README.md`. Commit sugerido: `resilience: graceful shutdown, outbound deadlines, bounded fan-out, circuit breaker, producer retry fix (C12,C14,R2,R4,R5)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

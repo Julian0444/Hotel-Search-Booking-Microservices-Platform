@@ -57,7 +57,9 @@ const MyReservations = () => {
       try {
         setLoading(true);
         const response = await reservationsService.getByUserId(user.id);
-        setReservations(response || []);
+        // Cancelling is a soft-delete since plan 04: hide cancelled ones to
+        // keep the previous UX (richer status UI lands with plan 13)
+        setReservations((response || []).filter((r) => r.status !== 'cancelled'));
       } catch (err) {
         console.error('Error fetching reservations:', err);
         setError('Could not load reservations');

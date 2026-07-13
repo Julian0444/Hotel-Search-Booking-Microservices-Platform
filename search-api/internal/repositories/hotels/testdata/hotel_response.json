@@ -1,0 +1,18 @@
+{
+  "id": "68d9f3a2b4c1e5f6a7b8c9d0",
+  "name": "Hotel Sierras de Córdoba",
+  "description": "Hotel boutique con spa frente a las sierras",
+  "address": "Av. San Martín 1250",
+  "city": "Villa Carlos Paz",
+  "state": "Córdoba",
+  "country": "Argentina",
+  "phone": "+54 3541 42-0000",
+  "email": "reservas@sierrashotel.example.com",
+  "price_per_night": 150.5,
+  "rating": 4.5,
+  "avaiable_rooms": 20,
+  "check_in_time": "2026-01-15T15:00:00Z",
+  "check_out_time": "2026-01-16T10:00:00Z",
+  "amenities": ["wifi", "spa", "pileta"],
+  "images": ["https://example.com/sierras-1.jpg", "https://example.com/sierras-2.jpg"]
+}

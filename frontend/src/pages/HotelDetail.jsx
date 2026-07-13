@@ -115,10 +115,8 @@ const HotelDetail = () => {
 
     try {
       setBookingLoading(true);
-      // Convert dates to ISO 8601 format with time for Go's time.Time parsing
-      const checkInDateTime = new Date(checkIn + 'T15:00:00Z').toISOString();
-      const checkOutDateTime = new Date(checkOut + 'T11:00:00Z').toISOString();
-      await reservationsService.create(hotel.id, hotel.name, String(user.id), checkInDateTime, checkOutDateTime);
+      // The API expects plain YYYY-MM-DD dates (canonical format since plan 04)
+      await reservationsService.create(hotel.id, String(user.id), checkIn, checkOut);
       setSnackbar({ open: true, message: 'Reservation created successfully!', severity: 'success' });
       handleBookingClose();
     } catch (err) {

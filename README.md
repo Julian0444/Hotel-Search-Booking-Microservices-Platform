@@ -167,11 +167,14 @@ git clone https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platf
 cd Hotel-Search-Booking-Microservices-Platform
 ```
 
-### 2. Start backend services
+### 2. Configure environment & start backend services
 
 ```bash
+cp .env.example .env   # local demo credentials (JWT secret, DB passwords, admin seed)
 docker compose up -d --build
 ```
+
+The first admin account is created automatically at startup from `ADMIN_USERNAME` / `ADMIN_PASSWORD` in your `.env` — public registration always creates customer accounts.
 
 This starts **10 containers**: Nginx, MySQL, Memcached, MongoDB, RabbitMQ, Solr, Users API (x3), Hotels API, and Search API.
 
@@ -197,11 +200,11 @@ The frontend runs at `http://localhost:5173` and proxies API requests through Vi
 
 | Method   | Endpoint                                      | Service    | Auth     | Description                     |
 |----------|-----------------------------------------------|------------|----------|---------------------------------|
-| `POST`   | `/users`                                      | Users API  | —        | Register a new user             |
+| `POST`   | `/users`                                      | Users API  | —        | Register a new user (customer role only) |
 | `POST`   | `/login`                                      | Users API  | —        | Login, returns JWT              |
-| `GET`    | `/users`                                      | Users API  | —        | List all users                  |
-| `GET`    | `/users/:id`                                  | Users API  | —        | Get user by ID                  |
-| `DELETE` | `/users/:id`                                  | Users API  | —        | Delete user                     |
+| `GET`    | `/users`                                      | Users API  | Admin    | List all users                  |
+| `GET`    | `/users/:id`                                  | Users API  | Owner/Admin | Get user by ID               |
+| `DELETE` | `/users/:id`                                  | Users API  | Owner/Admin | Delete user                  |
 | `GET`    | `/hotels/:id`                                 | Hotels API | —        | Get hotel details               |
 | `GET`    | `/hotels/:id/reservations`                    | Hotels API | —        | List hotel reservations         |
 | `POST`   | `/hotels/availability`                        | Hotels API | —        | Check availability (multi)      |
@@ -213,6 +216,8 @@ The frontend runs at `http://localhost:5173` and proxies API requests through Vi
 | `PUT`    | `/admin/hotels/:id`                           | Hotels API | Admin    | Update hotel                    |
 | `DELETE` | `/admin/hotels/:id`                           | Hotels API | Admin    | Delete hotel                    |
 | `GET`    | `/health`                                     | Gateway    | —        | Gateway health check            |
+
+> Each Go service also exposes internal (not routed through the gateway) health endpoints: `/livez` (process liveness, `/health` is an alias) and `/readyz` (pings its own dependencies — e.g. Mongo+RabbitMQ for Hotels API — and returns `503` with a per-check status map if any is down). Docker Compose healthchecks hit `/readyz`, and nginx only starts once every upstream is healthy.
 
 ---
 
@@ -228,6 +233,10 @@ The frontend runs at `http://localhost:5173` and proxies API requests through Vi
 - **Gzip Compression** — Enabled for JSON, XML, JavaScript, and CSS responses
 - **Monitoring** — Nginx status and JSON config endpoint on port 8090
 - **Protected Frontend Routes** — React ProtectedRoute component with role-based access
+
+### Known trade-offs (demo scope)
+
+- **Stale cache window on user deletion** — with 3 users-api replicas and an in-process L1 cache, deleting a user only invalidates the replica that served the DELETE: for up to `CACHE_DURATION` (30s) the deleted user can still log in through another replica and obtain a fresh 24h JWT, and stateless JWTs mean already-issued tokens are never revoked. Accepted for this demo; production mitigations: pub/sub cache invalidation, a token denylist, or short-lived tokens + refresh tokens.
 
 ---
 

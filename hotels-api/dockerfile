@@ -1,15 +1,21 @@
 # Use the Go image with Alpine for building and running the application
-FROM golang:1.23-alpine
+# Build context = repo root (see docker-compose.yml): the go.mod replace
+# directive needs ../platform-contracts inside the context.
+FROM golang:1.25-alpine
 
 # Set the working directory inside the container
 WORKDIR /app
 
+# Copy the shared contracts module (resolved via replace ../platform-contracts)
+COPY platform-contracts/ ./platform-contracts/
+
 # Copy go.mod and go.sum and download dependencies
-COPY go.mod go.sum ./
-RUN go mod tidy
+COPY hotels-api/go.mod hotels-api/go.sum ./hotels-api/
+WORKDIR /app/hotels-api
+RUN go mod download
 
 # Copy the rest of the code and build the application (entrypoint en cmd/main.go)
-COPY . .
+COPY hotels-api/ .
 RUN go build -o app ./cmd/main.go
 
 # Create uploads directory for images

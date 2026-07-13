@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /users-api
+    schedule: { interval: weekly }
+  - package-ecosystem: gomod
+    directory: /hotels-api
+    schedule: { interval: weekly }
+  - package-ecosystem: gomod
+    directory: /search-api
+    schedule: { interval: weekly }
+  - package-ecosystem: gomod
+    directory: /platform-contracts
+    schedule: { interval: weekly }
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

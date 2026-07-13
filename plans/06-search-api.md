@@ -103,4 +103,4 @@ cd search-api && go test ./... && GOWORK=off govulncheck ./...   # limpio
 
 ## Al terminar
 
-Tildá el plan 06 en `plans/README.md`. Commit sugerido: `search-api: manual ack+DLQ, safe edismax queries, backfill/reindex, http timeouts, consumer reconnect, solr schema/commit, CVE bumps (E1-E6,DB6,DB7)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

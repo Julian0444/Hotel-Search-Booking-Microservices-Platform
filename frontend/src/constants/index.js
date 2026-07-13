@@ -92,7 +92,7 @@ export const DEFAULT_TIMES = {
 // Validation
 export const VALIDATION = {
   MIN_USERNAME_LENGTH: 3,
-  MIN_PASSWORD_LENGTH: 6,
+  MIN_PASSWORD_LENGTH: 8, // must match users-api RegisterRequest policy
   MAX_RATING: 5,
   MIN_RATING: 0,
 };

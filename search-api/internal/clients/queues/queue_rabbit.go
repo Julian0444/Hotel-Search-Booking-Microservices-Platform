@@ -1,12 +1,16 @@
 package queues
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 
-	"search-api/internal/domain/hotels"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils"
 
+	"github.com/google/uuid"
 	"github.com/streadway/amqp"
 )
 
@@ -37,7 +41,11 @@ func NewRabbit(config RabbitConfig) Rabbit {
 		log.Fatalf("error creating Rabbit channel: %v", err)
 	}
 	// QueueDeclare crea una nueva cola en RabbitMQ
+	// (el plan 06 reemplaza estos Fatalf por reintentos con backoff)
 	queue, err := channel.QueueDeclare(config.QueueName, true, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("error declaring Rabbit queue: %v", err)
+	}
 	return Rabbit{
 		connection: connection,
 		channel:    channel,
@@ -45,8 +53,15 @@ func NewRabbit(config RabbitConfig) Rabbit {
 	}
 }
 
+// IsConnected informa si la conexión AMQP sigue abierta (lo usa el /readyz, O3).
+func (queue Rabbit) IsConnected() bool {
+	return queue.connection != nil && !queue.connection.IsClosed()
+}
+
 // Inicia el consumidor de la cola de RabbitMQ (El que carga los mensaje ya esta definido en la api de hoteles)
-func (queue Rabbit) StartConsumer(handler func(hotels.HotelNew)) error {
+// El handler recibe un context con un request_id generado por mensaje (O1):
+// acá no hay request HTTP inbound del que leer un X-Request-ID.
+func (queue Rabbit) StartConsumer(handler func(context.Context, hotels.HotelNew)) error {
 	messages, err := queue.channel.Consume(
 		queue.queue.Name,
 		"",
@@ -67,10 +82,11 @@ func (queue Rabbit) StartConsumer(handler func(hotels.HotelNew)) error {
 			var hotelUpdate hotels.HotelNew
 			//Unmarshal convierte el json en un objeto de tipo HotelNew
 			if err := json.Unmarshal(msg.Body, &hotelUpdate); err != nil {
-				log.Printf("error unmarshaling message: %v", err)
+				slog.Error("error unmarshaling message", "error", err)
 				continue
 			}
-			handler(hotelUpdate)
+			ctx := utils.WithRequestID(context.Background(), uuid.NewString())
+			handler(ctx, hotelUpdate)
 		}
 	}()
 
@@ -81,10 +97,10 @@ func (queue Rabbit) StartConsumer(handler func(hotels.HotelNew)) error {
 func (queue Rabbit) Close() {
 	// Close cierra el canal de comunicacion
 	if err := queue.channel.Close(); err != nil {
-		log.Printf("error closing Rabbit channel: %v", err)
+		slog.Warn("error closing Rabbit channel", "error", err)
 	}
 	// Close cierra la conexion a RabbitMQ
 	if err := queue.connection.Close(); err != nil {
-		log.Printf("error closing Rabbit connection: %v", err)
+		slog.Warn("error closing Rabbit connection", "error", err)
 	}
 }

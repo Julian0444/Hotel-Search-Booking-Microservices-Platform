@@ -116,4 +116,4 @@ docker compose up -d --build    # el compose sigue funcionando con limits
 
 ## Al terminar
 
-Tildá el plan 09 en `plans/README.md`. Commit sugerido: `cloud-native: k8s manifests with HPA/probes, multi-stage images, dockerignore, resource limits, immutable tags + trivy (CN1-CN4,I2)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

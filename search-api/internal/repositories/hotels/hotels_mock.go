@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	hotelsDAO "search-api/internal/dao/hotels"
-	hotelsDomain "search-api/internal/domain/hotels"
+	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
 )
 
 // Mock implementa la interfaz Repository (Solr) para testing.

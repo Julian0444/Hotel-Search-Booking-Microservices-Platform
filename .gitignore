@@ -1,0 +1,15 @@
+# Secrets — never commit real credentials
+.env
+
+# Go
+coverage.out
+*.test
+*.exe
+
+# Node
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+.claude/

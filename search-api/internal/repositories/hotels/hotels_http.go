@@ -7,7 +7,8 @@ import (
 	"io"
 	"net/http"
 
-	hotelsDomain "search-api/internal/domain/hotels"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils"
 )
 
 type HTTPConfig struct {
@@ -29,28 +30,39 @@ func NewHTTP(config HTTPConfig) HTTP {
 }
 
 func (repository HTTP) GetHotelByID(ctx context.Context, id string) (hotelsDomain.Hotel, error) {
-	resp, err := http.Get(repository.baseURL(id))
+	// NewRequestWithContext: propaga cancelación y el X-Request-ID del mensaje
+	// consumido para correlacionar el hop search→hotels (O1). El client con
+	// timeout completo lo agrega el plan 06 (E4).
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repository.baseURL(id), nil)
 	if err != nil {
-		return hotelsDomain.Hotel{}, fmt.Errorf("Error fetching hotel (%s): %w\n", id, err)
+		return hotelsDomain.Hotel{}, fmt.Errorf("error building request for hotel (%s): %w", id, err)
+	}
+	if requestID := utils.RequestIDFromContext(ctx); requestID != "" {
+		req.Header.Set("X-Request-ID", requestID)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return hotelsDomain.Hotel{}, fmt.Errorf("error fetching hotel (%s): %w", id, err)
 	}
 	// Defer hace que se ejecute la funcion Close() cuando la funcion GetHotelByID termine
 	//La parte de body.Close() es para cerrar el body de la respuesta
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return hotelsDomain.Hotel{}, fmt.Errorf("Failed to fetch hotel (%s): received status code %d\n", id, resp.StatusCode)
+		return hotelsDomain.Hotel{}, fmt.Errorf("failed to fetch hotel (%s): received status code %d", id, resp.StatusCode)
 	}
 
 	// Lee el body de la respuesta
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return hotelsDomain.Hotel{}, fmt.Errorf("Error reading response body for hotel (%s): %w\n", id, err)
+		return hotelsDomain.Hotel{}, fmt.Errorf("error reading response body for hotel (%s): %w", id, err)
 	}
 
 	// Unmarshal the hotel details into the hotel struct
 	var hotel hotelsDomain.Hotel
 	if err := json.Unmarshal(body, &hotel); err != nil {
-		return hotelsDomain.Hotel{}, fmt.Errorf("Error unmarshaling hotel data (%s): %w\n", id, err)
+		return hotelsDomain.Hotel{}, fmt.Errorf("error unmarshaling hotel data (%s): %w", id, err)
 	}
 
 	return hotel, nil

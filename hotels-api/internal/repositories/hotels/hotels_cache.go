@@ -19,126 +19,39 @@ func normalizeDate(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
-// updateHotelReservationsList mantiene sincronizada la lista agregada de reservas por hotel.
-func (repository Cache) updateHotelReservationsList(_ context.Context, reservation hotelsDAO.Reservation, add bool) {
-	key := fmt.Sprintf("reservations:hotel:%s", reservation.HotelID)
-	item := repository.client.Get(key)
-
-	var reservations []hotelsDAO.Reservation
-	if item != nil && !item.Expired() {
-		if existingReservations, ok := item.Value().([]hotelsDAO.Reservation); ok {
-			reservations = existingReservations
-		}
-	}
-
-	if add {
-		// Agrega o reemplaza la reserva
-		found := false
-		for i, r := range reservations {
-			if r.ID == reservation.ID {
-				reservations[i] = reservation
-				found = true
-				break
-			}
-		}
-		if !found {
-			reservations = append(reservations, reservation)
-		}
-	} else {
-		// Elimina la reserva
-		for i, r := range reservations {
-			if r.ID == reservation.ID {
-				reservations = append(reservations[:i], reservations[i+1:]...)
-				break
-			}
-		}
-	}
-
-	if len(reservations) > 0 {
-		repository.client.Set(key, reservations, repository.duration)
-	} else {
-		repository.client.Delete(key)
-	}
+// invalidateReservationLists borra las listas agregadas del par hotel/usuario.
+// Las listas nunca se editan in-place (RV1: cachear parciales envenena; RV2:
+// mutar slices compartidos con lectores concurrentes es un data race): toda
+// escritura invalida y la próxima lectura repobla completa desde Mongo.
+func (repository Cache) invalidateReservationLists(reservation hotelsDAO.Reservation) {
+	repository.client.Delete(fmt.Sprintf("reservations:hotel:%s", reservation.HotelID))
+	repository.client.Delete(fmt.Sprintf("reservations:user:%s", reservation.UserID))
+	repository.client.Delete(fmt.Sprintf("reservations:hotel:%s:user:%s", reservation.HotelID, reservation.UserID))
 }
 
-// updateUserReservationsList mantiene sincronizada la lista agregada de reservas por usuario.
-func (repository Cache) updateUserReservationsList(_ context.Context, reservation hotelsDAO.Reservation, add bool) {
-	key := fmt.Sprintf("reservations:user:%s", reservation.UserID)
-	item := repository.client.Get(key)
-
-	var reservations []hotelsDAO.Reservation
-	if item != nil && !item.Expired() {
-		if existingReservations, ok := item.Value().([]hotelsDAO.Reservation); ok {
-			reservations = existingReservations
-		}
+// storeReservationsList guarda una lista agregada COMPLETA bajo key, como
+// copia (los llamadores conservan su slice; nadie comparte backing array con
+// la caché), y cachea también cada reserva individual. Una lista vacía se
+// guarda igual: "sé que no hay reservas" también es un hit válido.
+func (repository Cache) storeReservationsList(key string, reservations []hotelsDAO.Reservation) {
+	list := make([]hotelsDAO.Reservation, len(reservations))
+	copy(list, reservations)
+	for _, r := range list {
+		repository.client.Set(fmt.Sprintf("reservation:%s", r.ID), r, repository.duration)
 	}
-
-	if add {
-		found := false
-		for i, r := range reservations {
-			if r.ID == reservation.ID {
-				reservations[i] = reservation
-				found = true
-				break
-			}
-		}
-		if !found {
-			reservations = append(reservations, reservation)
-		}
-	} else {
-		for i, r := range reservations {
-			if r.ID == reservation.ID {
-				reservations = append(reservations[:i], reservations[i+1:]...)
-				break
-			}
-		}
-	}
-
-	if len(reservations) > 0 {
-		repository.client.Set(key, reservations, repository.duration)
-	} else {
-		repository.client.Delete(key)
-	}
+	repository.client.Set(key, list, repository.duration)
 }
 
-// updateUserHotelReservationsList mantiene sincronizada la lista combinada por hotel y usuario.
-func (repository Cache) updateUserHotelReservationsList(_ context.Context, reservation hotelsDAO.Reservation, add bool) {
-	key := fmt.Sprintf("reservations:hotel:%s:user:%s", reservation.HotelID, reservation.UserID)
-	item := repository.client.Get(key)
+func (repository Cache) SetReservationsByHotelID(_ context.Context, hotelID string, reservations []hotelsDAO.Reservation) {
+	repository.storeReservationsList(fmt.Sprintf("reservations:hotel:%s", hotelID), reservations)
+}
 
-	var reservations []hotelsDAO.Reservation
-	if item != nil && !item.Expired() {
-		if existingReservations, ok := item.Value().([]hotelsDAO.Reservation); ok {
-			reservations = existingReservations
-		}
-	}
+func (repository Cache) SetReservationsByUserID(_ context.Context, userID string, reservations []hotelsDAO.Reservation) {
+	repository.storeReservationsList(fmt.Sprintf("reservations:user:%s", userID), reservations)
+}
 
-	if add {
-		found := false
-		for i, r := range reservations {
-			if r.ID == reservation.ID {
-				reservations[i] = reservation
-				found = true
-				break
-			}
-		}
-		if !found {
-			reservations = append(reservations, reservation)
-		}
-	} else {
-		for i, r := range reservations {
-			if r.ID == reservation.ID {
-				reservations = append(reservations[:i], reservations[i+1:]...)
-				break
-			}
-		}
-	}
-
-	if len(reservations) > 0 {
-		repository.client.Set(key, reservations, repository.duration)
-	} else {
-		repository.client.Delete(key)
-	}
+func (repository Cache) SetReservationsByUserAndHotelID(_ context.Context, hotelID, userID string, reservations []hotelsDAO.Reservation) {
+	repository.storeReservationsList(fmt.Sprintf("reservations:hotel:%s:user:%s", hotelID, userID), reservations)
 }
 
 type CacheConfig struct {
@@ -274,17 +187,13 @@ func (repository Cache) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// Crea una reserva en la cache
+// Crea una reserva en la cache: guarda la copia individual e INVALIDA las
+// listas agregadas del par hotel/usuario (nunca las edita — RV1/RV2). La
+// próxima lectura repobla la lista completa desde Mongo vía los setters.
 func (repository Cache) CreateReservation(ctx context.Context, reservation hotelsDAO.Reservation) (string, error) {
-	// Guardar la reserva individual
 	key := fmt.Sprintf("reservation:%s", reservation.ID)
 	repository.client.Set(key, reservation, repository.duration)
-
-	// Actualizar listas agregadas
-	repository.updateHotelReservationsList(ctx, reservation, true)
-	repository.updateUserReservationsList(ctx, reservation, true)
-	repository.updateUserHotelReservationsList(ctx, reservation, true)
-
+	repository.invalidateReservationLists(reservation)
 	return reservation.ID, nil
 }
 
@@ -305,30 +214,44 @@ func (repository Cache) GetReservationByID(ctx context.Context, id string) (hote
 	return reservation, nil
 }
 
-// Cancela una reserva en la cache
-func (repository Cache) CancelReservation(ctx context.Context, id string) error {
-	// Obtener la reserva para limpiar listas
+// Cancela una reserva en la cache. Sin call-sites de producción: el service
+// refleja cancelaciones con CreateReservation(copia cancelada de Mongo), que
+// funciona igual con la key individual evicted (RV3). Queda por la interfaz
+// Repository: marca la copia individual si está e invalida las listas.
+func (repository Cache) CancelReservation(ctx context.Context, id string) (hotelsDAO.Reservation, error) {
 	reservation, err := repository.GetReservationByID(ctx, id)
 	if err != nil {
-		// Si no existe, eliminar la clave individual y salir
-		key := fmt.Sprintf("reservation:%s", id)
-		repository.client.Delete(key)
-		return nil
+		// Miss: sin la reserva no se conocen hotel/usuario para invalidar sus
+		// listas — exactamente por eso el service usa CreateReservation (RV3).
+		repository.client.Delete(fmt.Sprintf("reservation:%s", id))
+		return hotelsDAO.Reservation{}, nil
 	}
 
-	key := fmt.Sprintf("reservation:%s", id)
-	repository.client.Delete(key)
+	now := time.Now().UTC()
+	reservation.Status = hotelsDAO.StatusCancelled
+	reservation.CancelledAt = &now
 
-	// Limpiar listas agregadas
-	repository.updateHotelReservationsList(ctx, reservation, false)
-	repository.updateUserReservationsList(ctx, reservation, false)
-	repository.updateUserHotelReservationsList(ctx, reservation, false)
+	repository.client.Set(fmt.Sprintf("reservation:%s", id), reservation, repository.duration)
+	repository.invalidateReservationLists(reservation)
 
-	return nil
+	return reservation, nil
+}
+
+// paginateReservations aplica limit/offset sobre una lista cacheada, con la
+// misma semántica que SetLimit/SetSkip en Mongo.
+func paginateReservations(reservations []hotelsDAO.Reservation, limit, offset int64) []hotelsDAO.Reservation {
+	if offset >= int64(len(reservations)) {
+		return []hotelsDAO.Reservation{}
+	}
+	end := offset + limit
+	if end > int64(len(reservations)) {
+		end = int64(len(reservations))
+	}
+	return reservations[offset:end]
 }
 
 // Obtiene las reservas por ID de hotel y usuario de la cache
-func (repository Cache) GetReservationsByUserAndHotelID(ctx context.Context, hotelID string, userID string) ([]hotelsDAO.Reservation, error) {
+func (repository Cache) GetReservationsByUserAndHotelID(ctx context.Context, hotelID string, userID string, limit, offset int64) ([]hotelsDAO.Reservation, error) {
 	key := fmt.Sprintf("reservations:hotel:%s:user:%s", hotelID, userID)
 	item := repository.client.Get(key)
 	if item == nil {
@@ -341,11 +264,11 @@ func (repository Cache) GetReservationsByUserAndHotelID(ctx context.Context, hot
 	if !ok {
 		return nil, fmt.Errorf("error converting item with key %s", key)
 	}
-	return reservations, nil
+	return paginateReservations(reservations, limit, offset), nil
 }
 
 // Obtiene las reservas por ID de hotel de la cache
-func (repository Cache) GetReservationsByHotelID(ctx context.Context, hotelID string) ([]hotelsDAO.Reservation, error) {
+func (repository Cache) GetReservationsByHotelID(ctx context.Context, hotelID string, limit, offset int64) ([]hotelsDAO.Reservation, error) {
 	key := fmt.Sprintf("reservations:hotel:%s", hotelID)
 	item := repository.client.Get(key)
 	if item == nil {
@@ -358,11 +281,11 @@ func (repository Cache) GetReservationsByHotelID(ctx context.Context, hotelID st
 	if !ok {
 		return nil, fmt.Errorf("error converting item with key %s", key)
 	}
-	return reservations, nil
+	return paginateReservations(reservations, limit, offset), nil
 }
 
 // Obtiene las reservas por ID de usuario de la cache
-func (repository Cache) GetReservationsByUserID(ctx context.Context, userID string) ([]hotelsDAO.Reservation, error) {
+func (repository Cache) GetReservationsByUserID(ctx context.Context, userID string, limit, offset int64) ([]hotelsDAO.Reservation, error) {
 	key := fmt.Sprintf("reservations:user:%s", userID)
 	item := repository.client.Get(key)
 	if item == nil {
@@ -375,7 +298,7 @@ func (repository Cache) GetReservationsByUserID(ctx context.Context, userID stri
 	if !ok {
 		return nil, fmt.Errorf("error converting item with key %s", key)
 	}
-	return reservations, nil
+	return paginateReservations(reservations, limit, offset), nil
 }
 
 // GetAvailability verifica la disponibilidad de múltiples hoteles en caché
@@ -415,9 +338,11 @@ func (repository Cache) GetAvailability(ctx context.Context, hotelIDs []string, 
 	for i := 0; i < len(hotelIDs); i++ {
 		r := <-results
 		if r.err != nil {
-			// En caché, podemos continuar incluso si hay error en un hotel
-			availability[r.hotelID] = false
-			continue
+			// La caché no puede responder por este hotel: se propaga y el
+			// service cae a Mongo (RV4 — antes se mapeaba a available=false
+			// con error nil, mintiendo ante input inválido). El canal tiene
+			// buffer: las goroutines restantes no quedan colgadas.
+			return nil, fmt.Errorf("cache availability failed for hotel %s: %w", r.hotelID, r.err)
 		}
 		availability[r.hotelID] = r.available
 	}
@@ -454,9 +379,10 @@ func (repository Cache) IsHotelAvailable(ctx context.Context, hotelID, checkIn, 
 	key := fmt.Sprintf("reservations:hotel:%s", hotelID)
 	item := repository.client.Get(key)
 	if item == nil || item.Expired() {
-		// Si no hay datos en caché, asumimos que no hay disponibilidad
-		// Esta es una decisión conservadora para evitar overboking
-		return false, nil
+		// Lista ausente = cero reservas conocidas = disponible (D3). El falso
+		// negativo anterior reportaba hoteles libres como "no disponibles";
+		// el no-overbooking real lo garantiza el claim atómico en Mongo.
+		return true, nil
 	}
 
 	reservations, ok := item.Value().([]hotelsDAO.Reservation)
@@ -464,9 +390,17 @@ func (repository Cache) IsHotelAvailable(ctx context.Context, hotelID, checkIn, 
 		return false, fmt.Errorf("error converting cached reservations")
 	}
 
-	// Contar reservas por día usando un mapa (fechas normalizadas)
+	// Contar habitaciones ocupadas por noche (fechas normalizadas), salteando
+	// canceladas — misma semántica que el inventario de Mongo (D4).
 	reservationsByDay := make(map[time.Time]int)
 	for _, reservation := range reservations {
+		if reservation.Status == hotelsDAO.StatusCancelled {
+			continue
+		}
+		rooms := reservation.NumRooms
+		if rooms < 1 {
+			rooms = 1 // reservas pre-plan-04 sin num_rooms
+		}
 		resCheckIn := normalizeDate(reservation.CheckIn)
 		resCheckOut := normalizeDate(reservation.CheckOut)
 
@@ -475,7 +409,7 @@ func (repository Cache) IsHotelAvailable(ctx context.Context, hotelID, checkIn, 
 			// Iterar noches ocupadas: incluye check-in, excluye check-out
 			for date := resCheckIn; date.Before(resCheckOut); date = date.AddDate(0, 0, 1) {
 				if !date.Before(checkInTime) && date.Before(checkOutTime) {
-					reservationsByDay[date]++
+					reservationsByDay[date] += rooms
 				}
 			}
 		}
@@ -491,27 +425,19 @@ func (repository Cache) IsHotelAvailable(ctx context.Context, hotelID, checkIn, 
 	return true, nil
 }
 
-// Elimina todas las reservas de un hotel de la cache
+// Elimina todas las reservas de un hotel de la cache: borra las copias
+// individuales que la lista del hotel conozca e invalida las listas de los
+// usuarios involucrados (borrar, no editar — misma regla que RV1/RV2).
 func (repository Cache) DeleteReservationsByHotelID(ctx context.Context, hotelID string) error {
-	// Obtener todas las reservas del hotel para eliminarlas de la cache
-	reservations, err := repository.GetReservationsByHotelID(ctx, hotelID)
-	if err != nil {
-		// Si no hay reservas, no hay nada que eliminar
-		return nil
+	// Lista completa si está cacheada (limit alto: no una página)
+	reservations, err := repository.GetReservationsByHotelID(ctx, hotelID, int64(^uint64(0)>>1), 0)
+	if err == nil {
+		for _, r := range reservations {
+			repository.client.Delete(fmt.Sprintf("reservation:%s", r.ID))
+			repository.client.Delete(fmt.Sprintf("reservations:user:%s", r.UserID))
+			repository.client.Delete(fmt.Sprintf("reservations:hotel:%s:user:%s", hotelID, r.UserID))
+		}
 	}
-
-	// Eliminar cada reserva individual y limpiar listas agregadas
-	for _, reservation := range reservations {
-		key := fmt.Sprintf("reservation:%s", reservation.ID)
-		repository.client.Delete(key)
-
-		repository.updateUserReservationsList(ctx, reservation, false)
-		repository.updateUserHotelReservationsList(ctx, reservation, false)
-	}
-
-	// Eliminar también la lista de reservas del hotel
-	hotelReservationsKey := fmt.Sprintf("reservations:hotel:%s", hotelID)
-	repository.client.Delete(hotelReservationsKey)
-
+	repository.client.Delete(fmt.Sprintf("reservations:hotel:%s", hotelID))
 	return nil
 }

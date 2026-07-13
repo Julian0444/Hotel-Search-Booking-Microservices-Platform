@@ -1,0 +1,66 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [users-api, hotels-api, search-api, platform-contracts]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          # go.* y no go.sum: platform-contracts no tiene go.sum (cero deps) y
+          # setup-go falla si el path de cache no matchea ningún archivo (RV13)
+          cache-dependency-path: ${{ matrix.module }}/go.*
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
+      - uses: golangci/golangci-lint-action@v8 # CLI v2, lee el .golangci.yml raíz
+        with:
+          working-directory: ${{ matrix.module }}
+      - name: go test
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: govulncheck
+        run: |
+          GOWORK=off go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOWORK=off govulncheck ./...
+
+  # Tests de integración (testcontainers): solo en PRs para no encarecer cada push
+  integration:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hotels-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: hotels-api/go.mod
+          cache-dependency-path: hotels-api/go.sum
+      - run: go test -tags=integration ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm audit --audit-level=high

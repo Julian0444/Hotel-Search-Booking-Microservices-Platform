@@ -17,21 +17,24 @@ auth:bearer {
 body:json {
   {
     "hotel_id": "{{hotel_id}}",
-    "hotel_name": "Test Hotel",
     "user_id": "{{user_id}}",
-    "check_in": "2025-02-01T15:00:00Z",
-    "check_out": "2025-02-05T11:00:00Z"
+    "check_in": "2027-02-01",
+    "check_out": "2027-02-05",
+    "num_rooms": 1,
+    "num_guests": 2
   }
 }
 
 docs {
   Crea una nueva reservación.
   Requiere autenticación con token JWT.
-  
+
   IMPORTANTE:
-  - user_id debe coincidir con el ID del usuario del token
-  - check_in y check_out deben estar en formato RFC3339 (con hora y zona horaria)
-  - Ejemplo: "2025-02-01T15:00:00Z"
+  - user_id debe coincidir con el ID del usuario del token (si se omite, se toma del token)
+  - check_in y check_out van en formato YYYY-MM-DD, con check_in no pasado
+  - num_rooms/num_guests son opcionales (default 1)
+  - hotel_name y total_price se derivan del hotel en el servidor
+  - Sin cupo para el rango pedido → 409 Conflict
 }
 
 settings {

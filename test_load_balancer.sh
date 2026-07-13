@@ -3,7 +3,13 @@
 ###############################################################################
 #                    LOAD BALANCER TEST SCRIPT                                #
 #           Hotel Search & Booking Microservices Platform                     #
+#                                                                             #
+#  Smoke test con asserts: cada check imprime PASS/FAIL, acumula fallos y     #
+#  el script sale con exit 1 si hubo alguno (apto para CI).                   #
+#  Compatible con bash 3.2 (macOS): sin arrays asociativos.                   #
 ###############################################################################
+
+set -euo pipefail
 
 # Colores para output
 RED='\033[0;31m'
@@ -19,6 +25,17 @@ BOLD='\033[1m'
 BASE_URL="http://localhost"
 MONITOR_URL="http://localhost:8090"
 TOTAL_REQUESTS=12
+
+# Acumulador de fallos
+FAILURES=0
+
+pass() { echo -e "  ${GREEN}✓ PASS${NC} $1"; }
+fail() { echo -e "  ${RED}✗ FAIL${NC} $1"; FAILURES=$((FAILURES + 1)); }
+
+# curl que nunca corta el script (devuelve 000 si no conecta)
+http_code() {
+    curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$@" 2>/dev/null || echo "000"
+}
 
 print_header() {
     echo ""
@@ -39,261 +56,249 @@ print_section() {
 # Función para verificar containers
 check_containers() {
     print_section "🐳 Docker Containers Status"
-    
-    containers=(
-        "api-gateway"
-        "users-api-1"
-        "users-api-2"
-        "users-api-3"
-        "hotels-api-container"
-        "search-api-container"
-        "users-mysql"
-        "hotels-mongo"
-        "hotels-rabbit"
-        "search-solr"
-    )
-    
+
+    containers="api-gateway users-api-1 users-api-2 users-api-3 hotels-api-container search-api-container users-mysql hotels-mongo hotels-rabbit search-solr"
+
     running=0
-    total=${#containers[@]}
-    
-    for container in "${containers[@]}"; do
-        if docker ps --format "{{.Names}}" | grep -q "^${container}$"; then
+    total=0
+    running_names=$(docker ps --format "{{.Names}}" 2>/dev/null || true)
+
+    for container in $containers; do
+        total=$((total + 1))
+        if echo "$running_names" | grep -q "^${container}$"; then
             echo -e "  ${GREEN}✓${NC} $container ${GREEN}running${NC}"
-            ((running++))
+            running=$((running + 1))
         else
             echo -e "  ${RED}✗${NC} $container ${RED}not running${NC}"
         fi
     done
-    
+
     echo ""
-    echo -e "  ${BOLD}Status: ${running}/${total} containers running${NC}"
+    if [ "$running" -eq "$total" ]; then
+        pass "containers: ${running}/${total} running"
+    else
+        fail "containers: ${running}/${total} running"
+    fi
 }
 
 # Función para verificar health endpoints
 check_health() {
     print_section "🏥 Health Check Endpoints"
-    
+
     # API Gateway
-    echo -n "  API Gateway (/health): "
-    response=$(curl -s -w "%{http_code}" -o /tmp/health_gw.json "$BASE_URL/health" 2>/dev/null)
+    response=$(http_code "$BASE_URL/health")
     if [ "$response" = "200" ]; then
-        echo -e "${GREEN}✓ Healthy${NC}"
+        pass "API Gateway /health → 200"
     else
-        echo -e "${RED}✗ HTTP $response${NC}"
+        fail "API Gateway /health → HTTP $response (esperado 200)"
     fi
-    
-    # Users API (a través del gateway)
-    echo -n "  Users API (via gateway): "
-    response=$(curl -s -w "%{http_code}" -o /tmp/health_users.json "$BASE_URL/users" 2>/dev/null)
+
+    # Users API (a través del gateway; 401 = vivo y protegido)
+    response=$(http_code "$BASE_URL/users")
     if [ "$response" = "200" ] || [ "$response" = "401" ]; then
-        echo -e "${GREEN}✓ Reachable (HTTP $response)${NC}"
+        pass "Users API via gateway → HTTP $response (reachable)"
     else
-        echo -e "${RED}✗ HTTP $response${NC}"
+        fail "Users API via gateway → HTTP $response (esperado 200/401)"
     fi
-    
-    # Hotels API
-    echo -n "  Hotels API (via gateway): "
-    response=$(curl -s -w "%{http_code}" -o /tmp/health_hotels.json "$BASE_URL/hotels" 2>/dev/null)
+
+    # Hotels API (GET /hotels no existe como lista → 404 = vivo)
+    response=$(http_code "$BASE_URL/hotels")
     if [ "$response" = "200" ] || [ "$response" = "404" ]; then
-        echo -e "${GREEN}✓ Reachable (HTTP $response)${NC}"
+        pass "Hotels API via gateway → HTTP $response (reachable)"
     else
-        echo -e "${RED}✗ HTTP $response${NC}"
+        fail "Hotels API via gateway → HTTP $response (esperado 200/404)"
     fi
-    
+
     # Search API
-    echo -n "  Search API (via gateway): "
-    response=$(curl -s -w "%{http_code}" -o /tmp/health_search.json "$BASE_URL/search?q=test&offset=0&limit=10" 2>/dev/null)
+    response=$(http_code "$BASE_URL/search?q=test&offset=0&limit=10")
     if [ "$response" = "200" ]; then
-        echo -e "${GREEN}✓ Healthy${NC}"
+        pass "Search API via gateway → 200"
     else
-        echo -e "${YELLOW}⚠ HTTP $response${NC}"
+        fail "Search API via gateway → HTTP $response (esperado 200)"
     fi
 }
 
 # Función para probar load balancing
 test_load_balancing() {
     print_section "⚖️  Load Balancing Test (Users API)"
-    
+
     echo "  Sending $TOTAL_REQUESTS requests to /users endpoint..."
     echo "  Observing which upstream server handles each request..."
     echo ""
-    
-    declare -A server_counts
-    
-    for i in $(seq 1 $TOTAL_REQUESTS); do
+
+    upstreams_file=$(mktemp)
+
+    i=1
+    while [ "$i" -le "$TOTAL_REQUESTS" ]; do
         # Hacer request y capturar el header X-Upstream-Server
-        response=$(curl -s -I "$BASE_URL/users" 2>/dev/null | grep -i "x-upstream-server" | awk '{print $2}' | tr -d '\r')
-        
-        if [ -n "$response" ]; then
-            # Incrementar contador para este servidor
-            server_counts[$response]=$((${server_counts[$response]:-0} + 1))
-            
+        upstream=$(curl -s -I --max-time 10 "$BASE_URL/users" 2>/dev/null | grep -i "x-upstream-server" | awk '{print $2}' | tr -d '\r' || true)
+
+        if [ -n "$upstream" ]; then
+            echo "$upstream" >> "$upstreams_file"
+
             # Colorear según el servidor
-            case $response in
+            case $upstream in
                 *"users-api-1"*) color=$GREEN ;;
                 *"users-api-2"*) color=$YELLOW ;;
                 *"users-api-3"*) color=$MAGENTA ;;
                 *) color=$NC ;;
             esac
-            
-            printf "  Request %2d: ${color}→ %s${NC}\n" "$i" "$response"
+
+            printf "  Request %2d: ${color}→ %s${NC}\n" "$i" "$upstream"
         else
             printf "  Request %2d: ${RED}✗ No upstream header${NC}\n" "$i"
         fi
-        
+
+        i=$((i + 1))
         sleep 0.2
     done
-    
-    # Mostrar distribución
+
+    # Mostrar distribución (sin arrays asociativos: bash 3.2 compatible)
     echo ""
     echo -e "  ${BOLD}Load Distribution:${NC}"
-    for server in "${!server_counts[@]}"; do
-        count=${server_counts[$server]}
-        percentage=$((count * 100 / TOTAL_REQUESTS))
-        bar=$(printf '█%.0s' $(seq 1 $((percentage / 5))))
-        printf "    %-20s: %3d requests (%3d%%) %s\n" "$server" "$count" "$percentage" "$bar"
-    done
-}
+    if [ -s "$upstreams_file" ]; then
+        sort "$upstreams_file" | uniq -c | while read -r count server; do
+            percentage=$((count * 100 / TOTAL_REQUESTS))
+            printf "    %-20s: %3d requests (%3d%%)\n" "$server" "$count" "$percentage"
+        done
+    fi
 
-# Función para verificar Nginx status
-check_nginx_status() {
-    print_section "📊 Nginx Monitoring (Port 8090)"
-    
-    echo "  Nginx Status:"
-    curl -s "$MONITOR_URL/nginx_status" 2>/dev/null | sed 's/^/    /'
-    
-    echo ""
-    echo "  Load Balancer Configuration:"
-    curl -s "$MONITOR_URL/status" 2>/dev/null | jq . 2>/dev/null | sed 's/^/    /' || \
-    curl -s "$MONITOR_URL/status" 2>/dev/null | sed 's/^/    /'
-}
+    answered=$(wc -l < "$upstreams_file" | tr -d ' ')
+    distinct=$(sort -u "$upstreams_file" | wc -l | tr -d ' ')
+    rm -f "$upstreams_file"
 
-# Función para probar rate limiting
-test_rate_limiting() {
-    print_section "🚦 Rate Limiting Test"
-    
-    echo "  Testing API rate limit (10 req/sec burst=20)..."
-    echo "  Sending 25 rapid requests..."
     echo ""
-    
-    success=0
-    limited=0
-    
-    for i in $(seq 1 25); do
-        response=$(curl -s -w "%{http_code}" -o /dev/null "$BASE_URL/users" 2>/dev/null)
-        if [ "$response" = "200" ]; then
-            ((success++))
-            echo -n -e "${GREEN}.${NC}"
-        elif [ "$response" = "503" ] || [ "$response" = "429" ]; then
-            ((limited++))
-            echo -n -e "${RED}X${NC}"
-        else
-            echo -n -e "${YELLOW}?${NC}"
-        fi
-    done
-    
-    echo ""
-    echo ""
-    echo -e "  ${GREEN}Successful: $success${NC} | ${RED}Rate Limited: $limited${NC}"
-    
-    if [ $limited -gt 0 ]; then
-        echo -e "  ${GREEN}✓ Rate limiting is working!${NC}"
+    if [ "$answered" -eq "$TOTAL_REQUESTS" ] && [ "$distinct" -ge 2 ]; then
+        pass "load balancing: $answered/$TOTAL_REQUESTS respondidos por $distinct upstreams distintos"
     else
-        echo -e "  ${YELLOW}⚠ No rate limiting triggered (burst may be higher)${NC}"
+        fail "load balancing: $answered/$TOTAL_REQUESTS respondidos, $distinct upstreams distintos (esperado: todos respondidos, ≥2 upstreams)"
     fi
 }
 
-# Función para probar endpoints disponibles
-test_all_endpoints() {
-    print_section "🔗 API Endpoints Test"
-    
-    endpoints=(
-        "GET:/health:API Gateway Health"
-        "GET:/users:List Users (Auth required)"
-        "POST:/login:Login Endpoint"
-        "GET:/hotels:List Hotels"
-        "GET:/search?q=test&offset=0&limit=10:Search Hotels"
-        "GET:/admin/microservices:Admin (Auth required)"
-    )
-    
-    for endpoint_info in "${endpoints[@]}"; do
-        IFS=':' read -r method path description <<< "$endpoint_info"
-        
-        echo -n "  $method $path - $description: "
-        
-        if [ "$method" = "POST" ]; then
-            response=$(curl -s -w "%{http_code}" -o /dev/null -X POST "$BASE_URL$path" \
-                -H "Content-Type: application/json" -d '{}' 2>/dev/null)
-        else
-            response=$(curl -s -w "%{http_code}" -o /dev/null "$BASE_URL$path" 2>/dev/null)
-        fi
-        
-        case $response in
-            200) echo -e "${GREEN}✓ OK${NC}" ;;
-            201) echo -e "${GREEN}✓ Created${NC}" ;;
-            400) echo -e "${YELLOW}⚠ Bad Request${NC}" ;;
-            401) echo -e "${YELLOW}⚠ Unauthorized (expected)${NC}" ;;
-            404) echo -e "${YELLOW}⚠ Not Found${NC}" ;;
-            500) echo -e "${RED}✗ Server Error${NC}" ;;
-            502) echo -e "${RED}✗ Bad Gateway${NC}" ;;
-            503) echo -e "${RED}✗ Service Unavailable${NC}" ;;
-            *) echo -e "${RED}✗ HTTP $response${NC}" ;;
-        esac
-    done
+# Función para verificar Nginx status (informativo, sin asserts)
+check_nginx_status() {
+    print_section "📊 Nginx Monitoring (Port 8090)"
+
+    echo "  Nginx Status:"
+    curl -s --max-time 5 "$MONITOR_URL/nginx_status" 2>/dev/null | sed 's/^/    /' || echo "    (no disponible)"
+
+    echo ""
+    echo "  Load Balancer Configuration:"
+    status_body=$(curl -s --max-time 5 "$MONITOR_URL/status" 2>/dev/null || true)
+    if [ -n "$status_body" ]; then
+        echo "$status_body" | jq . 2>/dev/null | sed 's/^/    /' || echo "$status_body" | sed 's/^/    /'
+    else
+        echo "    (no disponible)"
+    fi
 }
 
-# Función para mostrar logs recientes de Nginx
+# Función para probar endpoints disponibles (con status esperado por endpoint)
+test_all_endpoints() {
+    print_section "🔗 API Endpoints Test"
+
+    # formato: método|path|códigos aceptados (separados por coma)|descripción
+    endpoints="GET|/health|200|API Gateway Health
+GET|/users|401|List Users (Auth required)
+GET|/hotels|200,404|List Hotels
+GET|/search?q=test&offset=0&limit=10|200|Search Hotels
+GET|/admin/microservices|401|Admin (Auth required)"
+
+    while IFS='|' read -r method path expected description; do
+        response=$(http_code -X "$method" "$BASE_URL$path")
+        if echo ",$expected," | grep -q ",$response,"; then
+            pass "$method $path → $response ($description)"
+        else
+            fail "$method $path → $response (esperado $expected — $description)"
+        fi
+    done <<< "$endpoints"
+}
+
+# Función para probar rate limiting (al final: consume el budget de /login)
+test_rate_limiting() {
+    print_section "🚦 Rate Limiting Test"
+
+    echo "  Testing /login rate limit (5 req/min, burst=3)..."
+    echo "  Sending 10 rapid requests..."
+    echo ""
+
+    success=0
+    limited=0
+
+    i=1
+    while [ "$i" -le 10 ]; do
+        response=$(http_code -X POST "$BASE_URL/login" -H "Content-Type: application/json" -d '{}')
+        if [ "$response" = "503" ] || [ "$response" = "429" ]; then
+            limited=$((limited + 1))
+            echo -n -e "${RED}X${NC}"
+        else
+            success=$((success + 1))
+            echo -n -e "${GREEN}.${NC}"
+        fi
+        i=$((i + 1))
+    done
+
+    echo ""
+    echo ""
+    echo -e "  ${GREEN}Passed through: $success${NC} | ${RED}Rate Limited: $limited${NC}"
+
+    if [ "$limited" -gt 0 ]; then
+        pass "rate limiting activo ($limited/10 limitados)"
+    else
+        fail "rate limiting no se disparó (0/10 limitados con burst=3)"
+    fi
+}
+
+# Función para mostrar logs recientes de Nginx (informativo)
 show_nginx_logs() {
     print_section "📝 Recent Nginx Logs"
-    
+
     echo "  Last 10 access log entries:"
-    docker logs --tail 10 api-gateway 2>/dev/null | grep -v "^\s*$" | sed 's/^/    /' || \
-    echo "    No logs available"
+    docker logs --tail 10 api-gateway 2>/dev/null | grep -v "^\s*$" | sed 's/^/    /' || echo "    No logs available"
 }
 
 # Main execution
 main() {
     print_header "🚀 LOAD BALANCER TEST SUITE"
-    
+
     echo -e "  ${BOLD}Platform:${NC} Hotel Search & Booking Microservices"
     echo -e "  ${BOLD}Gateway:${NC} $BASE_URL"
     echo -e "  ${BOLD}Monitor:${NC} $MONITOR_URL"
-    
+
     # 1. Verificar containers
     check_containers
-    
+
     # 2. Health checks
     check_health
-    
+
     # 3. Load balancing test
     test_load_balancing
-    
-    # 4. Nginx status
+
+    # 4. Nginx status (informativo)
     check_nginx_status
-    
+
     # 5. Test all endpoints
     test_all_endpoints
-    
-    # 6. Rate limiting test
+
+    # 6. Rate limiting test (último: agota el budget de /login)
     test_rate_limiting
-    
-    # 7. Show logs
+
+    # 7. Show logs (informativo)
     show_nginx_logs
-    
-    print_header "✅ TEST SUITE COMPLETED"
-    
-    echo -e "  ${BOLD}Summary:${NC}"
-    echo "  • Nginx is load balancing requests across 3 users-api instances"
-    echo "  • All API endpoints are accessible through the gateway"
-    echo "  • Rate limiting is configured for protection"
-    echo "  • Monitoring available at $MONITOR_URL/nginx_status"
-    echo ""
+
+    if [ "$FAILURES" -eq 0 ]; then
+        print_header "✅ TEST SUITE PASSED"
+    else
+        print_header "❌ TEST SUITE FAILED: $FAILURES check(s)"
+    fi
+
     echo -e "  ${BOLD}Direct Service URLs (for debugging):${NC}"
     echo "  • API Gateway:    http://localhost"
     echo "  • Nginx Monitor:  http://localhost:8090/nginx_status"
-    echo "  • RabbitMQ:       http://localhost:15672 (root/root)"
+    echo "  • RabbitMQ:       http://localhost:15672"
     echo "  • Solr Admin:     http://localhost:8983"
     echo ""
+
+    [ "$FAILURES" -eq 0 ]
 }
 
 # Run main function

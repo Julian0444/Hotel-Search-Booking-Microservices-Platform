@@ -36,7 +36,10 @@ func makeJWT(t *testing.T, userType string, userID any) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"tipo":    userType,
 		"user_id": userID,
+		"iss":     "users-api",
+		"aud":     []string{"users-api", "hotels-api"},
 		"iat":     now.Unix(),
+		"nbf":     now.Unix(),
 		"exp":     now.Add(1 * time.Hour).Unix(),
 	})
 

@@ -17,10 +17,6 @@ import {
   IconButton,
   Divider,
   CircularProgress,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
 } from '@mui/material';
 import {
   Visibility,
@@ -28,11 +24,10 @@ import {
   Person as PersonIcon,
   Lock as LockIcon,
   Hotel as HotelIcon,
-  Badge as BadgeIcon,
 } from '@mui/icons-material';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { useAuth } from '../context/AuthContext';
-import { ROUTES, VALIDATION, USER_ROLES } from '../constants';
+import { ROUTES, VALIDATION } from '../constants';
 
 const Register = () => {
   const navigate = useNavigate();
@@ -43,19 +38,16 @@ const Register = () => {
   const {
     register,
     handleSubmit,
-    control,
     watch,
     formState: { errors },
-  } = useForm({
-    defaultValues: {
-      tipo: USER_ROLES.CLIENT,
-    },
-  });
+  } = useForm();
 
   const password = watch('password');
 
+  // Public registration always creates customer accounts;
+  // admins are provisioned server-side (seed).
   const onSubmit = async (data) => {
-    const result = await registerUser(data.username, data.password, data.tipo);
+    const result = await registerUser(data.username, data.password);
     if (result.success) {
       navigate(ROUTES.HOME);
     }
@@ -234,28 +226,6 @@ const Register = () => {
                 ),
               }}
               sx={{ mb: 3 }}
-            />
-
-            <Controller
-              name="tipo"
-              control={control}
-              render={({ field }) => (
-                <FormControl fullWidth sx={{ mb: 4 }}>
-                  <InputLabel>Account Type</InputLabel>
-                  <Select
-                    {...field}
-                    label="Account Type"
-                    startAdornment={
-                      <InputAdornment position="start">
-                        <BadgeIcon color="action" />
-                      </InputAdornment>
-                    }
-                  >
-                    <MenuItem value={USER_ROLES.CLIENT}>Customer - Search and book hotels</MenuItem>
-                    <MenuItem value={USER_ROLES.ADMIN}>Administrator - Manage hotels</MenuItem>
-                  </Select>
-                </FormControl>
-              )}
             />
 
             <Button

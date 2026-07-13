@@ -1,21 +1,31 @@
 package main
 
 import (
-	"log"
-	"time"
+	"context"
+	"errors"
+	"log/slog"
+	"os"
 
-	"search-api/internal/clients/queues"
-	"search-api/internal/config"
-	controllers "search-api/internal/controllers/search"
-	repositories "search-api/internal/repositories/hotels"
-	services "search-api/internal/services/search"
-	"search-api/internal/utils"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/clients/queues"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/config"
+	healthControllers "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/controllers/health"
+	controllers "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/controllers/search"
+	middleware "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/middlewares"
+	repositories "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/repositories/hotels"
+	services "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/services/search"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	log.Printf("Starting search-api on port %s...", config.Port)
+	// Logging estructurado JSON (O2): un logger por proceso con el nombre del
+	// servicio; los log.* del stdlib quedan puenteados al mismo handler.
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})).
+		With("service", "search-api")
+	slog.SetDefault(logger)
+
+	slog.Info("starting search-api", "port", config.Port)
 
 	// Solr
 	solrRepo := repositories.NewSolr(repositories.SolrConfig{
@@ -47,11 +57,21 @@ func main() {
 
 	// Launch rabbit consumer
 	if err := eventsQueue.StartConsumer(service.HandleHotelNew); err != nil {
-		log.Fatalf("Error running consumer: %v", err)
+		slog.Error("error running consumer", "error", err)
+		os.Exit(1)
 	}
 
-	// Create router
-	router := gin.Default()
+	// Gin en release salvo override explícito (O4): GIN_MODE=debug lo
+	// restaura para desarrollo local.
+	if os.Getenv("GIN_MODE") == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// Create router: gin.New en vez de gin.Default — el access-log lo emite
+	// el middleware RequestID en JSON vía slog (O1/O2).
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(middleware.RequestID())
 
 	// Use CORS middleware
 	router.Use(utils.CorsMiddleware())
@@ -59,17 +79,24 @@ func main() {
 	// Routes
 	router.GET("/search", controller.Search)
 
-	// Health check
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"status":    "ok",
-			"service":   "search-api",
-			"timestamp": time.Now().Format(time.RFC3339),
-		})
+	// Health endpoints (O3): /livez barato, /readyz pinguea las deps propias
+	// (Solr + RabbitMQ); /health queda como alias de /livez por compat.
+	healthController := healthControllers.NewController("search-api", map[string]healthControllers.CheckFunc{
+		"solr": solrRepo.Ping,
+		"rabbitmq": func(_ context.Context) error {
+			if !eventsQueue.IsConnected() {
+				return errors.New("rabbitmq not connected")
+			}
+			return nil
+		},
 	})
+	router.GET("/livez", healthController.Livez)
+	router.GET("/readyz", healthController.Readyz)
+	router.GET("/health", healthController.Livez)
 
 	// Run server
 	if err := router.Run(":" + config.Port); err != nil {
-		log.Fatalf("Error running application: %v", err)
+		slog.Error("error running application", "error", err)
+		os.Exit(1)
 	}
 }

@@ -10,19 +10,19 @@ import (
 
 // Estructura para representar el estado de un microservicio
 type ServiceStatus struct {
-	Name      string    `json:"name"`
-	Instances []Instance `json:"instances"`
-	Status    string    `json:"status"`
-	LoadBalanced bool   `json:"load_balanced"`
+	Name         string     `json:"name"`
+	Instances    []Instance `json:"instances"`
+	Status       string     `json:"status"`
+	LoadBalanced bool       `json:"load_balanced"`
 }
 
 type Instance struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Port     string `json:"port"`
-	UpTime   string `json:"uptime"`
-	Health   string `json:"health"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Port   string `json:"port"`
+	UpTime string `json:"uptime"`
+	Health string `json:"health"`
 }
 
 type ScaleRequest struct {
@@ -47,28 +47,28 @@ func (controller Controller) GetMicroservicesStatus(ctx *gin.Context) {
 			Name: "users-api",
 			Instances: []Instance{
 				{
-					ID:       "users-api-1",
-					Name:     "users-api-1",
-					Status:   "running",
-					Port:     "8080",
-					UpTime:   "2h 15m",
-					Health:   controller.checkServiceHealth("users-api-1:8080"),
+					ID:     "users-api-1",
+					Name:   "users-api-1",
+					Status: "running",
+					Port:   "8080",
+					UpTime: "2h 15m",
+					Health: controller.checkServiceHealth("users-api-1:8080"),
 				},
 				{
-					ID:       "users-api-2", 
-					Name:     "users-api-2",
-					Status:   "running",
-					Port:     "8081",
-					UpTime:   "2h 10m",
-					Health:   controller.checkServiceHealth("users-api-2:8080"),
+					ID:     "users-api-2",
+					Name:   "users-api-2",
+					Status: "running",
+					Port:   "8081",
+					UpTime: "2h 10m",
+					Health: controller.checkServiceHealth("users-api-2:8080"),
 				},
 				{
-					ID:       "users-api-3",
-					Name:     "users-api-3", 
-					Status:   "running",
-					Port:     "8082",
-					UpTime:   "2h 5m",
-					Health:   controller.checkServiceHealth("users-api-3:8080"),
+					ID:     "users-api-3",
+					Name:   "users-api-3",
+					Status: "running",
+					Port:   "8082",
+					UpTime: "2h 5m",
+					Health: controller.checkServiceHealth("users-api-3:8080"),
 				},
 			},
 			Status:       "healthy",
@@ -78,12 +78,12 @@ func (controller Controller) GetMicroservicesStatus(ctx *gin.Context) {
 			Name: "hotels-api",
 			Instances: []Instance{
 				{
-					ID:       "hotels-api-container",
-					Name:     "hotels-api-container",
-					Status:   "running",
-					Port:     "8083",
-					UpTime:   "2h 20m",
-					Health:   controller.checkServiceHealth("hotels-api:8081"),
+					ID:     "hotels-api-container",
+					Name:   "hotels-api-container",
+					Status: "running",
+					Port:   "8083",
+					UpTime: "2h 20m",
+					Health: controller.checkServiceHealth("hotels-api:8081"),
 				},
 			},
 			Status:       "healthy",
@@ -93,12 +93,12 @@ func (controller Controller) GetMicroservicesStatus(ctx *gin.Context) {
 			Name: "search-api",
 			Instances: []Instance{
 				{
-					ID:       "search-api-container",
-					Name:     "search-api-container",
-					Status:   "running", 
-					Port:     "8084",
-					UpTime:   "2h 18m",
-					Health:   controller.checkServiceHealth("search-api:8082"),
+					ID:     "search-api-container",
+					Name:   "search-api-container",
+					Status: "running",
+					Port:   "8084",
+					UpTime: "2h 18m",
+					Health: controller.checkServiceHealth("search-api:8082"),
 				},
 			},
 			Status:       "healthy",
@@ -109,9 +109,9 @@ func (controller Controller) GetMicroservicesStatus(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"services": services,
 		"summary": gin.H{
-			"total_services": len(services),
-			"total_instances": controller.countTotalInstances(services),
-			"healthy_services": controller.countHealthyServices(services),
+			"total_services":         len(services),
+			"total_instances":        controller.countTotalInstances(services),
+			"healthy_services":       controller.countHealthyServices(services),
 			"load_balanced_services": controller.countLoadBalancedServices(services),
 		},
 	})
@@ -140,10 +140,10 @@ func (controller Controller) ScaleService(ctx *gin.Context) {
 	message := controller.simulateScaling(request.ServiceName, request.Replicas)
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"message": message,
-		"service": request.ServiceName,
+		"message":      message,
+		"service":      request.ServiceName,
 		"new_replicas": request.Replicas,
-		"timestamp": time.Now().Format(time.RFC3339),
+		"timestamp":    time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -151,7 +151,7 @@ func (controller Controller) ScaleService(ctx *gin.Context) {
 func (controller Controller) GetServiceLogs(ctx *gin.Context) {
 	serviceName := ctx.Param("service_name")
 	instanceID := ctx.Query("instance_id")
-	
+
 	if serviceName == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error": "service_name is required",
@@ -163,9 +163,9 @@ func (controller Controller) GetServiceLogs(ctx *gin.Context) {
 	logs := controller.generateMockLogs(serviceName, instanceID)
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"service": serviceName,
-		"instance": instanceID,
-		"logs": logs,
+		"service":   serviceName,
+		"instance":  instanceID,
+		"logs":      logs,
 		"timestamp": time.Now().Format(time.RFC3339),
 	})
 }
@@ -190,9 +190,9 @@ func (controller Controller) RestartService(ctx *gin.Context) {
 	message += " restart initiated successfully"
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"message": message,
-		"service": serviceName,
-		"instance": instanceID,
+		"message":   message,
+		"service":   serviceName,
+		"instance":  instanceID,
 		"timestamp": time.Now().Format(time.RFC3339),
 	})
 }
@@ -206,7 +206,7 @@ func (controller Controller) checkServiceHealth(address string) string {
 	for _, char := range address {
 		hash += int(char)
 	}
-	
+
 	if hash%3 == 0 {
 		return "warning"
 	}
@@ -272,4 +272,4 @@ func (controller Controller) generateMockLogs(serviceName, instanceID string) []
 	}
 
 	return logs
-} 
+}

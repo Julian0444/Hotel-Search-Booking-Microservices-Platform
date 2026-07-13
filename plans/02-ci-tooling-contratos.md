@@ -161,12 +161,12 @@ grep -rn "AvaiableRooms" platform-contracts/   # el typo sigue (a propósito, ha
 # El contract test protege el wire format: renombrar temporalmente un tag JSON
 # de HotelNew en platform-contracts → go test falla → revertir.
 
-# CI: push a una branch y verificar los 4 jobs verdes (search-api govulncheck en amarillo permitido).
-git checkout -b ci-setup && git push -u origin ci-setup
+# CI: el push de una branch lo hace el USUARIO manualmente (la sesión no ejecuta git);
+# una vez pusheada, verificar los 4 jobs verdes (search-api govulncheck en amarillo permitido).
 
 bash test_load_balancer.sh; echo "exit=$?"   # con el stack sano → 0; matando un servicio → ≠0
 ```
 
 ## Al terminar
 
-Tildá el plan 02 en `plans/README.md`. Commit sugerido: `ci: go.work, platform-contracts module, golangci-lint v2, GitHub Actions with race/vuln gates (I4,I6,I9,SD1,CQ1-3,T1-T4,T6)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

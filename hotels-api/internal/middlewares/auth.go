@@ -6,9 +6,17 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+)
+
+const (
+	// tokenIssuer es quien emite los tokens de la plataforma (users-api).
+	tokenIssuer = "users-api"
+	// tokenAudience es la audiencia que este servicio exige en los tokens que acepta.
+	tokenAudience = "hotels-api"
 )
 
 type JWTMiddleware struct {
@@ -40,7 +48,11 @@ func (m JWTMiddleware) Authenticate() gin.HandlerFunc {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
 			return []byte(m.SecretKey), nil
-		})
+		},
+			jwt.WithIssuer(tokenIssuer),
+			jwt.WithAudience(tokenAudience),
+			jwt.WithLeeway(30*time.Second),
+		)
 
 		if err != nil || !token.Valid {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})

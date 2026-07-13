@@ -67,4 +67,4 @@ go test -race ./... && cd frontend && npm run build
 
 ## Al terminar
 
-Tildá el plan 13 en `plans/README.md`. Con esto queda cubierto el 100% de los IDs de `plantofinish.md`. Commit sugerido: `domain-stretch: reviews with derived rating, payment stub saga, room types, rich user; fe lazy-loading (DM3,DM4,DM6,DM7,FE1,FE2)`.
+Con esto queda cubierto el 100% de los IDs de `plantofinish.md`. El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

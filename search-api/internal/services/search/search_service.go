@@ -3,9 +3,11 @@ package search
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
-	hotelsDAO "search-api/internal/dao/hotels"
-	hotelsDomain "search-api/internal/domain/hotels"
+	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils"
 )
 
 // Funciones de solr
@@ -69,21 +71,27 @@ func (service Service) Search(ctx context.Context, query string, offset int, lim
 	return hotelsDomainList, nil
 }
 
-// Funcion para manejar la creacion y eliminacion de hoteles
-func (service Service) HandleHotelNew(hotelNew hotelsDomain.HotelNew) {
-	fmt.Printf("[RabbitMQ] Evento recibido: Operación=%s, HotelID=%s\n", hotelNew.Operation, hotelNew.HotelID)
+// Funcion para manejar la creacion y eliminacion de hoteles. Recibe el
+// context del consumer con un request_id por mensaje (O1): se loguea acá y
+// viaja como header en el fetch a hotels-api para correlacionar el hop.
+func (service Service) HandleHotelNew(ctx context.Context, hotelNew hotelsDomain.HotelNew) {
+	logger := slog.With(
+		"request_id", utils.RequestIDFromContext(ctx),
+		"operation", hotelNew.Operation,
+		"hotel_id", hotelNew.HotelID,
+	)
+	logger.Info("hotel event received")
 	// Hacemos un switch para manejar las operaciones de creacion, actualizacion y eliminacion
 	switch hotelNew.Operation {
 	// Caso en el que se crea o actualiza un hotel
 	case "CREATE", "UPDATE":
-		fmt.Printf("[RabbitMQ] Obteniendo hotel desde hotels-api: %s\n", hotelNew.HotelID)
 		// Obtenemos el hotel de la API de hoteles
-		hotel, err := service.hotelsAPI.GetHotelByID(context.Background(), hotelNew.HotelID)
+		hotel, err := service.hotelsAPI.GetHotelByID(ctx, hotelNew.HotelID)
 		if err != nil {
-			fmt.Printf("[ERROR] Error obteniendo hotel (%s) desde hotels-api: %v\n", hotelNew.HotelID, err)
+			logger.Error("error fetching hotel from hotels-api", "error", err)
 			return
 		}
-		fmt.Printf("[RabbitMQ] Hotel obtenido correctamente: %s\n", hotel.Name)
+		logger.Info("hotel fetched from hotels-api", "hotel_name", hotel.Name)
 
 		hotelDAO := hotelsDAO.Hotel{
 			ID:            hotel.ID,
@@ -106,32 +114,29 @@ func (service Service) HandleHotelNew(hotelNew hotelsDomain.HotelNew) {
 
 		// Caso en el que se crea un hotel
 		if hotelNew.Operation == "CREATE" {
-			fmt.Printf("[RabbitMQ] Indexando hotel en Solr: %s\n", hotelNew.HotelID)
 			// Llama al metodo Index del repositorio para indexar el hotel en Solr
-			if _, err := service.repository.Index(context.Background(), hotelDAO); err != nil {
-				fmt.Printf("[ERROR] Error indexando hotel (%s) en Solr: %v\n", hotelNew.HotelID, err)
+			if _, err := service.repository.Index(ctx, hotelDAO); err != nil {
+				logger.Error("error indexing hotel in solr", "error", err)
 			} else {
-				fmt.Println("[RabbitMQ] Hotel indexado correctamente en Solr:", hotelNew.HotelID)
+				logger.Info("hotel indexed in solr")
 			}
 		} else { // Caso en el que se actualiza un hotel
-			fmt.Printf("[RabbitMQ] Actualizando hotel en Solr: %s\n", hotelNew.HotelID)
 			// Llama al metodo Update del repositorio para actualizar el hotel en Solr
-			if err := service.repository.Update(context.Background(), hotelDAO); err != nil {
-				fmt.Printf("[ERROR] Error actualizando hotel (%s) en Solr: %v\n", hotelNew.HotelID, err)
+			if err := service.repository.Update(ctx, hotelDAO); err != nil {
+				logger.Error("error updating hotel in solr", "error", err)
 			} else {
-				fmt.Println("[RabbitMQ] Hotel actualizado correctamente en Solr:", hotelNew.HotelID)
+				logger.Info("hotel updated in solr")
 			}
 		}
 	// Caso en el que se elimina un hotel
 	case "DELETE":
-		fmt.Printf("[RabbitMQ] Eliminando hotel de Solr: %s\n", hotelNew.HotelID)
 		// Llama al metodo Delete del repositorio para eliminar el hotel de Solr
-		if err := service.repository.Delete(context.Background(), hotelNew.HotelID); err != nil {
-			fmt.Printf("[ERROR] Error eliminando hotel (%s) de Solr: %v\n", hotelNew.HotelID, err)
+		if err := service.repository.Delete(ctx, hotelNew.HotelID); err != nil {
+			logger.Error("error deleting hotel from solr", "error", err)
 		} else {
-			fmt.Println("[RabbitMQ] Hotel eliminado correctamente de Solr:", hotelNew.HotelID)
+			logger.Info("hotel deleted from solr")
 		}
 	default:
-		fmt.Printf("[RabbitMQ] Operación desconocida: %s\n", hotelNew.Operation)
+		logger.Warn("unknown operation")
 	}
 }

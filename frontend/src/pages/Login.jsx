@@ -163,8 +163,8 @@ const Login = () => {
               {...register('password', {
                 required: 'Password is required',
                 minLength: {
-                  value: 4,
-                  message: 'Password must be at least 4 characters',
+                  value: VALIDATION.MIN_PASSWORD_LENGTH,
+                  message: `Password must be at least ${VALIDATION.MIN_PASSWORD_LENGTH} characters`,
                 },
               })}
               error={!!errors.password}

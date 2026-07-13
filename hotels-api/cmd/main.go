@@ -1,10 +1,14 @@
 package main
 
 import (
-	"log"
+	"context"
+	"errors"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/clients/queues"
+	controllersHealth "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/controllers/health"
 	controllersHotels "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/controllers/hotels"
 	controllersMicroservices "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/controllers/microservices"
 	middleware "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/middlewares"
@@ -18,6 +22,20 @@ import (
 )
 
 func main() {
+	// Logging estructurado JSON (O2): un logger por proceso con el nombre del
+	// servicio; los log.* del stdlib quedan puenteados al mismo handler.
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})).
+		With("service", "hotels-api")
+	slog.SetDefault(logger)
+
+	slog.Info("starting hotels-api", "port", config.Port)
+
+	// Nunca arrancar con el secreto placeholder: permitiría forjar tokens admin.
+	if config.JWTSecret == "" || config.JWTSecret == "your-secret-key-change-in-production" {
+		slog.Error("JWT_SECRET must be set to a non-default value")
+		os.Exit(1)
+	}
+
 	// Configuración de Repositorios
 	hotelsRepo := repositoriesHotels.NewMongo(repositoriesHotels.MongoConfig{
 		Host:                    config.MongoHost,
@@ -27,6 +45,7 @@ func main() {
 		Database:                config.MongoDatabase,
 		Collection_hotels:       config.MongoCollectionHotels,
 		Collection_reservations: config.MongoCollectionReservations,
+		Collection_inventory:    config.MongoCollectionInventory,
 	})
 
 	cacheRepo := repositoriesHotels.NewCache(repositoriesHotels.CacheConfig{
@@ -36,11 +55,12 @@ func main() {
 	})
 
 	eventsQueue := queues.NewRabbit(queues.RabbitConfig{
-		Host:      config.RabbitHost,
-		Port:      config.RabbitPort,
-		Username:  config.RabbitUsername,
-		Password:  config.RabbitPassword,
-		QueueName: config.RabbitQueueName,
+		Host:                  config.RabbitHost,
+		Port:                  config.RabbitPort,
+		Username:              config.RabbitUsername,
+		Password:              config.RabbitPassword,
+		QueueName:             config.RabbitQueueName,
+		ReservationsQueueName: config.RabbitReservationsQueueName,
 	})
 
 	// Configuración de Servicios
@@ -53,8 +73,17 @@ func main() {
 	// Configuración de middlewares
 	jwtMiddleware := middleware.NewJWTMiddleware(config.JWTSecret)
 
-	// Configuración del servidor HTTP
-	router := gin.Default()
+	// Gin en release salvo override explícito (O4): GIN_MODE=debug lo
+	// restaura para desarrollo local.
+	if os.Getenv("GIN_MODE") == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// Configuración del servidor HTTP: gin.New en vez de gin.Default — el
+	// access-log lo emite el middleware RequestID en JSON vía slog (O1/O2).
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(middleware.RequestID())
 
 	// Configuración de CORS
 	router.Use(cors.New(cors.Config{
@@ -95,17 +124,24 @@ func main() {
 		adminRoutes.POST("/microservices/:service_name/restart", microservicesController.RestartService)
 	}
 
-	// Health check endpoint
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"status":    "ok",
-			"service":   "hotels-api",
-			"timestamp": time.Now().Format(time.RFC3339),
-		})
+	// Health endpoints (O3): /livez barato, /readyz pinguea las deps propias
+	// (Mongo + RabbitMQ); /health queda como alias de /livez por compat.
+	healthController := controllersHealth.NewController("hotels-api", map[string]controllersHealth.CheckFunc{
+		"mongo": hotelsRepo.Ping,
+		"rabbitmq": func(_ context.Context) error {
+			if !eventsQueue.IsConnected() {
+				return errors.New("rabbitmq not connected")
+			}
+			return nil
+		},
 	})
+	router.GET("/livez", healthController.Livez)
+	router.GET("/readyz", healthController.Readyz)
+	router.GET("/health", healthController.Livez)
 
 	// Ejecutar el servidor
-	if err := router.Run(":8081"); err != nil {
-		log.Fatal("Error al ejecutar el servidor:", err)
+	if err := router.Run(":" + config.Port); err != nil {
+		slog.Error("failed to start server", "error", err)
+		os.Exit(1)
 	}
 }

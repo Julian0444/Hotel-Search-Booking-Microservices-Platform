@@ -15,6 +15,7 @@ var (
 	MongoDatabase               = getEnv("MONGO_DATABASE", "hotels-api")
 	MongoCollectionHotels       = getEnv("MONGO_COLLECTION_HOTELS", "hotels")
 	MongoCollectionReservations = getEnv("MONGO_COLLECTION_RESERVATIONS", "reservations")
+	MongoCollectionInventory    = getEnv("MONGO_COLLECTION_INVENTORY", "reservation_inventory")
 
 	// Cache
 	CacheMaxSize      = getInt64Env("CACHE_MAX_SIZE", 100000)
@@ -27,6 +28,9 @@ var (
 	RabbitUsername  = getEnv("RABBIT_USERNAME", "root")
 	RabbitPassword  = getEnv("RABBIT_PASSWORD", "root")
 	RabbitQueueName = getEnv("RABBIT_QUEUE_NAME", "hotels-news")
+	// Cola separada para eventos de reservas: search-api consume hotels-news
+	// esperando HotelNew, mezclar tipos rompería su Unmarshal (DM5).
+	RabbitReservationsQueueName = getEnv("RABBIT_RESERVATIONS_QUEUE_NAME", "reservations-news")
 
 	// JWT - debe coincidir con users-api
 	JWTSecret = getEnv("JWT_SECRET", "your-secret-key-change-in-production")

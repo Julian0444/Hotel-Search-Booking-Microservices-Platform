@@ -68,7 +68,7 @@ Reestructurar en este orden exacto:
 - `LICENSE` MIT ya existe (plan 02/I9) → verificar; agregar badges de CI (`![ci](https://github.com/Julian0444/<repo>/actions/workflows/ci.yml/badge.svg)`), Go version y license al README.
 - (Opcional) `CONTRIBUTING.md` breve.
 
-### 9. Prep de entrevista (§4.4) — NO commitear
+### 9. Prep de entrevista (§4.4) — fuera del repo
 
 Guardar **fuera del repo** (notas personales) las respuestas listas:
 
@@ -98,4 +98,4 @@ grep -rn "10 containers\|streadway" *.md docs/     # 0 (P6, P8)
 
 ## Al terminar
 
-Tildá el plan 12 en `plans/README.md`. Commit sugerido: `docs: portfolio-ready README with visuals+OpenAPI, English architecture doc, factual fixes, remove AI scaffolding (P1-P6,P8,P9)`.
+El versionado lo hace el usuario manualmente; la sesión NO ejecuta comandos de git.

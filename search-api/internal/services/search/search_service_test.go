@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	hotelsDAO "search-api/internal/dao/hotels"
-	hotelsDomain "search-api/internal/domain/hotels"
-	hotelsRepo "search-api/internal/repositories/hotels"
-	service "search-api/internal/services/search"
+	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
+	hotelsRepo "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/repositories/hotels"
+	service "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/services/search"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -145,7 +145,7 @@ func TestService_HandleHotelNew_Create(t *testing.T) {
 		}
 
 		// HandleHotelNew no devuelve error, solo imprime logs
-		svc.HandleHotelNew(hotelNew)
+		svc.HandleHotelNew(context.Background(), hotelNew)
 
 		solrRepo.AssertExpectations(t)
 		hotelsAPI.AssertExpectations(t)
@@ -161,7 +161,7 @@ func TestService_HandleHotelNew_Create(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		svc.HandleHotelNew(context.Background(), hotelNew)
 
 		// Index no debería ser llamado si falla obtener el hotel
 		solrRepo.AssertNotCalled(t, "Index", mock.Anything, mock.Anything)
@@ -184,7 +184,7 @@ func TestService_HandleHotelNew_Create(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		svc.HandleHotelNew(context.Background(), hotelNew)
 
 		solrRepo.AssertExpectations(t)
 		hotelsAPI.AssertExpectations(t)
@@ -215,7 +215,7 @@ func TestService_HandleHotelNew_Update(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		svc.HandleHotelNew(context.Background(), hotelNew)
 
 		solrRepo.AssertExpectations(t)
 		hotelsAPI.AssertExpectations(t)
@@ -237,7 +237,7 @@ func TestService_HandleHotelNew_Update(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		svc.HandleHotelNew(context.Background(), hotelNew)
 
 		solrRepo.AssertExpectations(t)
 		hotelsAPI.AssertExpectations(t)
@@ -255,7 +255,7 @@ func TestService_HandleHotelNew_Delete(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		svc.HandleHotelNew(context.Background(), hotelNew)
 
 		solrRepo.AssertExpectations(t)
 	})
@@ -270,7 +270,7 @@ func TestService_HandleHotelNew_Delete(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		svc.HandleHotelNew(context.Background(), hotelNew)
 
 		solrRepo.AssertExpectations(t)
 	})
@@ -285,7 +285,7 @@ func TestService_HandleHotelNew_UnknownOperation(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		svc.HandleHotelNew(context.Background(), hotelNew)
 
 		// No debería llamar a ningún método del repositorio
 		solrRepo.AssertNotCalled(t, "Index", mock.Anything, mock.Anything)

@@ -60,9 +60,11 @@ Respuesta de endpoints que retornan usuarios (sin password).
 | `MYSQL_PASSWORD`     | `root`                               | Contraseña de MySQL            |
 | `MEMCACHED_HOST`     | `localhost`                          | Host de Memcached              |
 | `MEMCACHED_PORT`     | `11211`                              | Puerto de Memcached            |
-| `JWT_SECRET`         | `your-secret-key-change-in-production` | Clave secreta para JWT       |
+| `JWT_SECRET`         | *(obligatoria)*                      | Clave secreta para JWT. El servicio **no arranca** si está vacía o con el placeholder |
 | `JWT_DURATION`       | `24h`                                | Duración del token             |
 | `BCRYPT_COST`        | `10`                                 | Costo de hashing bcrypt        |
+| `ADMIN_USERNAME`     | *(vacía)*                            | Username del admin seed (se crea al arranque si ambas están seteadas) |
+| `ADMIN_PASSWORD`     | *(vacía)*                            | Password del admin seed        |
 | `PORT`               | `8082`                               | Puerto del servidor            |
 | `CACHE_DURATION`     | `30s`                                | TTL del cache L1               |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:5173` | Origins CORS permitidos |
@@ -119,19 +121,21 @@ go run ./cmd/main.go
 
 ## Ejemplos de Uso
 
-### Registrar usuario cliente
+### Registrar usuario (siempre cliente)
 ```bash
-curl -X POST http://localhost:8082/users \
+curl -X POST http://localhost/users \
   -H "Content-Type: application/json" \
   -d '{"username":"user1","password":"secret123"}'
 ```
 
-### Registrar administrador
-```bash
-curl -X POST http://localhost:8082/users \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123","tipo":"administrador"}'
-```
+> El registro público **siempre** crea usuarios `cliente` (el campo `tipo` del body se ignora).
+> Password: mínimo 8 caracteres.
+
+### Crear el administrador
+
+Los administradores **no** se crean por la API pública. El primer admin se siembra al
+arranque del servicio con las variables `ADMIN_USERNAME` / `ADMIN_PASSWORD` (ver `.env`).
+El seed es idempotente entre las 3 réplicas.
 
 ### Login
 ```bash
@@ -146,9 +150,19 @@ curl http://localhost:8081/admin/hotels \
   -H "Authorization: Bearer <token>"
 ```
 
+## Autorización de endpoints propios
+
+| Endpoint              | Auth                |
+|-----------------------|---------------------|
+| `POST /users`         | Pública             |
+| `POST /login`         | Pública             |
+| `GET /users`          | Admin               |
+| `GET /users/:id`      | Dueño o admin       |
+| `DELETE /users/:id`   | Dueño o admin       |
+
 ## Integración con hotels-api
 
-1. `users-api` genera tokens JWT con claims `user_id` y `tipo`
-2. `hotels-api` valida estos tokens en su middleware
+1. `users-api` genera tokens JWT con claims `user_id` y `tipo`, `iss=users-api` y `aud=[users-api, hotels-api]`
+2. `hotels-api` valida estos tokens en su middleware (firma HMAC + `iss`/`aud`)
 3. Rutas `/admin/*` requieren `tipo = "administrador"`
 4. Rutas de usuario usan `user_id` para validar ownership
