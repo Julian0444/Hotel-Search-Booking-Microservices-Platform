@@ -521,3 +521,25 @@ Commitear y pushear el plan 06 (ver el CI verde). Después decir **"empecemos co
 ### Primera acción sugerida para la próxima sesión
 
 Commitear y pushear los planes 06+07 (ver CI verde). Después decir **"empecemos con el 08"** → leer `plans/08-resiliencia-runtime.md` completo + su fila RV23–RV25 en `plans/fixes/README.md`, y validar snippets contra el código actual — en particular: el controller/service de hotels-api quedaron reescritos por el 07 (apperr + sentinels), y `GetAvailability`/`releaseNights` de `hotels_mongo.go` son exactamente los sitios de RV23/RV24.
+
+---
+
+## Sesión — 2026-07-23 — Fix CI (CVEs de dependencias)
+
+### Resumen de lo hecho
+
+El primer run del CI con los planes 06+07 falló en 3 jobs por **CVEs publicados después del último run verde** (no por el código de los planes):
+
+1. **`go (users-api)` y `go (hotels-api)` — GO-2026-5970** (`golang.org/x/text@v0.37.0`, loop infinito con input inválido; alcanzable vía GORM init y `mongo.Connect`). Fix: bump a **v0.39.0** en ambos módulos. El `go work sync` arrastró además x/crypto v0.53.0 / x/net v0.56.0 / x/sys v0.46.0 y dejó los `go.sum` incompletos para `GOWORK=off` (la secuela conocida del 02) → se re-corrió `GOWORK=off go mod tidy` en los 4 módulos **después** del sync hasta estabilizar.
+2. **`frontend` — GHSA-3jxr-9vmj-r5cp** (`brace-expansion` <1.1.16, high): `npm audit fix` lo resolvió (solo `package-lock.json`).
+
+### Estado / verificación
+
+- `GOWORK=off go build` OK ×3; `GOWORK=off govulncheck` limpio ×4 — solo queda **GO-2026-5856** (crypto/tls), el artefacto conocido del Go local 1.26.4 que el runner con `stable` no ve.
+- `make test` 20 paquetes ok; `npm run build` OK; `npm audit --audit-level=high` exit 0 (el gate del CI).
+- Quedan **2 moderate** de `react-router-dom@6` (fix = migrar a v7, breaking) — NO cortan el CI (gate en high); si se encara, es junto con el trabajo de frontend del **plan 13**.
+- Archivos tocados (a commitear por el usuario): `users-api/go.{mod,sum}`, `hotels-api/go.{mod,sum}`, `search-api/go.{mod,sum}`, `frontend/package-lock.json`.
+
+### Primera acción sugerida para la próxima sesión
+
+Commitear/pushear este fix y confirmar CI verde. Después, plan 08 (prompt ya preparado en la sesión anterior).
