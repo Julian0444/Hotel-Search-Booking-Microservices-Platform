@@ -198,23 +198,28 @@ The frontend runs at `http://localhost:5173` and proxies API requests through Vi
 
 ## 🌐 API Endpoints (Gateway — Port 80)
 
+The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change to any contract ships as `/api/v2` alongside `v1`). Success responses use a single envelope — `{"data": ...}` for single resources, `{"data": [...], "meta": {"total", "limit", "offset"}}` for lists — and every error (services and gateway alike) has the shape `{"error": {"code", "message", "trace_id"}}` with stable machine-readable codes. Health endpoints are not versioned.
+
 | Method   | Endpoint                                      | Service    | Auth     | Description                     |
 |----------|-----------------------------------------------|------------|----------|---------------------------------|
-| `POST`   | `/users`                                      | Users API  | —        | Register a new user (customer role only) |
-| `POST`   | `/login`                                      | Users API  | —        | Login, returns JWT              |
-| `GET`    | `/users`                                      | Users API  | Admin    | List all users                  |
-| `GET`    | `/users/:id`                                  | Users API  | Owner/Admin | Get user by ID               |
-| `DELETE` | `/users/:id`                                  | Users API  | Owner/Admin | Delete user                  |
-| `GET`    | `/hotels/:id`                                 | Hotels API | —        | Get hotel details               |
-| `GET`    | `/hotels/:id/reservations`                    | Hotels API | —        | List hotel reservations         |
-| `POST`   | `/hotels/availability`                        | Hotels API | —        | Check availability (multi)      |
-| `POST`   | `/reservations`                               | Hotels API | JWT      | Create reservation              |
-| `DELETE` | `/reservations/:id`                           | Hotels API | JWT      | Cancel reservation              |
-| `GET`    | `/users/:id/reservations`                     | Hotels API | JWT      | User's reservations             |
-| `GET`    | `/search?q=...`                               | Search API | —        | Full-text hotel search          |
-| `POST`   | `/admin/hotels`                               | Hotels API | Admin    | Create hotel                    |
-| `PUT`    | `/admin/hotels/:id`                           | Hotels API | Admin    | Update hotel                    |
-| `DELETE` | `/admin/hotels/:id`                           | Hotels API | Admin    | Delete hotel                    |
+| `POST`   | `/api/v1/users`                               | Users API  | —        | Register a new user (customer role only) |
+| `POST`   | `/api/v1/login`                               | Users API  | —        | Login, returns JWT              |
+| `GET`    | `/api/v1/users`                               | Users API  | Admin    | List all users                  |
+| `GET`    | `/api/v1/users/:id`                           | Users API  | Owner/Admin | Get user by ID               |
+| `DELETE` | `/api/v1/users/:id`                           | Users API  | Owner/Admin | Delete user (204)            |
+| `GET`    | `/api/v1/hotels?limit=&offset=`               | Hotels API | —        | List hotels (paginated)         |
+| `GET`    | `/api/v1/hotels/:id`                          | Hotels API | —        | Get hotel details               |
+| `GET`    | `/api/v1/hotels/:id/reservations`             | Hotels API | —        | List hotel reservations         |
+| `POST`   | `/api/v1/hotels/availability`                 | Hotels API | —        | Check availability (multi)      |
+| `POST`   | `/api/v1/reservations`                        | Hotels API | JWT      | Create reservation (201 + `Location`; supports `Idempotency-Key`) |
+| `GET`    | `/api/v1/reservations/:id`                    | Hotels API | JWT      | Get reservation (owner/admin)   |
+| `DELETE` | `/api/v1/reservations/:id`                    | Hotels API | JWT      | Cancel reservation (204)        |
+| `GET`    | `/api/v1/users/:id/reservations`              | Hotels API | JWT      | User's reservations             |
+| `GET`    | `/api/v1/search?q=...`                        | Search API | —        | Full-text hotel search          |
+| `POST`   | `/api/v1/reindex`                             | Search API | Admin    | Rebuild the Solr index from Hotels API |
+| `POST`   | `/api/v1/admin/hotels`                        | Hotels API | Admin    | Create hotel (201 + `Location`) |
+| `PUT`    | `/api/v1/admin/hotels/:id`                    | Hotels API | Admin    | Update hotel (returns updated representation) |
+| `DELETE` | `/api/v1/admin/hotels/:id`                    | Hotels API | Admin    | Delete hotel (204)              |
 | `GET`    | `/health`                                     | Gateway    | —        | Gateway health check            |
 
 > Each Go service also exposes internal (not routed through the gateway) health endpoints: `/livez` (process liveness, `/health` is an alias) and `/readyz` (pings its own dependencies — e.g. Mongo+RabbitMQ for Hotels API — and returns `503` with a per-check status map if any is down). Docker Compose healthchecks hit `/readyz`, and nginx only starts once every upstream is healthy.
@@ -225,8 +230,8 @@ The frontend runs at `http://localhost:5173` and proxies API requests through Vi
 
 - **Load Balancing** — Nginx distributes Users API traffic across 3 instances using `least_conn` with automatic failover (`max_fails=3`, `fail_timeout=30s`)
 - **Multi-Level Caching** — Users API: L1 (ccache) → L2 (Memcached) → MySQL. Hotels API: ccache (LRU) → MongoDB
-- **Event-Driven Architecture** — Hotels API publishes CRUD events to RabbitMQ; Search API consumes them to keep the Solr index in sync
-- **Shared JWT Authentication** — Users API issues tokens, Hotels API validates them with the same secret; role-based access control (`cliente` / `administrador`)
+- **Event-Driven Architecture** — Hotels API publishes CRUD events to RabbitMQ; Search API consumes them (manual ack, one retry, then a `hotels-news-dlq` dead-letter queue) to keep the Solr index in sync, and rebuilds the index on startup / `POST /reindex` by paging `GET /hotels`
+- **Shared JWT Authentication** — Users API issues tokens; Hotels API and Search API validate them with the same secret and their own audience; role-based access control (`cliente` / `administrador`)
 - **Rate Limiting** — API requests: 10 req/s. Login endpoint: 5 req/min. Connection limit: 20 per IP
 - **Security Headers** — X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy
 - **CORS Configuration** — Centralized CORS handling at the gateway level with origin whitelist

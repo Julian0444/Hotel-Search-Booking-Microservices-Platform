@@ -89,13 +89,23 @@ func TestController_GetAll(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusOK, rr.Code)
-		assert.Equal(t, "2", rr.Header().Get("X-Total-Count"))
 
-		var got []usersDomain.User
+		// A5: envelope {data, meta} — reemplaza el array pelado + X-Total-Count
+		var got struct {
+			Data []usersDomain.User `json:"data"`
+			Meta struct {
+				Total  int64 `json:"total"`
+				Limit  int   `json:"limit"`
+				Offset int   `json:"offset"`
+			} `json:"meta"`
+		}
 		assert.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
-		assert.Len(t, got, 2)
-		assert.Equal(t, int64(1), got[0].ID)
-		assert.Equal(t, "administrador", got[1].Tipo)
+		assert.Len(t, got.Data, 2)
+		assert.Equal(t, int64(1), got.Data[0].ID)
+		assert.Equal(t, "administrador", got.Data[1].Tipo)
+		assert.Equal(t, int64(2), got.Meta.Total)
+		assert.Equal(t, 20, got.Meta.Limit)
+		assert.Empty(t, rr.Header().Get("X-Total-Count"))
 
 		svc.AssertExpectations(t)
 	})
@@ -156,10 +166,16 @@ func TestController_GetByID(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 
-		var got usersDomain.User
+		// A7: el contrato serializa el id como STRING (el json ",string" del
+		// dominio también lo exige al deserializar)
+		assert.Contains(t, rr.Body.String(), `"id":"1"`)
+
+		var got struct {
+			Data usersDomain.User `json:"data"`
+		}
 		assert.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
-		assert.Equal(t, int64(1), got.ID)
-		assert.Equal(t, "user1", got.Username)
+		assert.Equal(t, int64(1), got.Data.ID)
+		assert.Equal(t, "user1", got.Data.Username)
 
 		svc.AssertExpectations(t)
 	})
@@ -208,10 +224,14 @@ func TestController_Create(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusCreated, rr.Code)
+		// A6: Location del recurso creado; A7: id como string
+		assert.Equal(t, "/api/v1/users/42", rr.Header().Get("Location"))
 
-		var got map[string]int64
+		var got struct {
+			Data map[string]string `json:"data"`
+		}
 		assert.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
-		assert.Equal(t, int64(42), got["id"])
+		assert.Equal(t, "42", got.Data["id"])
 
 		svc.AssertExpectations(t)
 	})
@@ -263,7 +283,7 @@ func TestController_Delete(t *testing.T) {
 		svc.AssertExpectations(t)
 	})
 
-	t.Run("success -> 200", func(t *testing.T) {
+	t.Run("success -> 204", func(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
@@ -273,11 +293,9 @@ func TestController_Delete(t *testing.T) {
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 
-		assert.Equal(t, http.StatusOK, rr.Code)
-
-		var got map[string]int64
-		assert.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
-		assert.Equal(t, int64(1), got["id"])
+		// A6: DELETE exitoso responde 204 sin body
+		assert.Equal(t, http.StatusNoContent, rr.Code)
+		assert.Zero(t, rr.Body.Len())
 
 		svc.AssertExpectations(t)
 	})
@@ -349,10 +367,14 @@ func TestController_Login(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusOK, rr.Code)
+		// A7: user_id serializado como string en el wire
+		assert.Contains(t, rr.Body.String(), `"user_id":"1"`)
 
-		var got usersDomain.LoginResponse
+		var got struct {
+			Data usersDomain.LoginResponse `json:"data"`
+		}
 		assert.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
-		assert.Equal(t, expected, got)
+		assert.Equal(t, expected, got.Data)
 
 		svc.AssertExpectations(t)
 	})
@@ -377,9 +399,11 @@ func TestController_Login(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 
-		var got usersDomain.LoginResponse
+		var got struct {
+			Data usersDomain.LoginResponse `json:"data"`
+		}
 		assert.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
-		assert.Equal(t, "administrador", got.Tipo)
+		assert.Equal(t, "administrador", got.Data.Tipo)
 
 		svc.AssertExpectations(t)
 	})

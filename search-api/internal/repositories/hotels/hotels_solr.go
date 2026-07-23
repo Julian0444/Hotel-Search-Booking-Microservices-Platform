@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
+	"strings"
 
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels"
 
@@ -59,10 +59,9 @@ func (searchEngine Solr) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Index crea un nuevo documento de hotel en la coleccion de Solr
-func (searchEngine Solr) Index(ctx context.Context, hotel hotels.Hotel) (string, error) {
-	// Prepara el documento para Solr
-	doc := map[string]interface{}{
+// hotelToDoc arma el documento Solr con los nombres de campo del schema.
+func hotelToDoc(hotel hotels.Hotel) map[string]interface{} {
+	return map[string]interface{}{
 		"id":              hotel.ID,
 		"name":            hotel.Name,
 		"description":     hotel.Description,
@@ -80,84 +79,44 @@ func (searchEngine Solr) Index(ctx context.Context, hotel hotels.Hotel) (string,
 		"amenities":       hotel.Amenities,
 		"images":          hotel.Images,
 	}
-
-	// Prepara el request de indexacion
-	indexRequest := map[string]interface{}{
-		"add": []interface{}{doc}, // Usa "add" con una lista de documentos para indexar varios a la vez
-	}
-
-	// Indexa el documento en Solr (Lo pasa a JSON)
-	body, err := json.Marshal(indexRequest)
-	if err != nil {
-		return "", fmt.Errorf("error marshaling hotel document: %w", err)
-	}
-
-	// Manda el request de indexacion usando el metodo Update
-	resp, err := searchEngine.Client.Update(ctx, searchEngine.Collection, solr.JSON, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("error indexing hotel: %w", err)
-	}
-	if resp.Error != nil {
-		return "", fmt.Errorf("failed to index hotel: %v", resp.Error)
-	}
-
-	// Commitea los cambios
-	if err := searchEngine.Client.Commit(ctx, searchEngine.Collection); err != nil {
-		return "", fmt.Errorf("error committing changes to Solr: %w", err)
-	}
-
-	// Si todo sale bien, devuelve el ID del hotel
-	return hotel.ID, nil
 }
 
-// Funcion para actualizar un documento de hotel en la coleccion de Solr
-func (searchEngine Solr) Update(ctx context.Context, hotel hotels.Hotel) error {
-	// Prepara el documento para Solr
-	doc := map[string]interface{}{
-		"id":              hotel.ID,
-		"name":            hotel.Name,
-		"description":     hotel.Description,
-		"address":         hotel.Address,
-		"city":            hotel.City,
-		"state":           hotel.State,
-		"country":         hotel.Country,
-		"phone":           hotel.Phone,
-		"email":           hotel.Email,
-		"price_per_night": hotel.PricePerNight,
-		"rating":          hotel.Rating,
-		"avaiable_rooms":  hotel.AvaiableRooms,
-		"check_in_time":   hotel.CheckInTime,
-		"check_out_time":  hotel.CheckOutTime,
-		"amenities":       hotel.Amenities,
-		"images":          hotel.Images,
+// addDocument indexa (o pisa, por uniqueKey id) un documento de hotel.
+// Sin Commit() explícito (DB6): el autoCommit/autoSoftCommit del core
+// (solrconfig.xml) se encarga — un hard-commit por documento era lo más caro
+// que se le podía pedir a Solr.
+func (searchEngine Solr) addDocument(ctx context.Context, hotel hotels.Hotel) error {
+	// "add" con lista de documentos (permite indexar varios a la vez)
+	indexRequest := map[string]interface{}{
+		"add": []interface{}{hotelToDoc(hotel)},
 	}
 
-	// Prepara el request de actualizacion
-	updateRequest := map[string]interface{}{
-		"add": []interface{}{doc}, // Use "add" with a list of documents
-	}
-
-	// Hace el update del documento en Solr (Lo pasa a JSON)
-	body, err := json.Marshal(updateRequest)
+	body, err := json.Marshal(indexRequest)
 	if err != nil {
 		return fmt.Errorf("error marshaling hotel document: %w", err)
 	}
 
-	// Ejecuta el request de actualizacion usando el metodo Update
 	resp, err := searchEngine.Client.Update(ctx, searchEngine.Collection, solr.JSON, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("error updating hotel: %w", err)
+		return fmt.Errorf("error indexing hotel: %w", err)
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("failed to update hotel: %v", resp.Error)
+		return fmt.Errorf("failed to index hotel: %v", resp.Error)
 	}
-
-	// Hace commit de los cambios
-	if err := searchEngine.Client.Commit(ctx, searchEngine.Collection); err != nil {
-		return fmt.Errorf("error committing changes to Solr: %w", err)
-	}
-
 	return nil
+}
+
+// Index crea un nuevo documento de hotel en la coleccion de Solr
+func (searchEngine Solr) Index(ctx context.Context, hotel hotels.Hotel) (string, error) {
+	if err := searchEngine.addDocument(ctx, hotel); err != nil {
+		return "", err
+	}
+	return hotel.ID, nil
+}
+
+// Update actualiza un documento de hotel (mismo "add": id es la uniqueKey)
+func (searchEngine Solr) Update(ctx context.Context, hotel hotels.Hotel) error {
+	return searchEngine.addDocument(ctx, hotel)
 }
 
 func (searchEngine Solr) Delete(ctx context.Context, id string) error {
@@ -175,35 +134,62 @@ func (searchEngine Solr) Delete(ctx context.Context, id string) error {
 	}
 
 	// Ejecuta el request de borrado usando el metodo Update
-	//La diferencia entre el metodo Update y Delete es que el metodo Update permite borrar varios documentos a la vez
 	resp, err := searchEngine.Client.Update(ctx, searchEngine.Collection, solr.JSON, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("error deleting hotel: %w", err)
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("failed to index hotel: %v", resp.Error)
-	}
-
-	// Hace commit de los cambios
-	if err := searchEngine.Client.Commit(ctx, searchEngine.Collection); err != nil {
-		return fmt.Errorf("error committing changes to Solr: %w", err)
+		return fmt.Errorf("failed to delete hotel: %v", resp.Error)
 	}
 
 	return nil
 }
 
-// Funcion para buscar hoteles en Solr
-func (searchEngine Solr) Search(ctx context.Context, query string, limit int, offset int) ([]hotels.Hotel, error) {
-	// Construye la query de busqueda
-	solrQuery := fmt.Sprintf("q=(name:%s OR description:%s)&rows=%d&start=%d", query, query, limit, offset)
+// solrMetaChars son los metacaracteres de la sintaxis Lucene/edismax
+// (incluye & y | sueltos: cubren los operadores && y ||).
+const solrMetaChars = `\+-&|!(){}[]^"~*?:/`
 
-	// Ejecuta la query en Solr
-	resp, err := searchEngine.Client.Query(ctx, searchEngine.Collection, solr.NewQuery(solrQuery))
+// escapeSolrQuery escapa los metacaracteres del input del usuario para que
+// siempre sea un conjunto de términos literales (E2).
+func escapeSolrQuery(input string) string {
+	var escaped strings.Builder
+	escaped.Grow(len(input) * 2)
+	for _, r := range input {
+		if strings.ContainsRune(solrMetaChars, r) {
+			escaped.WriteRune('\\')
+		}
+		escaped.WriteRune(r)
+	}
+	return escaped.String()
+}
+
+// buildSearchQuery arma el request JSON de búsqueda (E2): edismax sobre
+// name/description con el input del usuario como parámetro dereferenciado
+// ($qq) — nunca interpolado en la query — y limit/offset reales (rows/start:
+// antes la paginación se ignoraba). Query vacía = match-all (antes: 500 de
+// sintaxis).
+func buildSearchQuery(query string, limit int, offset int) *solr.Query {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return solr.NewQuery("*:*").Limit(limit).Offset(offset)
+	}
+	return solr.NewQuery("{!edismax qf='name description' v=$qq}").
+		Params(solr.M{"qq": escapeSolrQuery(trimmed)}).
+		Limit(limit).
+		Offset(offset)
+}
+
+// Funcion para buscar hoteles en Solr. Devuelve además el total de matches
+// (numFound) para el meta del envelope (A5/RV22): la página sola no alcanza
+// para que el cliente calcule cuántas páginas hay.
+func (searchEngine Solr) Search(ctx context.Context, query string, limit int, offset int) ([]hotels.Hotel, int, error) {
+	// Ejecuta la query en Solr (construcción segura, E2)
+	resp, err := searchEngine.Client.Query(ctx, searchEngine.Collection, buildSearchQuery(query, limit, offset))
 	if err != nil {
-		return nil, fmt.Errorf("error executing search query: %w", err)
+		return nil, 0, fmt.Errorf("error executing search query: %w", err)
 	}
 	if resp.Error != nil {
-		return nil, fmt.Errorf("failed to execute search query: %v", resp.Error)
+		return nil, 0, fmt.Errorf("failed to execute search query: %v", resp.Error)
 	}
 
 	// Itera sobre los documentos de la respuesta y los convierte en hoteles
@@ -242,8 +228,8 @@ func (searchEngine Solr) Search(ctx context.Context, query string, limit int, of
 			Email:         getStringField(doc, "email"),
 			PricePerNight: getFloatField(doc, "price_per_night"),
 			AvaiableRooms: int(getFloatField(doc, "avaiable_rooms")),
-			CheckInTime:   getTimeField(doc, "check_in_time"),
-			CheckOutTime:  getTimeField(doc, "check_out_time"),
+			CheckInTime:   getStringField(doc, "check_in_time"),
+			CheckOutTime:  getStringField(doc, "check_out_time"),
 			Rating:        getFloatField(doc, "rating"),
 			Amenities:     amenities,
 			Images:        images,
@@ -252,19 +238,13 @@ func (searchEngine Solr) Search(ctx context.Context, query string, limit int, of
 		hotelsList = append(hotelsList, hotel)
 	}
 
-	// Devuelve la lista de hoteles
-	return hotelsList, nil
+	// Devuelve la lista de hoteles y el total de matches del índice
+	return hotelsList, resp.Response.NumFound, nil
 }
 
-// Funcion auxiliar para obtener campos de tipo time de un documento
-func getTimeField(doc map[string]interface{}, field string) time.Time {
-	if val, ok := doc[field].(time.Time); ok {
-		return val
-	}
-	return time.Time{}
-}
-
-// Funcion auxiliar para obtener campos de tipo string de un documento
+// Funcion auxiliar para obtener campos de tipo string de un documento.
+// (check_in_time/check_out_time también salen por acá desde RV21: son "HH:mm"
+// planos; el getTimeField que parseaba pdate/RFC3339 —E6— quedó obsoleto.)
 func getStringField(doc map[string]interface{}, field string) string {
 	if val, ok := doc[field].(string); ok {
 		return val

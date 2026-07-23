@@ -46,9 +46,9 @@ const Search = () => {
         const offset = (page - 1) * PAGINATION.DEFAULT_PAGE_SIZE;
         const response = await hotelsService.search(query, offset, PAGINATION.DEFAULT_PAGE_SIZE);
 
-        let hotelList = response || [];
+        const hotelList = [...(response.data || [])];
 
-        // Sort based on selected criteria
+        // Sort based on selected criteria (only within the current page)
         if (sortBy === SORT_OPTIONS.PRICE_LOW) {
           hotelList.sort((a, b) => (a.price_per_night || a.pricePerNight || 0) - (b.price_per_night || b.pricePerNight || 0));
         } else if (sortBy === SORT_OPTIONS.PRICE_HIGH) {
@@ -58,7 +58,9 @@ const Search = () => {
         }
 
         setHotels(hotelList);
-        setTotalPages(Math.max(1, Math.ceil(hotelList.length / PAGINATION.DEFAULT_PAGE_SIZE)));
+        // Total real del índice desde meta (RV22): antes se calculaba sobre la
+        // página actual y totalPages siempre daba 1
+        setTotalPages(Math.max(1, Math.ceil((response.meta?.total || 0) / PAGINATION.DEFAULT_PAGE_SIZE)));
       } catch (err) {
         console.error('Error searching hotels:', err);
         setError('Could not load hotels. Please try again later.');

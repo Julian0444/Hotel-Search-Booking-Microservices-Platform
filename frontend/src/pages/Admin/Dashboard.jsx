@@ -80,7 +80,7 @@ const Dashboard = () => {
         authService.getAllUsers(),
       ]);
 
-      setHotels(hotelsRes || []);
+      setHotels(hotelsRes.data || []);
       setUsers(usersRes || []);
     } catch (err) {
       console.error('Error fetching data:', err);
@@ -113,7 +113,7 @@ const Dashboard = () => {
       console.error('Error deleting:', err);
       setSnackbar({
         open: true,
-        message: err.response?.data?.error || 'Error deleting item',
+        message: err.response?.data?.error?.message || 'Error deleting item',
         severity: 'error',
       });
     } finally {

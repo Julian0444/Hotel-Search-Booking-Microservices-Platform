@@ -18,6 +18,8 @@ const reservationCurrency = "USD"
 // Estas funciones salen de los repositorios, se encargan de interactuar tanto de la base de datos como de la cache, ambas tienen las mismas funciones pero con diferentes implementaciones para cada cosa
 type Repository interface {
 	GetHotelByID(ctx context.Context, id string) (hotelsDAO.Hotel, error)
+	GetHotels(ctx context.Context, limit, offset int64) ([]hotelsDAO.Hotel, error)
+	CountHotels(ctx context.Context) (int64, error)
 	Create(ctx context.Context, hotel hotelsDAO.Hotel) (string, error)
 	Update(ctx context.Context, hotel hotelsDAO.Hotel) error
 	Delete(ctx context.Context, id string) error
@@ -62,25 +64,8 @@ func NewService(mainRepository Repository, cacheRepository CacheRepository, even
 	}
 }
 
-// Funcion que se encarga de obtener un hotel por su ID, primero se intenta obtener de la cache, si no se encuentra se obtiene de la base de datos principal y se guarda en la cache
-func (service Service) GetHotelByID(ctx context.Context, id string) (hotelsDomain.Hotel, error) {
-	// Se intenta obtener el hotel de la cache
-	hotelDAO, err := service.cacheRepository.GetHotelByID(ctx, id)
-	if err != nil {
-		// Si no se encuentra en la cache, se obtiene de la base de datos principal
-		hotelDAO, err = service.mainRepository.GetHotelByID(ctx, id)
-		if err != nil {
-			return hotelsDomain.Hotel{}, fmt.Errorf("error getting hotel from repository: %v", err)
-		}
-		// Se guarda el hotel en la cache — best-effort (R3): un fallo de caché
-		// nunca falla una lectura ya resuelta
-		if _, err := service.cacheRepository.Create(ctx, hotelDAO); err != nil {
-			slog.Warn("error caching hotel", "hotel_id", id, "error", err)
-		}
-	}
-
-	// Lo pasa de formato de base de datos a formato de dominio para las respuestas
-	//Lo devuelve en formato de dominio
+// hotelToDomain convierte el modelo DAO al de dominio para respuestas.
+func hotelToDomain(hotelDAO hotelsDAO.Hotel) hotelsDomain.Hotel {
 	return hotelsDomain.Hotel{
 		ID:            hotelDAO.ID,
 		Name:          hotelDAO.Name,
@@ -98,7 +83,49 @@ func (service Service) GetHotelByID(ctx context.Context, id string) (hotelsDomai
 		CheckOutTime:  hotelDAO.CheckOutTime,
 		Amenities:     hotelDAO.Amenities,
 		Images:        hotelDAO.Images,
-	}, nil
+	}
+}
+
+// Funcion que se encarga de obtener un hotel por su ID, primero se intenta obtener de la cache, si no se encuentra se obtiene de la base de datos principal y se guarda en la cache
+func (service Service) GetHotelByID(ctx context.Context, id string) (hotelsDomain.Hotel, error) {
+	// Se intenta obtener el hotel de la cache
+	hotelDAO, err := service.cacheRepository.GetHotelByID(ctx, id)
+	if err != nil {
+		// Si no se encuentra en la cache, se obtiene de la base de datos principal.
+		// %w para que ErrHotelNotFound sobreviva hasta el controller (RV14).
+		hotelDAO, err = service.mainRepository.GetHotelByID(ctx, id)
+		if err != nil {
+			return hotelsDomain.Hotel{}, fmt.Errorf("error getting hotel from repository: %w", err)
+		}
+		// Se guarda el hotel en la cache — best-effort (R3): un fallo de caché
+		// nunca falla una lectura ya resuelta
+		if _, err := service.cacheRepository.Create(ctx, hotelDAO); err != nil {
+			slog.Warn("error caching hotel", "hotel_id", id, "error", err)
+		}
+	}
+
+	// Lo pasa de formato de base de datos a formato de dominio para las respuestas
+	return hotelToDomain(hotelDAO), nil
+}
+
+// GetHotels lista el catálogo paginado directo del repositorio principal (E3):
+// alimenta el backfill/reindex de search-api. No pasa por caché a propósito —
+// cachear páginas de listado reintroduciría el veneno de listas parciales (RV1).
+func (service Service) GetHotels(ctx context.Context, limit, offset int64) ([]hotelsDomain.Hotel, int64, error) {
+	hotelsDAOList, err := service.mainRepository.GetHotels(ctx, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error getting hotels from repository: %w", err)
+	}
+	total, err := service.mainRepository.CountHotels(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error counting hotels: %w", err)
+	}
+
+	hotelsDomainList := make([]hotelsDomain.Hotel, 0, len(hotelsDAOList))
+	for _, hotelDAO := range hotelsDAOList {
+		hotelsDomainList = append(hotelsDomainList, hotelToDomain(hotelDAO))
+	}
+	return hotelsDomainList, total, nil
 }
 
 // Funcion que se encarga de crear un nuevo hotel, primero se crea en la base de datos principal, luego en la cache y por ultimo se publica un evento para notificar que se creo un nuevo hotel
@@ -224,14 +251,17 @@ func (service Service) Delete(ctx context.Context, id string) error {
 }
 
 // reservationToDomain convierte el modelo DAO al de dominio para respuestas.
+// Las fechas de estadía salen date-only (RV20): serializar el time.Time de
+// Mongo como RFC3339-UTC hacía que el frontend las corriera un día en
+// timezones al oeste de UTC.
 func reservationToDomain(reservationDAO hotelsDAO.Reservation) hotelsDomain.Reservation {
 	return hotelsDomain.Reservation{
 		ID:          reservationDAO.ID,
 		HotelName:   reservationDAO.HotelName,
 		HotelID:     reservationDAO.HotelID,
 		UserID:      reservationDAO.UserID,
-		CheckIn:     reservationDAO.CheckIn,
-		CheckOut:    reservationDAO.CheckOut,
+		CheckIn:     reservationDAO.CheckIn.Format(hotelsDomain.DateFormat),
+		CheckOut:    reservationDAO.CheckOut.Format(hotelsDomain.DateFormat),
 		Status:      reservationDAO.Status,
 		NumRooms:    reservationDAO.NumRooms,
 		NumGuests:   reservationDAO.NumGuests,
@@ -250,8 +280,11 @@ func normalizeToDay(t time.Time) time.Time {
 // CreateReservation valida la reserva contra el hotel (DM2), deriva nombre y
 // precio del hotel (nunca del body) y delega el no-overbooking al claim
 // atómico del repositorio (D1), que devuelve ErrNoAvailability sin cupo.
+// Los errores de validación van tipados con ErrInvalidReservation para que el
+// controller responda 400 y no 500 (RV19).
 func (service Service) CreateReservation(ctx context.Context, reservation hotelsDomain.Reservation) (string, error) {
-	// El hotel tiene que existir (cache-aside vía GetHotelByID)
+	// El hotel tiene que existir (cache-aside vía GetHotelByID). El wrap %w
+	// preserva ErrHotelNotFound → el controller mapea 404 (RV19).
 	hotel, err := service.GetHotelByID(ctx, reservation.HotelID)
 	if err != nil {
 		return "", fmt.Errorf("error getting hotel for reservation: %w", err)
@@ -264,19 +297,28 @@ func (service Service) CreateReservation(ctx context.Context, reservation hotels
 	if reservation.NumGuests == 0 {
 		reservation.NumGuests = 1
 	}
-	checkIn := normalizeToDay(reservation.CheckIn)
-	checkOut := normalizeToDay(reservation.CheckOut)
+	checkIn, err := time.Parse(hotelsDomain.DateFormat, reservation.CheckIn)
+	if err != nil {
+		return "", fmt.Errorf("check_in must be a date in YYYY-MM-DD format: %w", hotelsDomain.ErrInvalidReservation)
+	}
+	checkOut, err := time.Parse(hotelsDomain.DateFormat, reservation.CheckOut)
+	if err != nil {
+		return "", fmt.Errorf("check_out must be a date in YYYY-MM-DD format: %w", hotelsDomain.ErrInvalidReservation)
+	}
 	if !checkOut.After(checkIn) {
-		return "", fmt.Errorf("check-out date must be after check-in date")
+		return "", fmt.Errorf("check-out date must be after check-in date: %w", hotelsDomain.ErrInvalidReservation)
 	}
 	if checkIn.Before(normalizeToDay(time.Now().UTC())) {
-		return "", fmt.Errorf("check-in date must not be in the past")
+		return "", fmt.Errorf("check-in date must not be in the past: %w", hotelsDomain.ErrInvalidReservation)
 	}
-	if reservation.NumRooms < 1 || reservation.NumRooms > hotel.AvaiableRooms {
+	if reservation.NumRooms < 1 {
+		return "", fmt.Errorf("num_rooms must be at least 1: %w", hotelsDomain.ErrInvalidReservation)
+	}
+	if reservation.NumRooms > hotel.AvaiableRooms {
 		return "", fmt.Errorf("num_rooms must be between 1 and the hotel capacity (%d): %w", hotel.AvaiableRooms, hotelsDomain.ErrNoAvailability)
 	}
 	if reservation.NumGuests < 1 {
-		return "", fmt.Errorf("num_guests must be at least 1")
+		return "", fmt.Errorf("num_guests must be at least 1: %w", hotelsDomain.ErrInvalidReservation)
 	}
 
 	// Derivar precio total en centavos (nunca float para dinero): precio por

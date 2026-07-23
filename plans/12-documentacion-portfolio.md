@@ -2,12 +2,12 @@
 
 > **Alcance:** P1, P2, P3, P4, P5, P6, P8, P9 + Sección 4 completa (§4.1 README, §4.2 activos, §4.3 traducción/consolidación, §4.4 prep de entrevista)
 > **Base:** Sección 4 de `plantofinish.md` (P7/seed ya quedó en el plan 03)
-> **Prerequisitos:** planes 01–11 (este plan retrata el estado final: capturas, tabla de endpoints con auth real, quickstart con seed). Se puede adelantar parcialmente, pero las capturas y la tabla de endpoints conviene hacerlas al final.
+> **Prerequisitos:** planes 01–11 + núcleo del plan 13 (este plan retrata el estado final: frontend pulido, capturas, tabla de endpoints con auth real y quickstart con seed). Se puede adelantar parcialmente, pero las capturas y la tabla de endpoints se hacen al final.
 > **Esfuerzo:** 1–1.5 días
 
 ## Contexto
 
-Objetivo: que un hiring manager en un **skim de 5 minutos** entienda qué construiste, vea que funciona y quiera hablar con vos. Orden de lectura: *hook visual → arquitectura → cómo correrlo → profundidad técnica*. Hoy: la única imagen del repo es `vite.svg` (P3), el mejor documento está solo en español (P5), hay archivos "para la IA" commiteados (P4), errores fácticos verificables (P6) y docs que contradicen al código (P1, P2).
+Objetivo: que un hiring manager en un **skim de 5 minutos** entienda qué construiste, vea que funciona y quiera hablar con vos. Orden de lectura: *hook visual → arquitectura → cómo correrlo → profundidad técnica*. Las capturas y el GIF salen de la UI final verificada en el plan 13, no de una versión intermedia. Hoy: la única imagen del repo es `vite.svg` (P3), el mejor documento está solo en español (P5), hay archivos "para la IA" commiteados (P4), errores fácticos verificables (P6) y docs que contradicen al código (P1, P2).
 
 ## Pasos
 

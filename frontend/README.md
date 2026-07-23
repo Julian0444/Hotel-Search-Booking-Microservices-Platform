@@ -82,7 +82,7 @@ The application will be available at `http://localhost:5173`
 Create a `.env` file in the frontend root:
 
 ```env
-VITE_API_URL=http://localhost
+VITE_API_URL=http://localhost/api/v1
 ```
 
 - `VITE_API_URL`: API Gateway URL (nginx)

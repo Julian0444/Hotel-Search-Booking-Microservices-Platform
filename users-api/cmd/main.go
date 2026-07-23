@@ -96,12 +96,16 @@ func main() {
 	// Deadline por request: DeadlineExceeded se mapea a 503 en los controllers (R1)
 	router.Use(middleware.RequestTimeout(config.RequestTimeout))
 
+	// Rutas versionadas bajo /api/v1 (A2); health/livez/readyz quedan fuera.
+	// RequireJSON: la API es JSON-only, Accept incompatible → 406 (A8).
+	v1 := router.Group("/api/v1", middleware.RequireJSON())
+
 	// Rutas públicas
-	router.POST("/users", controller.Create)
-	router.POST("/login", controller.Login)
+	v1.POST("/users", controller.Create)
+	v1.POST("/login", controller.Login)
 
 	// Rutas protegidas: listar solo admin; ver/borrar solo el dueño o admin
-	authRoutes := router.Group("/", jwtMiddleware.Authenticate())
+	authRoutes := v1.Group("/", jwtMiddleware.Authenticate())
 	{
 		authRoutes.GET("/users", middleware.AdminOnly(), controller.GetAll)
 		authRoutes.GET("/users/:id", middleware.OwnerOrAdmin(), controller.GetByID)

@@ -42,6 +42,7 @@ func TestJWT_GenerateToken_RoundTrip(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, aud, "users-api")
 	assert.Contains(t, aud, "hotels-api")
+	assert.Contains(t, aud, "search-api") // audiencia de POST /reindex (plan 06)
 
 	exp, err := claims.GetExpirationTime()
 	assert.NoError(t, err)

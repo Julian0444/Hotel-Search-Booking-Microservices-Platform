@@ -34,7 +34,7 @@ const reservationsService = {
       num_rooms: numRooms,
       num_guests: numGuests,
     });
-    return response.data;
+    return response.data.data;
   },
 
   /**
@@ -43,29 +43,29 @@ const reservationsService = {
    * @returns {Promise<void>}
    */
   cancel: async (reservationId) => {
-    const response = await api.delete(`/reservations/${reservationId}`);
-    return response.data;
+    // DELETE exitoso responde 204 sin body (A6)
+    await api.delete(`/reservations/${reservationId}`);
   },
 
   /**
    * Get reservations by user ID
-   * @param {number} userId - User ID
+   * @param {string} userId - User ID
    * @returns {Promise<Reservation[]>} List of reservations
    */
   getByUserId: async (userId) => {
     const response = await api.get(`/users/${userId}/reservations`);
-    return response.data;
+    return response.data.data;
   },
 
   /**
    * Get reservations by user and hotel
-   * @param {number} userId - User ID
+   * @param {string} userId - User ID
    * @param {string} hotelId - Hotel ID
    * @returns {Promise<Reservation[]>} List of reservations
    */
   getByUserAndHotel: async (userId, hotelId) => {
     const response = await api.get(`/users/${userId}/hotels/${hotelId}/reservations`);
-    return response.data;
+    return response.data.data;
   },
 };
 

@@ -21,7 +21,7 @@ const adminService = {
    */
   createHotel: async (hotelData) => {
     const response = await api.post('/admin/hotels', hotelData);
-    return response.data;
+    return response.data.data;
   },
 
   /**
@@ -31,8 +31,9 @@ const adminService = {
    * @returns {Promise<void>}
    */
   updateHotel: async (hotelId, hotelData) => {
+    // PUT devuelve la representación actualizada dentro de data (A6)
     const response = await api.put(`/admin/hotels/${hotelId}`, hotelData);
-    return response.data;
+    return response.data.data;
   },
 
   /**
@@ -41,8 +42,8 @@ const adminService = {
    * @returns {Promise<void>}
    */
   deleteHotel: async (hotelId) => {
-    const response = await api.delete(`/admin/hotels/${hotelId}`);
-    return response.data;
+    // DELETE exitoso responde 204 sin body (A6)
+    await api.delete(`/admin/hotels/${hotelId}`);
   },
 
   /**

@@ -20,14 +20,14 @@
 | [x] | [03 — Persistencia + seed](03-persistencia-seed.md) | Migraciones versionadas, índices, pool/timeouts de driver, refactor `context` en users-api (incluye R1), paginación en DB, seed de hoteles + usuarios demo | 02 (recomendado) |
 | [x] | [04 — Dominio: no-overbooking + reserva rica](04-dominio-reservas.md) | Inventario atómico por hotel-noche, `Reservation` con estado/cantidad/dinero, evento `ReservationNew`, caché best-effort en escrituras y lecturas, fechas canónicas, tests de repositorio | 03 |
 | [x] | [05 — Observabilidad](05-observabilidad.md) | `slog` JSON, request-ID end-to-end, `/livez` + `/readyz` reales, Gin release mode, healthchecks del compose | 03 (recomendado) |
-| [ ] | [06 — Endurecer search-api](06-search-api.md) | Manual ack + DLQ, query Solr segura, backfill + `/reindex`, timeouts HTTP, reconexión del consumer, `getTimeField`, commit/schema Solr, bump de CVEs | 02, 05 |
-| [ ] | [07 — Contratos de API](07-contratos-api.md) | Envelope de error estándar, `/api/v1`, idempotencia, paginación/envelopes/semántica HTTP consistentes, tipo de `user_id`, content negotiation | 04, 06 |
+| [x] | [06 — Endurecer search-api](06-search-api.md) | Manual ack + DLQ, query Solr segura, backfill + `/reindex`, timeouts HTTP, reconexión del consumer, `getTimeField`, commit/schema Solr, bump de CVEs | 02, 05 |
+| [x] | [07 — Contratos de API](07-contratos-api.md) | Envelope de error estándar, `/api/v1`, idempotencia, paginación/envelopes/semántica HTTP consistentes, tipo de `user_id`, content negotiation | 04, 06 |
 | [ ] | [08 — Resiliencia de runtime](08-resiliencia-runtime.md) | **Graceful shutdown/SIGTERM (prereq de k8s)**, deadlines Mongo/Solr/consumer, bulkhead del fan-out, circuit breaker, robustez fina del productor RabbitMQ | 04, 06 · **antes del 09** |
 | [ ] | [09 — Cloud-native / k8s](09-cloud-native-k8s.md) | k8s con Deployments+Service+HPA+probes, Dockerfiles multi-stage/no-root, `.dockerignore`, resource limits, tags inmutables/Trivy/GHCR | 05 (`/readyz`), 08 (SIGTERM), 02 |
 | [ ] | [10 — Gateway nginx: TLS + hardening](10-nginx-gateway.md) | TLS + redirect + HSTS, fix de herencia de `add_header`, cache real de `/search`, 429 en rate-limit | independiente (ideal tras 07 para no re-tocar locations) |
 | [ ] | [11 — Consistencia y limpieza de código](11-consistencia-limpieza.md) | CORS válido, panel microservices, endpoint con PII, `PORT`, errores tipados, TTL L2, 404 en delete, **rename `AvaiableRooms` (cambio coordinado atómico)**, mocks fuera del binario, layering, perfil frontend | 02 y 07 (obligatorios para C11) |
-| [ ] | [12 — Documentación y presentación](12-documentacion-portfolio.md) | README nuevo, capturas/GIF/diagrama, OpenAPI, traducción de `ProyectoBackend.md`, errores fácticos, badges, prep de entrevista | 01–11 (retrata el estado final) |
-| [ ] | [13 — Stretch: dominio extendido + frontend](13-stretch-dominio-frontend.md) | `Review` + rating derivado, pago stub, room-types, `User` con email, TS/lazy del frontend — **opcional** | 04, 07 (idempotencia de pagos), 11 (C11 antes de DM6) |
+| [ ] | [13 — Frontend portfolio-grade](13-stretch-dominio-frontend.md) | **Núcleo:** contratos/UI, búsqueda, booking, historial, admin, a11y, tests y lazy loading. **Menú opcional:** User rico/TS; reviews, pagos y room-types se difieren | 07 y 11 · **antes del 12** |
+| [ ] | [12 — Documentación y presentación](12-documentacion-portfolio.md) | README nuevo, capturas/GIF/diagrama, OpenAPI, traducción de `ProyectoBackend.md`, errores fácticos, badges, prep de entrevista | 01–11 + núcleo de 13 (retrata el producto final) |
 
 ### Fixes de la review externa (2026-07-11)
 
@@ -40,11 +40,11 @@ Una review general post-planes 01–05 dejó hallazgos con IDs `RV1`–`RV31`, t
 ### Grafo de dependencias (resumen)
 
 ```
-01 ──────────────────────────────┐
-02 ─→ 03 ─→ 04 ─→ 07 ─┐          ├─→ 12 ─→ 13 (opcional)
-02 ─────────→ 06 ─→ 08 ─→ 09 ────┤
-      03 ─→ 05 ─→ 06   05 ─→ 09  │
-                  07 ─→ 10, 11 ──┘
+01 ───────────────────────────────────┐
+02 ─→ 03 ─→ 04 ─→ 07 ─┐               │
+02 ─────────→ 06 ─→ 08 ─→ 09 ─────────┤
+      03 ─→ 05 ─→ 06   05 ─→ 09       ├─→ 13 (frontend) ─→ 12
+                  07 ─→ 10, 11 ────────┘
 ```
 
 ## Tabla de trazabilidad ID → plan (fuente de verdad)
@@ -146,13 +146,13 @@ Todos los IDs de las Secciones 2, 4 y 6 de `plantofinish.md`. **96 IDs + 4 bloqu
 | CQ4 | Layering/paquetes inconsistentes + 3 CORS divergentes | 11 |
 | DM1 | `Reservation` sin estado/lifecycle | 04 |
 | DM2 | `Reservation` sin cantidad ni dinero | 04 |
-| DM3 | Sin entidad `Review` (rating manual) | 13 |
-| DM4 | Sin concepto de pago/total | 13 |
+| DM3 | Sin entidad `Review` (rating manual) | **13 (menú diferido)** |
+| DM4 | Sin concepto de pago/total | **13 (menú diferido)** |
 | DM5 | Struct `ReservationNew` muerto (nunca se publica) | 04 |
-| DM6 | Sin modelado de `Room`/room-type | 13 |
-| DM7 | `User` anémico (sin email/nombre/rol tipado) | 13 |
-| FE1 | Frontend sin TypeScript | 13 |
-| FE2 | Sin code-splitting/lazy por ruta | 13 |
+| DM6 | Sin modelado de `Room`/room-type | **13 (menú diferido)** |
+| DM7 | `User` anémico (sin email/nombre/rol tipado) | **13 (menú opcional)** |
+| FE1 | Frontend sin TypeScript | **13 (menú opcional)** |
+| FE2 | Sin code-splitting/lazy por ruta | **13 (núcleo)** |
 
 ### Notas de asignación (decisiones deliberadas)
 
@@ -163,3 +163,4 @@ Todos los IDs de las Secciones 2, 4 y 6 de `plantofinish.md`. **96 IDs + 4 bloqu
 - **DB6/DB7 → 06**: todo el trabajo Solr en una sola sesión.
 - **C12 → 08 (antes del 09/k8s)**: el drain limpio de pods en rolling deploys depende de manejar SIGTERM; por eso resiliencia va antes de cloud-native.
 - **C11 → 11, después de 02 y 07**: el módulo de contratos (02) mantiene el typo a propósito; el rename es un cambio coordinado atómico (tags JSON/BSON, Solr, frontend, golden test) que se hace con `/api/v1` ya en su lugar.
+- **13 antes de 12**: el núcleo frontend es parte del producto que el portfolio documenta; las capturas/GIF del plan 12 deben mostrar esa versión final. La checkbox de 13 exige solo su núcleo; DM3/DM4/DM6, DM7 y FE1 conservan checkboxes internas opcionales.

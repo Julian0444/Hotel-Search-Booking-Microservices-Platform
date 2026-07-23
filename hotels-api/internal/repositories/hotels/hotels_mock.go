@@ -3,6 +3,7 @@ package hotels
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
@@ -86,13 +87,40 @@ func (m Mock) allReservations() []hotelsDAO.Reservation {
 	return result
 }
 
-// CRUD de hoteles
+// CRUD de hoteles. GetHotelByID devuelve el sentinel tipado como el repo real
+// (RV14) para que los tests de service/controller ejerciten el mapeo a 404.
 func (m Mock) GetHotelByID(ctx context.Context, id string) (hotelsDAO.Hotel, error) {
 	hotel, ok := m.hotels[id]
 	if !ok {
-		return hotelsDAO.Hotel{}, fmt.Errorf("hotel with ID %s not found", id)
+		return hotelsDAO.Hotel{}, fmt.Errorf("hotel with ID %s: %w", id, hotelsDomain.ErrHotelNotFound)
 	}
 	return hotel, nil
+}
+
+// GetHotels pagina como el repo real: orden estable (por ID) + limit/offset.
+func (m Mock) GetHotels(ctx context.Context, limit, offset int64) ([]hotelsDAO.Hotel, error) {
+	ids := make([]string, 0, len(m.hotels))
+	for id := range m.hotels {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	if offset >= int64(len(ids)) {
+		return []hotelsDAO.Hotel{}, nil
+	}
+	end := offset + limit
+	if end > int64(len(ids)) {
+		end = int64(len(ids))
+	}
+	page := make([]hotelsDAO.Hotel, 0, end-offset)
+	for _, id := range ids[offset:end] {
+		page = append(page, m.hotels[id])
+	}
+	return page, nil
+}
+
+func (m Mock) CountHotels(ctx context.Context) (int64, error) {
+	return int64(len(m.hotels)), nil
 }
 
 func (m Mock) Create(ctx context.Context, hotel hotelsDAO.Hotel) (string, error) {
@@ -331,6 +359,15 @@ func (m MockCache) GetHotelByID(ctx context.Context, id string) (hotelsDAO.Hotel
 		return hotelsDAO.Hotel{}, fmt.Errorf("not found item with key hotel:%s", id)
 	}
 	return hotel, nil
+}
+
+// GetHotels / CountHotels: como la caché real, el listado nunca se cachea
+func (m MockCache) GetHotels(_ context.Context, _, _ int64) ([]hotelsDAO.Hotel, error) {
+	return nil, fmt.Errorf("hotel listing is not cached")
+}
+
+func (m MockCache) CountHotels(_ context.Context) (int64, error) {
+	return 0, fmt.Errorf("hotel count is not cached")
 }
 
 func (m MockCache) Update(ctx context.Context, hotel hotelsDAO.Hotel) error {

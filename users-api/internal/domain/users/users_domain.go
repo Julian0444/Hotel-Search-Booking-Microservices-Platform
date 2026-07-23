@@ -17,16 +17,20 @@ type RegisterRequest struct {
 }
 
 // User representa la información pública de un usuario (sin password).
+// El id se serializa como string (A7): el `user_id` canónico del contrato es
+// string en toda la plataforma (es lo que viaja en el JWT y lo que usa
+// hotels-api en las reservas); la PK int64 queda como detalle interno.
 type User struct {
-	ID       int64  `json:"id"`
+	ID       int64  `json:"id,string"`
 	Username string `json:"username"`
 	Tipo     string `json:"tipo"`
 }
 
 // LoginResponse es la respuesta al endpoint /login.
 // Incluye el JWT token compatible con hotels-api.
+// user_id como string, ver User (A7).
 type LoginResponse struct {
-	UserID   int64  `json:"user_id"`
+	UserID   int64  `json:"user_id,string"`
 	Username string `json:"username"`
 	Token    string `json:"token"`
 	Tipo     string `json:"tipo"`

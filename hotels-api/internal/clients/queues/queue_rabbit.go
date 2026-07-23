@@ -120,26 +120,42 @@ func (rq *RabbitQueue) connect() error {
 		return fmt.Errorf("error creating channel: %w", err)
 	}
 
-	// Declarar las colas (la de reservas solo si está configurada; los tests
-	// unitarios construyen la config sin ella)
-	queueNames := []string{rq.config.QueueName}
-	if rq.config.ReservationsQueueName != "" {
-		queueNames = append(queueNames, rq.config.ReservationsQueueName)
+	fail := func(err error) error {
+		_ = ch.Close()
+		_ = conn.Close()
+		rq.connected = false
+		return err
 	}
-	for _, queueName := range queueNames {
-		_, err = ch.QueueDeclare(
-			queueName, // name
-			true,      // durable
-			false,     // delete when unused
-			false,     // exclusive
-			false,     // no-wait
-			nil,       // arguments
-		)
-		if err != nil {
-			_ = ch.Close()
-			_ = conn.Close()
-			rq.connected = false
-			return fmt.Errorf("error declaring queue %s: %w", queueName, err)
+
+	// Topología de hotels-news con dead-lettering (E1): DLX + DLQ + cola
+	// principal con x-dead-letter-exchange. IMPORTANTE: espejo EXACTO de la
+	// declaración del consumidor (search-api) — args distintos entre productor
+	// y consumidor dan 406 PRECONDITION_FAILED al redeclarar (`docker compose
+	// down` limpia el broker efímero para poder re-declarar).
+	dlx := rq.config.QueueName + "-dlx"
+	dlq := rq.config.QueueName + "-dlq"
+	if err := ch.ExchangeDeclare(dlx, "direct", true, false, false, false, nil); err != nil {
+		return fail(fmt.Errorf("error declaring exchange %s: %w", dlx, err))
+	}
+	if _, err := ch.QueueDeclare(dlq, true, false, false, false, nil); err != nil {
+		return fail(fmt.Errorf("error declaring queue %s: %w", dlq, err))
+	}
+	// Los mensajes nackeados llegan al DLX con su routing key original (el
+	// nombre de la cola, por publicar al default exchange)
+	if err := ch.QueueBind(dlq, rq.config.QueueName, dlx, false, nil); err != nil {
+		return fail(fmt.Errorf("error binding queue %s: %w", dlq, err))
+	}
+	if _, err := ch.QueueDeclare(rq.config.QueueName, true, false, false, false, amqp.Table{
+		"x-dead-letter-exchange": dlx,
+	}); err != nil {
+		return fail(fmt.Errorf("error declaring queue %s: %w", rq.config.QueueName, err))
+	}
+
+	// La cola de reservas va sin DLX (nadie la consume aún, DM5) y solo si
+	// está configurada: los tests unitarios construyen la config sin ella
+	if rq.config.ReservationsQueueName != "" {
+		if _, err := ch.QueueDeclare(rq.config.ReservationsQueueName, true, false, false, false, nil); err != nil {
+			return fail(fmt.Errorf("error declaring queue %s: %w", rq.config.ReservationsQueueName, err))
 		}
 	}
 

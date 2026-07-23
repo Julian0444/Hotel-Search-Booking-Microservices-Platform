@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/apperr"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -33,13 +35,13 @@ func (m JWTMiddleware) Authenticate() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header missing"})
+			apperr.Abort(c, http.StatusUnauthorized, "unauthorized", "authorization header missing", nil)
 			return
 		}
 
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be Bearer {token}"})
+			apperr.Abort(c, http.StatusUnauthorized, "unauthorized", "authorization header format must be Bearer {token}", nil)
 			return
 		}
 
@@ -57,20 +59,20 @@ func (m JWTMiddleware) Authenticate() gin.HandlerFunc {
 		)
 
 		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			apperr.Abort(c, http.StatusUnauthorized, "unauthorized", "invalid token", err)
 			return
 		}
 
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+			apperr.Abort(c, http.StatusUnauthorized, "unauthorized", "invalid token claims", nil)
 			return
 		}
 
 		// Obtiene el tipo de usuario desde los claims
 		userType, ok := claims["tipo"].(string)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "User type not found in token"})
+			apperr.Abort(c, http.StatusUnauthorized, "unauthorized", "user type not found in token", nil)
 			return
 		}
 
@@ -83,7 +85,7 @@ func (m JWTMiddleware) Authenticate() gin.HandlerFunc {
 		} else if userIDString, ok := claims["user_id"].(string); ok {
 			userID = userIDString
 		} else {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in token"})
+			apperr.Abort(c, http.StatusUnauthorized, "unauthorized", "user ID not found in token", nil)
 			return
 		}
 
@@ -99,12 +101,12 @@ func AdminOnly() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userType, exists := c.Get("userType")
 		if !exists {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "User type not found"})
+			apperr.Abort(c, http.StatusUnauthorized, "unauthorized", "user type not found", nil)
 			return
 		}
 
 		if userType != "administrador" {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Forbidden: Administrators only"})
+			apperr.Abort(c, http.StatusForbidden, "forbidden", "administrators only", nil)
 			return
 		}
 
@@ -120,7 +122,7 @@ func OwnerOrAdmin() gin.HandlerFunc {
 			return
 		}
 		if id := c.GetString("userID"); id == "" || id != c.Param("id") {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "you can only access your own account"})
+			apperr.Abort(c, http.StatusForbidden, "forbidden", "you can only access your own account", nil)
 			return
 		}
 		c.Next()

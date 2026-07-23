@@ -16,6 +16,8 @@ var (
 	MongoCollectionHotels       = getEnv("MONGO_COLLECTION_HOTELS", "hotels")
 	MongoCollectionReservations = getEnv("MONGO_COLLECTION_RESERVATIONS", "reservations")
 	MongoCollectionInventory    = getEnv("MONGO_COLLECTION_INVENTORY", "reservation_inventory")
+	// Registros de Idempotency-Key (A3): índice único {key, user_id} + TTL 24h
+	MongoCollectionIdempotency = getEnv("MONGO_COLLECTION_IDEMPOTENCY", "idempotency_keys")
 
 	// Cache
 	CacheMaxSize      = getInt64Env("CACHE_MAX_SIZE", 100000)

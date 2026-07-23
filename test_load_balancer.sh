@@ -94,15 +94,15 @@ check_health() {
     fi
 
     # Users API (a través del gateway; 401 = vivo y protegido)
-    response=$(http_code "$BASE_URL/users")
+    response=$(http_code "$BASE_URL/api/v1/users")
     if [ "$response" = "200" ] || [ "$response" = "401" ]; then
         pass "Users API via gateway → HTTP $response (reachable)"
     else
         fail "Users API via gateway → HTTP $response (esperado 200/401)"
     fi
 
-    # Hotels API (GET /hotels no existe como lista → 404 = vivo)
-    response=$(http_code "$BASE_URL/hotels")
+    # Hotels API (listado paginado del catálogo)
+    response=$(http_code "$BASE_URL/api/v1/hotels")
     if [ "$response" = "200" ] || [ "$response" = "404" ]; then
         pass "Hotels API via gateway → HTTP $response (reachable)"
     else
@@ -110,7 +110,7 @@ check_health() {
     fi
 
     # Search API
-    response=$(http_code "$BASE_URL/search?q=test&offset=0&limit=10")
+    response=$(http_code "$BASE_URL/api/v1/search?q=test&offset=0&limit=10")
     if [ "$response" = "200" ]; then
         pass "Search API via gateway → 200"
     else
@@ -122,7 +122,7 @@ check_health() {
 test_load_balancing() {
     print_section "⚖️  Load Balancing Test (Users API)"
 
-    echo "  Sending $TOTAL_REQUESTS requests to /users endpoint..."
+    echo "  Sending $TOTAL_REQUESTS requests to /api/v1/users endpoint..."
     echo "  Observing which upstream server handles each request..."
     echo ""
 
@@ -131,7 +131,7 @@ test_load_balancing() {
     i=1
     while [ "$i" -le "$TOTAL_REQUESTS" ]; do
         # Hacer request y capturar el header X-Upstream-Server
-        upstream=$(curl -s -I --max-time 10 "$BASE_URL/users" 2>/dev/null | grep -i "x-upstream-server" | awk '{print $2}' | tr -d '\r' || true)
+        upstream=$(curl -s -I --max-time 10 "$BASE_URL/api/v1/users" 2>/dev/null | grep -i "x-upstream-server" | awk '{print $2}' | tr -d '\r' || true)
 
         if [ -n "$upstream" ]; then
             echo "$upstream" >> "$upstreams_file"
@@ -198,10 +198,11 @@ test_all_endpoints() {
 
     # formato: método|path|códigos aceptados (separados por coma)|descripción
     endpoints="GET|/health|200|API Gateway Health
-GET|/users|401|List Users (Auth required)
-GET|/hotels|200,404|List Hotels
-GET|/search?q=test&offset=0&limit=10|200|Search Hotels
-GET|/admin/microservices|401|Admin (Auth required)"
+GET|/api/v1/users|401|List Users (Auth required)
+GET|/api/v1/hotels|200|List Hotels
+GET|/api/v1/search?q=test&offset=0&limit=10|200|Search Hotels
+GET|/api/v1/admin/microservices|401|Admin (Auth required)
+GET|/users|404|Unversioned route removed (A2)"
 
     while IFS='|' read -r method path expected description; do
         response=$(http_code -X "$method" "$BASE_URL$path")
@@ -217,7 +218,7 @@ GET|/admin/microservices|401|Admin (Auth required)"
 test_rate_limiting() {
     print_section "🚦 Rate Limiting Test"
 
-    echo "  Testing /login rate limit (5 req/min, burst=3)..."
+    echo "  Testing /api/v1/login rate limit (5 req/min, burst=3)..."
     echo "  Sending 10 rapid requests..."
     echo ""
 
@@ -226,7 +227,7 @@ test_rate_limiting() {
 
     i=1
     while [ "$i" -le 10 ]; do
-        response=$(http_code -X POST "$BASE_URL/login" -H "Content-Type: application/json" -d '{}')
+        response=$(http_code -X POST "$BASE_URL/api/v1/login" -H "Content-Type: application/json" -d '{}')
         if [ "$response" = "503" ] || [ "$response" = "429" ]; then
             limited=$((limited + 1))
             echo -n -e "${RED}X${NC}"

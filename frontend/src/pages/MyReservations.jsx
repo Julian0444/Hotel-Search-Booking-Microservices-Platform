@@ -87,7 +87,7 @@ const MyReservations = () => {
       console.error('Error canceling reservation:', err);
       setSnackbar({
         open: true,
-        message: err.response?.data?.error || 'Error cancelling reservation',
+        message: err.response?.data?.error?.message || 'Error cancelling reservation',
         severity: 'error',
       });
     } finally {

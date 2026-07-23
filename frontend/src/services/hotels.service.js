@@ -17,11 +17,12 @@ import { PAGINATION } from '../constants';
  */
 const hotelsService = {
   /**
-   * Search hotels
+   * Search hotels. Returns the standard list envelope so callers can
+   * paginate against the real index total (RV22).
    * @param {string} [query=''] - Search query
    * @param {number} [offset=0] - Pagination offset
    * @param {number} [limit=20] - Results limit
-   * @returns {Promise<Hotel[]>} List of hotels
+   * @returns {Promise<{ data: Hotel[], meta: { total: number, limit: number, offset: number } }>} Search page
    */
   search: async (query = '', offset = PAGINATION.DEFAULT_OFFSET, limit = PAGINATION.DEFAULT_PAGE_SIZE) => {
     const params = new URLSearchParams();
@@ -40,7 +41,7 @@ const hotelsService = {
    */
   getById: async (hotelId) => {
     const response = await api.get(`/hotels/${hotelId}`);
-    return response.data;
+    return response.data.data;
   },
 
   /**
@@ -50,7 +51,7 @@ const hotelsService = {
    */
   getReservationsByHotel: async (hotelId) => {
     const response = await api.get(`/hotels/${hotelId}/reservations`);
-    return response.data;
+    return response.data.data;
   },
 
   /**
@@ -66,7 +67,7 @@ const hotelsService = {
       check_in: checkIn,
       check_out: checkOut,
     });
-    return response.data;
+    return response.data.data;
   },
 };
 

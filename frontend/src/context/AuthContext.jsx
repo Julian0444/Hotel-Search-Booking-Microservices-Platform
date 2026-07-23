@@ -69,7 +69,7 @@ export const AuthProvider = ({ children }) => {
 
       return { success: true };
     } catch (err) {
-      const message = err.response?.data?.error || 'Failed to login. Please try again.';
+      const message = err.response?.data?.error?.message || 'Failed to login. Please try again.';
       setError(message);
       return { success: false, error: message };
     } finally {
@@ -92,7 +92,7 @@ export const AuthProvider = ({ children }) => {
       // Auto-login after registration
       return await login(username, password);
     } catch (err) {
-      const message = err.response?.data?.error || 'Registration failed. Please try again.';
+      const message = err.response?.data?.error?.message || 'Registration failed. Please try again.';
       setError(message);
       return { success: false, error: message };
     } finally {

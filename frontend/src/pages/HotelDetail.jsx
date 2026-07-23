@@ -123,7 +123,7 @@ const HotelDetail = () => {
       console.error('Error creating reservation:', err);
       setSnackbar({
         open: true,
-        message: err.response?.data?.error || 'Error creating reservation',
+        message: err.response?.data?.error?.message || 'Error creating reservation',
         severity: 'error',
       });
     } finally {

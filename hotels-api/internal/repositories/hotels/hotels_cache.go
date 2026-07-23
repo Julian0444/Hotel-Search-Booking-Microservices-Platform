@@ -98,6 +98,18 @@ func (repository Cache) GetHotelByID(ctx context.Context, id string) (hotelsDAO.
 	return hotelDAO, nil
 }
 
+// GetHotels / CountHotels: el listado completo del catálogo NO se cachea (lo
+// consume el backfill de search-api, no es un hot path; cachear páginas de
+// listado reintroduciría el veneno de listas parciales, RV1). Siempre miss
+// para que el service caiga al repositorio principal.
+func (repository Cache) GetHotels(_ context.Context, _, _ int64) ([]hotelsDAO.Hotel, error) {
+	return nil, fmt.Errorf("hotel listing is not cached")
+}
+
+func (repository Cache) CountHotels(_ context.Context) (int64, error) {
+	return 0, fmt.Errorf("hotel count is not cached")
+}
+
 // Crea un nuevo hotel en la cache
 func (repository Cache) Create(ctx context.Context, hotel hotelsDAO.Hotel) (string, error) {
 	key := fmt.Sprintf(keyFormat, hotel.ID)
@@ -156,10 +168,10 @@ func (repository Cache) Update(ctx context.Context, hotel hotelsDAO.Hotel) error
 	if hotel.AvaiableRooms != 0 {
 		currentHotel.AvaiableRooms = hotel.AvaiableRooms
 	}
-	if !hotel.CheckInTime.IsZero() {
+	if hotel.CheckInTime != "" {
 		currentHotel.CheckInTime = hotel.CheckInTime
 	}
-	if !hotel.CheckOutTime.IsZero() {
+	if hotel.CheckOutTime != "" {
 		currentHotel.CheckOutTime = hotel.CheckOutTime
 	}
 	if hotel.Rating != 0 {

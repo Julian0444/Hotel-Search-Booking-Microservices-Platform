@@ -41,11 +41,12 @@ func getTestService() (Service, hotels.Mock, hotels.MockCache) {
 	return NewService(mainRepo, cacheRepo, NewMockQueue()), mainRepo, cacheRepo
 }
 
-// futureDate devuelve una fecha futura estable para reservas de test
-// (la validación de "check-in no pasado" exige fechas dinámicas).
-func futureDate(t *testing.T, daysFromNow int) time.Time {
+// futureDate devuelve una fecha futura estable en el formato canónico
+// "YYYY-MM-DD" del contrato (RV20); la validación de "check-in no pasado"
+// exige fechas dinámicas.
+func futureDate(t *testing.T, daysFromNow int) string {
 	t.Helper()
-	return time.Now().UTC().AddDate(0, 0, daysFromNow).Truncate(24 * time.Hour)
+	return time.Now().UTC().AddDate(0, 0, daysFromNow).Format(hotelsDomain.DateFormat)
 }
 
 func TestCreateAndGetHotel(t *testing.T) {
@@ -66,6 +67,55 @@ func TestCreateAndGetHotel(t *testing.T) {
 	}
 	if got.Name != hotel.Name {
 		t.Errorf("expected name %s, got %s", hotel.Name, got.Name)
+	}
+}
+
+// RV14: el sentinel ErrHotelNotFound sobrevive el wrap del service (errors.Is)
+func TestGetHotelByID_NotFoundTyped(t *testing.T) {
+	service, _, _ := getTestService()
+
+	_, err := service.GetHotelByID(context.Background(), "missing")
+	if !errors.Is(err, hotelsDomain.ErrHotelNotFound) {
+		t.Fatalf("expected ErrHotelNotFound through the service wrap, got %v", err)
+	}
+}
+
+// E3: listado paginado con total, sin pasar por caché
+func TestGetHotels(t *testing.T) {
+	service, _, _ := getTestService()
+	ctx := context.Background()
+
+	for _, name := range []string{"Alfa", "Beta", "Gamma"} {
+		if _, err := service.Create(ctx, hotelsDomain.Hotel{Name: name}); err != nil {
+			t.Fatalf("error creating hotel %s: %v", name, err)
+		}
+	}
+
+	page, total, err := service.GetHotels(ctx, 2, 0)
+	if err != nil {
+		t.Fatalf("error getting hotels: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("expected total 3, got %d", total)
+	}
+	if len(page) != 2 {
+		t.Errorf("expected page of 2, got %d", len(page))
+	}
+
+	rest, total, err := service.GetHotels(ctx, 2, 2)
+	if err != nil {
+		t.Fatalf("error getting second page: %v", err)
+	}
+	if total != 3 || len(rest) != 1 {
+		t.Errorf("expected second page of 1 (total 3), got %d (total %d)", len(rest), total)
+	}
+	// Sin solapamiento entre páginas (orden estable por id)
+	seen := map[string]bool{}
+	for _, h := range append(page, rest...) {
+		if seen[h.ID] {
+			t.Errorf("hotel %s repeated across pages", h.ID)
+		}
+		seen[h.ID] = true
 	}
 }
 
@@ -215,8 +265,9 @@ func TestCreateReservation_Validations(t *testing.T) {
 		_, err := service.CreateReservation(ctx, hotelsDomain.Reservation{
 			HotelID: hotelID, UserID: "u", CheckIn: futureDate(t, 12), CheckOut: futureDate(t, 10), NumRooms: 1,
 		})
-		if err == nil {
-			t.Error("expected error for check-out before check-in")
+		// RV19: validación tipada → el controller la mapea a 400
+		if !errors.Is(err, hotelsDomain.ErrInvalidReservation) {
+			t.Errorf("expected ErrInvalidReservation for check-out before check-in, got %v", err)
 		}
 	})
 
@@ -224,8 +275,17 @@ func TestCreateReservation_Validations(t *testing.T) {
 		_, err := service.CreateReservation(ctx, hotelsDomain.Reservation{
 			HotelID: hotelID, UserID: "u", CheckIn: futureDate(t, -5), CheckOut: futureDate(t, 2), NumRooms: 1,
 		})
-		if err == nil {
-			t.Error("expected error for past check-in")
+		if !errors.Is(err, hotelsDomain.ErrInvalidReservation) {
+			t.Errorf("expected ErrInvalidReservation for past check-in, got %v", err)
+		}
+	})
+
+	t.Run("malformed dates", func(t *testing.T) {
+		_, err := service.CreateReservation(ctx, hotelsDomain.Reservation{
+			HotelID: hotelID, UserID: "u", CheckIn: "12/01/2030", CheckOut: futureDate(t, 12), NumRooms: 1,
+		})
+		if !errors.Is(err, hotelsDomain.ErrInvalidReservation) {
+			t.Errorf("expected ErrInvalidReservation for malformed check-in, got %v", err)
 		}
 	})
 
@@ -242,8 +302,9 @@ func TestCreateReservation_Validations(t *testing.T) {
 		_, err := service.CreateReservation(ctx, hotelsDomain.Reservation{
 			HotelID: "missing", UserID: "u", CheckIn: futureDate(t, 10), CheckOut: futureDate(t, 12), NumRooms: 1,
 		})
-		if err == nil {
-			t.Error("expected error for unknown hotel")
+		// RV19: el sentinel sobrevive el wrap → el controller mapea 404
+		if !errors.Is(err, hotelsDomain.ErrHotelNotFound) {
+			t.Errorf("expected ErrHotelNotFound for unknown hotel, got %v", err)
 		}
 	})
 }
@@ -514,10 +575,9 @@ func TestAvailabilityWithReservation(t *testing.T) {
 		t.Fatalf("error repopulating reservations list: %v", err)
 	}
 
-	day := func(t time.Time) string { return t.Format("2006-01-02") }
-
-	// Mismo rango debe estar no disponible
-	availability, err := service.GetAvailability(ctx, []string{hotelID}, day(checkIn), day(checkOut))
+	// Mismo rango debe estar no disponible (las fechas del contrato ya son
+	// strings canónicos, van directo)
+	availability, err := service.GetAvailability(ctx, []string{hotelID}, checkIn, checkOut)
 	if err != nil {
 		t.Fatalf("error getting availability: %v", err)
 	}
@@ -526,7 +586,7 @@ func TestAvailabilityWithReservation(t *testing.T) {
 	}
 
 	// Checkout excluido: el día del checkout ya está libre para check-in
-	availability, err = service.GetAvailability(ctx, []string{hotelID}, day(checkOut), day(checkOut.AddDate(0, 0, 1)))
+	availability, err = service.GetAvailability(ctx, []string{hotelID}, checkOut, futureDate(t, 12))
 	if err != nil {
 		t.Fatalf("error getting availability (checkout exclusion): %v", err)
 	}

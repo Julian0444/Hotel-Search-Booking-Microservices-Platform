@@ -8,10 +8,11 @@ export default defineConfig({
     port: 5173,
     host: true,
     proxy: {
+      // El gateway expone la API versionada bajo /api/v1: se proxya tal cual,
+      // sin recortar el prefijo (plan 07 / A2)
       '/api': {
         target: 'http://localhost',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
   },

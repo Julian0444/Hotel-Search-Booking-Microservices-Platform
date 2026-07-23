@@ -24,18 +24,18 @@ const authService = {
    */
   login: async (username, password) => {
     const response = await api.post('/login', { username, password });
-    return response.data;
+    return response.data.data;
   },
 
   /**
    * Register new user (role is always assigned server-side as "cliente")
    * @param {string} username - Username
    * @param {string} password - Password
-   * @returns {Promise<{ id: number }>} Created user ID
+   * @returns {Promise<{ id: string }>} Created user ID
    */
   register: async (username, password) => {
     const response = await api.post('/users', { username, password });
-    return response.data;
+    return response.data.data;
   },
 
   /**
@@ -44,7 +44,7 @@ const authService = {
    */
   getAllUsers: async () => {
     const response = await api.get('/users');
-    return response.data;
+    return response.data.data;
   },
 
   /**
@@ -54,7 +54,7 @@ const authService = {
    */
   getUserById: async (id) => {
     const response = await api.get(`/users/${id}`);
-    return response.data;
+    return response.data.data;
   },
 
   /**
@@ -63,8 +63,8 @@ const authService = {
    * @returns {Promise<void>}
    */
   deleteUser: async (id) => {
-    const response = await api.delete(`/users/${id}`);
-    return response.data;
+    // DELETE exitoso responde 204 sin body (A6)
+    await api.delete(`/users/${id}`);
   },
 };
 

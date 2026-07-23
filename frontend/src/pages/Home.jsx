@@ -60,7 +60,7 @@ const Home = () => {
       try {
         setLoading(true);
         const response = await hotelsService.search('', 0, 6);
-        setFeaturedHotels(response || []);
+        setFeaturedHotels(response.data || []);
       } catch (err) {
         console.error('Error fetching hotels:', err);
         setError('Could not load featured hotels');

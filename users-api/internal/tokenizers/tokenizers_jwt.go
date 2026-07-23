@@ -22,7 +22,8 @@ func NewTokenizer(config JWTConfig) JWT {
 
 // GenerateToken genera un JWT compatible con `hotels-api` (claims `user_id` y `tipo`).
 // Usa claims estándar `iat`/`exp`/`nbf`, y scopea el token con `iss`/`aud`:
-// lo emite users-api y lo aceptan users-api y hotels-api (cada uno valida su audiencia).
+// lo emite users-api y lo aceptan users-api, hotels-api y search-api (cada
+// uno valida su propia audiencia; search-api la usa para POST /reindex).
 func (tokenizer JWT) GenerateToken(username string, userID int64, tipo string) (string, error) {
 	if tokenizer.config.Key == "" {
 		return "", fmt.Errorf("jwt key is required")
@@ -41,7 +42,7 @@ func (tokenizer JWT) GenerateToken(username string, userID int64, tipo string) (
 		"user_id":  userID,
 		"tipo":     tipo,
 		"iss":      "users-api",
-		"aud":      []string{"users-api", "hotels-api"},
+		"aud":      []string{"users-api", "hotels-api", "search-api"},
 		"iat":      now.Unix(),
 		"nbf":      now.Unix(),
 		"exp":      now.Add(tokenizer.config.Duration).Unix(),

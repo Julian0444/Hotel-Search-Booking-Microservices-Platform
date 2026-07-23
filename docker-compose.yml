@@ -293,6 +293,7 @@ services:
       MONGO_COLLECTION_HOTELS: hotels
       MONGO_COLLECTION_RESERVATIONS: reservations
       MONGO_COLLECTION_INVENTORY: reservation_inventory
+      MONGO_COLLECTION_IDEMPOTENCY: idempotency_keys
       CACHE_MAX_SIZE: "100000"
       CACHE_ITEMS_TO_PRUNE: "100"
       CACHE_DURATION: "30s"
@@ -340,6 +341,7 @@ services:
       RABBIT_QUEUE_NAME: hotels-news
       HOTELS_API_HOST: hotels-api-container
       HOTELS_API_PORT: "8081"
+      JWT_SECRET: ${JWT_SECRET:?set in .env (cp .env.example .env)}  # valida el admin de POST /reindex
       PORT: "8082"
     depends_on:
       solr:

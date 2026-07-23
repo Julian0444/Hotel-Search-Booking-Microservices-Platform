@@ -33,12 +33,12 @@ func (m *Mock) Delete(ctx context.Context, id string) error {
 	return args.Error(0)
 }
 
-func (m *Mock) Search(ctx context.Context, query string, limit int, offset int) ([]hotelsDAO.Hotel, error) {
+func (m *Mock) Search(ctx context.Context, query string, limit int, offset int) ([]hotelsDAO.Hotel, int, error) {
 	args := m.Called(ctx, query, limit, offset)
 	if args.Get(0) == nil {
-		return nil, args.Error(1)
+		return nil, 0, args.Error(2)
 	}
-	return args.Get(0).([]hotelsDAO.Hotel), args.Error(1)
+	return args.Get(0).([]hotelsDAO.Hotel), args.Int(1), args.Error(2)
 }
 
 // ExternalMock implementa la interfaz ExternalRepository (Hotels API) para testing.
@@ -53,4 +53,13 @@ func NewExternalMock() *ExternalMock {
 func (m *ExternalMock) GetHotelByID(ctx context.Context, id string) (hotelsDomain.Hotel, error) {
 	args := m.Called(ctx, id)
 	return args.Get(0).(hotelsDomain.Hotel), args.Error(1)
+}
+
+func (m *ExternalMock) GetHotels(ctx context.Context, limit, offset int) ([]hotelsDomain.Hotel, int, error) {
+	args := m.Called(ctx, limit, offset)
+	var hotels []hotelsDomain.Hotel
+	if args.Get(0) != nil {
+		hotels = args.Get(0).([]hotelsDomain.Hotel)
+	}
+	return hotels, args.Int(1), args.Error(2)
 }

@@ -11,8 +11,8 @@
   "price_per_night": 150.5,
   "rating": 4.5,
   "avaiable_rooms": 20,
-  "check_in_time": "2026-01-15T15:00:00Z",
-  "check_out_time": "2026-01-16T10:00:00Z",
+  "check_in_time": "15:00",
+  "check_out_time": "10:00",
   "amenities": ["wifi", "spa", "pileta"],
   "images": ["https://example.com/sierras-1.jpg", "https://example.com/sierras-2.jpg"]
 }

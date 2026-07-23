@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/apperr"
 	usersDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/domain/users"
 	usersRepo "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/repositories/users"
 	usersService "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/services/users"
@@ -43,7 +44,7 @@ func NewController(service Service) Controller {
 // abortIfTimedOut mapea un deadline vencido a 503 (fallar rápido, no colgar — R1).
 func abortIfTimedOut(ctx *gin.Context, err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
-		ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": "request timed out"})
+		apperr.Abort(ctx, http.StatusServiceUnavailable, "timeout", "request timed out", err)
 		return true
 	}
 	return false
@@ -67,10 +68,9 @@ func paginationParams(ctx *gin.Context) (int, int) {
 	return limit, offset
 }
 
-// GetAll retorna una página de usuarios; el total va en X-Total-Count.
-// (La respuesta sigue siendo un array pelado para no romper el admin del
-// frontend; el envelope formal llega con /api/v1 en el plan 07.)
-// GET /users?limit=20&offset=0
+// GetAll retorna una página de usuarios con el envelope estándar (A5): el
+// total viaja en meta y reemplaza al interino X-Total-Count del plan 03.
+// GET /api/v1/users?limit=20&offset=0
 func (c Controller) GetAll(ctx *gin.Context) {
 	limit, offset := paginationParams(ctx)
 
@@ -79,14 +79,14 @@ func (c Controller) GetAll(ctx *gin.Context) {
 		if abortIfTimedOut(ctx, err) {
 			return
 		}
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "error getting users",
-		})
+		apperr.Abort(ctx, http.StatusInternalServerError, "internal", "error getting users", err)
 		return
 	}
 
-	ctx.Header("X-Total-Count", strconv.FormatInt(total, 10))
-	ctx.JSON(http.StatusOK, users)
+	ctx.JSON(http.StatusOK, gin.H{
+		"data": users,
+		"meta": gin.H{"total": total, "limit": limit, "offset": offset},
+	})
 }
 
 // GetByID retorna un usuario por ID.
@@ -94,26 +94,24 @@ func (c Controller) GetAll(ctx *gin.Context) {
 func (c Controller) GetByID(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "invalid user id",
-		})
+		apperr.Abort(ctx, http.StatusBadRequest, "invalid_id", "invalid user id", nil)
 		return
 	}
 
 	user, err := c.service.GetByID(ctx.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, usersRepo.ErrUserNotFound) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			apperr.Abort(ctx, http.StatusNotFound, "user_not_found", "user not found", err)
 			return
 		}
 		if abortIfTimedOut(ctx, err) {
 			return
 		}
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "error getting user"})
+		apperr.Abort(ctx, http.StatusInternalServerError, "internal", "error getting user", err)
 		return
 	}
 
-	ctx.JSON(http.StatusOK, user)
+	ctx.JSON(http.StatusOK, gin.H{"data": user})
 }
 
 // Create registra un nuevo usuario.
@@ -121,9 +119,8 @@ func (c Controller) GetByID(ctx *gin.Context) {
 func (c Controller) Create(ctx *gin.Context) {
 	var request usersDomain.RegisterRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "invalid request body: username (3-50 chars) and password (8-72 chars) are required",
-		})
+		apperr.Abort(ctx, http.StatusBadRequest, "invalid_body",
+			"invalid request body: username (3-50 chars) and password (8-72 chars) are required", err)
 		return
 	}
 
@@ -134,24 +131,26 @@ func (c Controller) Create(ctx *gin.Context) {
 		Tipo:     "cliente",
 	})
 	if err != nil {
-		// Errores de validación -> 400
+		// Errores de validación -> 400 (el texto es nuestro, no filtra internals)
 		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "invalid tipo") || strings.Contains(err.Error(), "too long") {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			apperr.Abort(ctx, http.StatusBadRequest, "invalid_body", err.Error(), nil)
 			return
 		}
 		// Duplicado de username -> 409
 		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "duplicate") {
-			ctx.JSON(http.StatusConflict, gin.H{"error": "username already exists"})
+			apperr.Abort(ctx, http.StatusConflict, "username_taken", "username already exists", err)
 			return
 		}
 		if abortIfTimedOut(ctx, err) {
 			return
 		}
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "error creating user"})
+		apperr.Abort(ctx, http.StatusInternalServerError, "internal", "error creating user", err)
 		return
 	}
 
-	ctx.JSON(http.StatusCreated, gin.H{"id": id})
+	// 201 con Location del recurso creado (A6); el id sale como string (A7)
+	ctx.Header("Location", "/api/v1/users/"+strconv.FormatInt(id, 10))
+	ctx.JSON(http.StatusCreated, gin.H{"data": gin.H{"id": strconv.FormatInt(id, 10)}})
 }
 
 // Delete elimina un usuario por ID.
@@ -159,9 +158,7 @@ func (c Controller) Create(ctx *gin.Context) {
 func (c Controller) Delete(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "invalid user id",
-		})
+		apperr.Abort(ctx, http.StatusBadRequest, "invalid_id", "invalid user id", nil)
 		return
 	}
 
@@ -169,13 +166,12 @@ func (c Controller) Delete(ctx *gin.Context) {
 		if abortIfTimedOut(ctx, err) {
 			return
 		}
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "error deleting user",
-		})
+		apperr.Abort(ctx, http.StatusInternalServerError, "internal", "error deleting user", err)
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"id": id})
+	// DELETE exitoso → 204 sin body (A6)
+	ctx.Status(http.StatusNoContent)
 }
 
 // Login autentica un usuario y retorna un JWT.
@@ -183,24 +179,22 @@ func (c Controller) Delete(ctx *gin.Context) {
 func (c Controller) Login(ctx *gin.Context) {
 	var request usersDomain.LoginRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "invalid request body",
-		})
+		apperr.Abort(ctx, http.StatusBadRequest, "invalid_body", "invalid request body", err)
 		return
 	}
 
 	response, err := c.service.Login(ctx.Request.Context(), request.Username, request.Password)
 	if err != nil {
 		if errors.Is(err, usersService.ErrInvalidCredentials) {
-			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+			apperr.Abort(ctx, http.StatusUnauthorized, "invalid_credentials", "invalid credentials", nil)
 			return
 		}
 		if abortIfTimedOut(ctx, err) {
 			return
 		}
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "error during login"})
+		apperr.Abort(ctx, http.StatusInternalServerError, "internal", "error during login", err)
 		return
 	}
 
-	ctx.JSON(http.StatusOK, response)
+	ctx.JSON(http.StatusOK, gin.H{"data": response})
 }

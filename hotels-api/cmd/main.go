@@ -46,6 +46,7 @@ func main() {
 		Collection_hotels:       config.MongoCollectionHotels,
 		Collection_reservations: config.MongoCollectionReservations,
 		Collection_inventory:    config.MongoCollectionInventory,
+		Collection_idempotency:  config.MongoCollectionIdempotency,
 	})
 
 	cacheRepo := repositoriesHotels.NewCache(repositoriesHotels.CacheConfig{
@@ -85,32 +86,39 @@ func main() {
 	router.Use(gin.Recovery())
 	router.Use(middleware.RequestID())
 
-	// Configuración de CORS
+	// Configuración de CORS (Idempotency-Key habilitado para el POST de reservas, A3)
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Content-Type", "Authorization"},
+		AllowHeaders:     []string{"Content-Type", "Authorization", "Idempotency-Key"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// Configuración de rutas
-	router.GET("/hotels/:hotel_id", hotelsController.GetHotelByID)
-	router.GET("/hotels/:hotel_id/reservations", hotelsController.GetReservationsByHotelID)
-	router.POST("/hotels/availability", hotelsController.GetAvailability)
+	// Rutas versionadas bajo /api/v1 (A2); health/livez/readyz quedan fuera.
+	// RequireJSON: la API es JSON-only, Accept incompatible → 406 (A8).
+	v1 := router.Group("/api/v1", middleware.RequireJSON())
+
+	v1.GET("/hotels", hotelsController.GetHotels) // listado paginado (E3: lo consume el backfill de search-api)
+	v1.GET("/hotels/:hotel_id", hotelsController.GetHotelByID)
+	v1.GET("/hotels/:hotel_id/reservations", hotelsController.GetReservationsByHotelID)
+	v1.POST("/hotels/availability", hotelsController.GetAvailability)
 
 	// Rutas protegidas para usuarios autenticados
-	userRoutes := router.Group("/", jwtMiddleware.Authenticate(), middleware.LoggedUserOnly())
+	userRoutes := v1.Group("/", jwtMiddleware.Authenticate(), middleware.LoggedUserOnly())
 	{
-		userRoutes.POST("/reservations", hotelsController.CreateReservation)
+		// POST de reservas con Idempotency-Key (A3): mismo key+user → misma
+		// respuesta, una sola reserva
+		userRoutes.POST("/reservations", middleware.Idempotency(hotelsRepo), hotelsController.CreateReservation)
+		userRoutes.GET("/reservations/:id", hotelsController.GetReservationByID)
 		userRoutes.DELETE("/reservations/:id", hotelsController.CancelReservation)
 		userRoutes.GET("/users/:user_id/reservations", hotelsController.GetReservationsByUserID)
 		userRoutes.GET("/users/:user_id/hotels/:hotel_id/reservations", hotelsController.GetReservationsByUserAndHotelID)
 	}
 
 	// Rutas protegidas para administradores
-	adminRoutes := router.Group("/admin", jwtMiddleware.Authenticate(), middleware.AdminOnly())
+	adminRoutes := v1.Group("/admin", jwtMiddleware.Authenticate(), middleware.AdminOnly())
 	{
 		// Gestión de hoteles (solo admins)
 		adminRoutes.POST("/hotels", hotelsController.Create)

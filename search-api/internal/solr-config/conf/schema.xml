@@ -8,23 +8,36 @@
         <field name="city" type="text_general" indexed="true" stored="true"/>
         <field name="state" type="text_general" indexed="true" stored="true"/>
         <field name="country" type="text_general" indexed="true" stored="true"/>
-        <field name="phone" type="text_general" indexed="true" stored="true"/>
-        <field name="email" type="text_general" indexed="true" stored="true"/>
+        <!-- DB7: phone/email son identificadores, no texto — match exacto
+             (tokenizarlos solo generaba términos basura en el índice) -->
+        <field name="phone" type="string" indexed="true" stored="true"/>
+        <field name="email" type="string" indexed="true" stored="true"/>
         <field name="price_per_night" type="pfloat" indexed="true" stored="true"/>
         <field name="rating" type="pfloat" indexed="true" stored="true"/>
         <field name="avaiable_rooms" type="pint" indexed="true" stored="true"/>
-        <field name="check_in_time" type="pdate" indexed="true" stored="true"/>
-        <field name="check_out_time" type="pdate" indexed="true" stored="true"/>
+        <!-- Horas del día "HH:mm" (RV21): son strings planos del contrato, no
+             timestamps — pdate obligaba a inventar una fecha ficticia -->
+        <field name="check_in_time" type="string" indexed="true" stored="true"/>
+        <field name="check_out_time" type="string" indexed="true" stored="true"/>
         <field name="amenities" type="string" indexed="true" stored="true" multiValued="true"/>
         <field name="images" type="string" indexed="true" stored="true" multiValued="true"/>
+        <!-- DB7: catch-all para búsqueda por campo default (df) sin enumerar
+             campos; se alimenta por copyField y no se almacena -->
+        <field name="_text_" type="text_general" indexed="true" stored="false" multiValued="true"/>
         <!-- Campo requerido por Solr -->
         <field name="_version_" type="plong" indexed="false" stored="false"/>
     </fields>
 
     <uniqueKey>id</uniqueKey>
 
+    <!-- DB7: los campos buscables alimentan el catch-all _text_ -->
+    <copyField source="name" dest="_text_"/>
+    <copyField source="description" dest="_text_"/>
+
     <!-- Tipos de campo -->
-    <fieldType name="string" class="solr.StrField" sortMissingLast="true"/>
+    <!-- DB7: docValues en los strings (id/phone/email/amenities) para facetar
+         y ordenar sin uninverted index en memoria -->
+    <fieldType name="string" class="solr.StrField" sortMissingLast="true" docValues="true"/>
     <fieldType name="text_general" class="solr.TextField" positionIncrementGap="100">
         <analyzer type="index">
             <tokenizer class="solr.StandardTokenizerFactory"/>

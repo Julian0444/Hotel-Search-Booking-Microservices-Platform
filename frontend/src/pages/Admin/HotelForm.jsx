@@ -150,7 +150,7 @@ const HotelForm = () => {
       setTimeout(() => navigate(ROUTES.ADMIN), 1500);
     } catch (err) {
       console.error('Error saving hotel:', err);
-      setError(err.response?.data?.error || 'Error saving hotel');
+      setError(err.response?.data?.error?.message || 'Error saving hotel');
     } finally {
       setLoading(false);
     }

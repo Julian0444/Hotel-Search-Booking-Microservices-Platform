@@ -35,12 +35,18 @@ func RequestID() gin.HandlerFunc {
 		if quietPaths[c.Request.URL.Path] {
 			return
 		}
-		slog.Info("request",
+		// Las causas que apperr adjuntó con c.Error salen acá, correlacionadas
+		// con el request_id — el body del cliente nunca las lleva (A1).
+		attrs := []any{
 			"request_id", id,
 			"method", c.Request.Method,
 			"path", c.Request.URL.Path,
 			"status", c.Writer.Status(),
 			"duration_ms", time.Since(start).Milliseconds(),
-		)
+		}
+		if len(c.Errors) > 0 {
+			attrs = append(attrs, "errors", c.Errors.String())
+		}
+		slog.Info("request", attrs...)
 	}
 }
