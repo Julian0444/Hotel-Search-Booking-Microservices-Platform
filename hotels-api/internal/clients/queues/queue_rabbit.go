@@ -245,20 +245,28 @@ func (rq *RabbitQueue) publish(queueName string, body []byte) error {
 	// Intentar publicar con reintentos
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
+		// Backoff al inicio del loop: así cubre también los reintentos que
+		// entran por un reconnect fallido (el sleep al final se salteaba con
+		// el continue).
+		if attempt > 1 {
+			time.Sleep(time.Duration(attempt-1) * 500 * time.Millisecond)
+		}
+
+		// Si el canal murió en un intento anterior (connected=false), reconectar
+		// antes de reintentar (C14/RV25): chequear solo channel == nil dejaba a
+		// los 3 intentos publicando sobre el mismo canal muerto. Un único
+		// connect() por intento — el connectWithRetry completo tardaría más de
+		// un minuto dentro de un request HTTP.
+		if !rq.IsConnected() {
+			if err := rq.connect(); err != nil {
+				lastErr = fmt.Errorf("error reconnecting to RabbitMQ: %w", err)
+				continue
+			}
+		}
+
 		rq.mu.RLock()
 		channel := rq.channel
 		rq.mu.RUnlock()
-
-		if channel == nil {
-			// Intentar reconectar
-			if err := rq.ensureConnection(); err != nil {
-				lastErr = err
-				continue
-			}
-			rq.mu.RLock()
-			channel = rq.channel
-			rq.mu.RUnlock()
-		}
 
 		// Publicar el mensaje
 		err := channel.Publish(
@@ -279,14 +287,10 @@ func (rq *RabbitQueue) publish(queueName string, body []byte) error {
 		lastErr = err
 		slog.Warn("publish attempt failed", "attempt", attempt, "error", err)
 
-		// Marcar como desconectado y reintentar
+		// Marcar como desconectado: el próximo intento reconecta (RV25)
 		rq.mu.Lock()
 		rq.connected = false
 		rq.mu.Unlock()
-
-		if attempt < 3 {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-		}
 	}
 
 	return fmt.Errorf("error publishing message after retries: %w", lastErr)

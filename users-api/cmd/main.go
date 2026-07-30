@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	config "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/config"
@@ -122,11 +126,36 @@ func main() {
 	router.GET("/readyz", healthController.Readyz)
 	router.GET("/health", healthController.Livez)
 
-	// Run server
-	if err := router.Run(":" + config.Port); err != nil {
-		slog.Error("failed to start server", "error", err)
-		os.Exit(1)
+	// Graceful shutdown (C12): el server corre en una goroutine y main espera
+	// SIGINT/SIGTERM; con 3 réplicas detrás de nginx, drenar los requests en
+	// vuelo (hasta 10s) es lo que hace transparente un rolling restart.
+	// Memcached no requiere cierre (cliente sin estado de conexión dedicada).
+	srv := &http.Server{
+		Addr:              ":" + config.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+
+	slog.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("server shutdown incomplete", "error", err)
+	}
+	if err := mySQLRepo.Close(); err != nil {
+		slog.Warn("error closing mysql pool", "error", err)
+	}
+	slog.Info("shutdown complete")
 }
 
 // seedAdmin crea el primer administrador si ADMIN_USERNAME/ADMIN_PASSWORD están seteados.

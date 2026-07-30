@@ -62,6 +62,8 @@ func startMongoContainer(t *testing.T) MongoConfig {
 		Collection_hotels:       "hotels",
 		Collection_reservations: "reservations",
 		Collection_inventory:    "reservation_inventory",
+		// Sin esto EnsureIndexes (A3, plan 07) panickea con InvalidNamespace
+		Collection_idempotency: "idempotency_keys",
 	}
 }
 
@@ -191,6 +193,38 @@ func TestMongo_ConcurrentClaimLastRoom(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("found %d inventory entries with booked > capacity", count)
+	}
+}
+
+// R4/RV24: el batch de disponibilidad responde parcial — un ID inválido o
+// inexistente se reporta available=false en vez de tumbar el mapa entero con
+// error (y el fan-out corre acotado por el bulkhead).
+func TestMongo_GetAvailabilityPartialOnBadID(t *testing.T) {
+	ctx := context.Background()
+	repository := NewMongo(startMongoContainer(t))
+
+	hotelID, err := repository.Create(ctx, hotelsDAO.Hotel{
+		Name:          "Partial Hotel",
+		AvaiableRooms: 1,
+	})
+	if err != nil {
+		t.Fatalf("creating hotel: %v", err)
+	}
+
+	// "garbage" ni siquiera es un ObjectID; el hex válido no existe
+	ids := []string{hotelID, "garbage", "bfbfbfbfbfbfbfbfbfbfbfbf"}
+	availability, err := repository.GetAvailability(ctx, ids, "2030-08-01", "2030-08-03")
+	if err != nil {
+		t.Fatalf("availability batch must not fail on a bad ID (RV24): %v", err)
+	}
+	if len(availability) != len(ids) {
+		t.Fatalf("expected %d entries, got %d: %+v", len(ids), len(availability), availability)
+	}
+	if !availability[hotelID] {
+		t.Error("existing hotel without reservations should be available")
+	}
+	if availability["garbage"] || availability["bfbfbfbfbfbfbfbfbfbfbfbf"] {
+		t.Error("unknown hotels must report available=false, not true")
 	}
 }
 

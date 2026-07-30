@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/clients/queues"
@@ -129,9 +132,33 @@ func main() {
 	router.GET("/readyz", healthController.Readyz)
 	router.GET("/health", healthController.Livez)
 
-	// Run server
-	if err := router.Run(":" + config.Port); err != nil {
-		slog.Error("error running application", "error", err)
-		os.Exit(1)
+	// Graceful shutdown (C12): el server corre en una goroutine y main espera
+	// SIGINT/SIGTERM. Al recibir la señal se drenan los requests en vuelo
+	// (hasta 10s) y después Close() cancela el Consume y espera el mensaje en
+	// vuelo antes de cerrar RabbitMQ — con manual ack (E1) un corte a mitad se
+	// re-entregaría, pero salir limpio evita el retrabajo.
+	srv := &http.Server{
+		Addr:              ":" + config.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+
+	slog.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("server shutdown incomplete", "error", err)
+	}
+	eventsQueue.Close()
+	slog.Info("shutdown complete")
 }

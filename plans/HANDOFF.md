@@ -543,3 +543,62 @@ El primer run del CI con los planes 06+07 falló en 3 jobs por **CVEs publicados
 ### Primera acción sugerida para la próxima sesión
 
 Commitear/pushear este fix y confirmar CI verde. Después, plan 08 (prompt ya preparado en la sesión anterior).
+
+---
+
+## Sesión — 2026-07-28 — Plan 08
+
+### Resumen de lo hecho
+
+1. **Plan 08 (Resiliencia de runtime: C12, R2, R4, R5, C14 + fixes triageados RV23–RV25) — IMPLEMENTADO Y VERIFICADO end-to-end** (unit + integración testcontainers + stack en vivo). Lo esencial:
+   - **C12 (graceful shutdown, ×3 servicios)**: `router.Run` reemplazado por `http.Server` (+`ReadHeaderTimeout: 5s`) en goroutine + `signal.NotifyContext(SIGINT/SIGTERM)` + `srv.Shutdown` con tope de 10s, y cierre ordenado de dependencias: hotels-api cierra Rabbit y Mongo (método nuevo `Mongo.Disconnect`), users-api cierra el pool de MySQL (método nuevo `MySQL.Close`; gomemcache no tiene Close), search-api drena el consumer (abajo) y cierra Rabbit.
+   - **Drenaje del consumer (C12, search-api)**: el `Consume` ahora se registra con tag fijo (`search-api-consumer`); `Close()` primero **cancela el Consume** → el broker deja de entregar, el canal de deliveries se cierra tras el mensaje en vuelo, y `consumeLoop` termina solo (canal `loopDone`, espera acotada 5s) — recién entonces se cierran channel/connection.
+   - **R2 (deadlines en toda llamada saliente)**: hotels-api — helper `opCtx` (3s) alrededor de **cada operación** de `hotels_mongo.go` (finds, inserts, updates, counts, claim por noche, release por intento) + `SetSocketTimeout(10s)` en el driver (red de contención; NO se usó `SetTimeout` del client para no pisar los deadlines por ctx). search-api — `solrOpCtx` (5s) en Index/Update/Delete/Search/Ping de `hotels_solr.go` + el client de solr-go ahora usa un `http.Client{Timeout: 5s}` propio vía `WithRequestSender` (antes: `http.DefaultClient` sin timeout); el **consumer** pone `context.WithTimeout` **por mensaje** en `handleDelivery` (ver desviaciones: 30s, no 5s).
+   - **R4/RV24 (bulkhead + parcial)**: `GetAvailability` de Mongo reescrito — semáforo de **8** goroutines máx (`availabilityMaxConcurrency`) y **respuesta parcial**: un hotel que falla (ID basura, hex inexistente, timeout) se loguea y reporta `available:false` en vez de tumbar el batch con 500. Sesgo conservador: nunca ofrecer lo que no se pudo verificar.
+   - **R5 (circuit breaker + jitter)**: `sony/gobreaker/v2` (dep nueva de search-api) alrededor de **cada intento** del cliente HTTP search→hotels: abre con 5 fallos consecutivos, `Timeout` 30s, half-open con hasta 3 pruebas. Solo cuentan como fallo conexión/lectura/5xx — **el 404 (RV14) es respuesta válida y no abre el breaker**. Breaker abierto → fail-fast sin reintentos (`ErrOpenState`/`ErrTooManyRequests`); transiciones logueadas (`circuit breaker state change`). Retry existente (E4) ganó **jitter** (`rand.N`, hasta 250ms).
+   - **C14/RV25 (publisher de hotels-api)**: en el retry-loop de `publish()`, el chequeo `channel == nil` pasó a **`!IsConnected()` + `connect()` (un solo intento) por reintento** — antes los 3 intentos pegaban al mismo canal muerto. El backoff se movió al inicio del loop (el `continue` del reconnect fallido lo salteaba). Los otros sub-ítems de C14 ($unionWith nil / cursor por día) ya no existen: los eliminó la reescritura del plan 04 (verificado).
+   - **RV23 (leak de noches)**: `releaseNights` dejó de ser single-shot: **3 reintentos con backoff por noche** (`releaseNight`, deadline propio por intento sobre `context.WithoutCancel`); si igual falla, log ERROR estructurado (`hotel_id`, `date`, `rooms`) para reconciliación manual. **Decisión deliberada**: NO se re-libera en el segundo DELETE ni se compensa el claim ambiguo por timeout — sin transacciones (Mongo standalone) eso arriesga doble-liberación ⇒ overbooking, que acá es peor que una noche bloqueada. El fix completo (ledger por reserva o replica set + transacciones) queda anotado como futuro; los deadlines de R2 achican la ventana de ambigüedad del claim.
+   - **Fix colateral**: `startMongoContainer` del test de integración no seteaba `Collection_idempotency` → `EnsureIndexes` (A3, plan 07) panickeaba con InvalidNamespace. **La suite de integración estaba rota desde el 07** (solo corre en PRs) — arreglada, y se le sumó `TestMongo_GetAvailabilityPartialOnBadID` (RV24).
+   - **Tests nuevos**: breaker (abre a los 5 fallos y no pega más al upstream / 404 nunca lo abre / half-open recupera con timeout corto inyectado vía `newHotelsBreaker`); consumer (ctx del handler CON deadline y request_id); integración RV24.
+2. **CVE nuevo detectado y bumpeado**: `GOWORK=off govulncheck` acusó **GO-2026-5327** (mongo-driver, heap OOB en GSSAPI) en hotels-api → bump **v1.17.4 → v1.17.7** + `go work sync` + `GOWORK=off go mod tidy` ×4 (secuela conocida del 02). Tras el bump queda solo GO-2026-5856 (artefacto del Go local 1.26.4; el runner con `stable` no lo ve).
+
+### Desviaciones del plan (validadas contra la realidad)
+
+- **Timeout por mensaje del consumer: 30s, no los 5s del plan.** El plan se escribió pre-06: hoy el handler contiene los reintentos del cliente HTTP (E4: 3 intentos × 5s + backoff ≈ 16s peor caso) — 5s los truncaría y mandaría eventos a la DLQ en cualquier reinicio corto de hotels-api. Los 5s finos ya viven en el timeout del client y en `solrOpCtx`.
+- **Sin errgroup en R4**: el propio plan lo anticipaba — la cancelación en cascada de errgroup es lo contrario de "disponibilidad parcial". Semáforo + canal, cero deps nuevas (x/sync sigue siendo indirecta).
+- **gobreaker v2 (no v1 como el snippet)**: misma Settings API, tipado con generics; v1 quedó sin mantenimiento.
+- **El breaker NO se expuso en `/readyz`** (el plan lo daba como opcional): con hotels-api caído, search sigue sirviendo `/search` desde Solr — degradar readyz lo sacaría de rotación del gateway por una dependencia que solo afecta la ingesta. El estado queda observable por logs (`state change`).
+- **Reconexión entre reintentos de publish con `connect()` de UN intento** (no `connectWithRetry`): el retry completo son ~60s de backoff dentro de un request HTTP. El `connectWithRetry` queda para el `ensureConnection` de entrada y el `handleConnectionClose` de fondo.
+- **`SetSocketTimeout` en vez de `SetTimeout`**: el NOTE del driver advierte comportamiento indefinido combinando `Timeout` de client con deadlines — y los deadlines por ctx (R2) son el mecanismo fino elegido.
+
+### Estado actual
+
+- **Branch:** `feat/plan-01-seguridad-auth`. **El usuario commiteó los planes 06+07 y el fix de CI** (`544ac90`, `02e768b`) — el working tree tiene SOLO el plan 08 **sin commitear**: 17 archivos modificados, sin archivos nuevos (`git status`): mains ×3, `hotels_mongo.go` + integración, `queue_rabbit.go` ×2 (+test de search), `hotels_http.go` (+test), `hotels_solr.go`, `users_mysql.go`, `hotels-api/go.{mod,sum}` (mongo-driver v1.17.7), `search-api/go.{mod,sum}` (gobreaker v2.4.0), `plans/README.md` (checkbox 08) y este HANDOFF.
+- **Checkbox del plan 08 en `plans/README.md`: `[x]`.** Con él quedan ejecutados RV23–RV25 del triage de `plans/fixes/README.md`.
+- **Verificación local (todo verde)**: `make test` (-race, 20 paquetes), `make test-integration` (incluye el test nuevo RV24), `make lint` 0 issues ×4, `gofmt` limpio, `go build`/`go vet` ok, `GOWORK=off govulncheck` ×4 (solo GO-2026-5856, ver arriba).
+- **Verificación en vivo (stack rebuildeado, 11/11 healthy)**:
+  - **C12**: `kill -s SIGTERM` a hotels/search/users-2 → logs `shutting down` → `shutdown complete`, **exit code 0** los tres; search loguea el cierre DESPUÉS de drenar. Bajo carga: 200 requests continuos a `/api/v1/hotels` durante `docker compose restart hotels-api` → **200/200, cero errores**.
+  - **R2**: con Solr **pausado** (proceso congelado, conexión que no responde — el caso que el timeout de DNS no cubre), evento UPDATE → cada intento falla a los **5s exactos** por `context deadline exceeded` → requeue → DLQ en ~10s; el consumer sigue vivo y readyz degrada.
+  - **R5**: hotels-api caído + eventos → `circuit breaker state change closed→open` al 5º fallo; los mensajes siguientes fallan instantáneo con `circuit breaker is open` (cero hits al upstream). Al levantar hotels-api y pasar los 30s: `open→half-open`, la prueba entra, el hotel se indexa y `/search` lo muestra renombrado.
+  - **R4/RV24**: `POST /hotels/availability` con `[id_bueno, "garbage", hex_inexistente]` → **200** `{bueno:true, garbage:false, hex:false}` (antes: 500).
+  - **E1 intacto**: retry→DLQ con Solr caído (DLQ contó 1, cola principal 0). `bash test_load_balancer.sh` **PASSED** exit 0.
+  - Limpieza: hotel de prueba borrado (DELETE fluyó hasta Solr), DLQ purgada — **estado final: 5 hoteles demo, hotels-news y DLQ en 0**. `reservations-news` tiene 4 mensajes residuales de las pruebas Playwright del 07 (cola sin consumidor por diseño, DM5; el próximo `down` la limpia).
+
+### Trabajo restante (en orden — detalle en `plans/README.md`)
+
+1. **Plan 09 — Cloud-native / k8s** ← **siguiente** (05 ✓, 08 ✓ — el SIGTERM que necesitaban los rolling deploys ya está). Revisar su fila en `plans/fixes/README.md` (no tiene RVs triageados propios).
+2. Plan 10 (nginx TLS/hardening, sumar RV26) → 11 (limpieza, RV27–RV30) → 13 → 12.
+
+### Bloqueos y advertencias
+
+- **Sin bloqueos.** Advertencias:
+  - **El usuario debe commitear el plan 08** y pushear. CI: los 4 legs Go deberían seguir verdes (deps nuevas: gobreaker v2.4.0 en search-api, mongo-driver v1.17.7 en hotels-api — govulncheck local ya pasó; `integration` corre solo en PRs e incluye ahora el fix del harness testcontainers).
+  - **Semántica nueva de `/hotels/availability`**: IDs malos ya NO dan 500 — vienen `false` en el mapa (cambio de contrato menor, coherente con "no ofrecer lo no verificable").
+  - **El breaker vive en la ingesta de search-api**: con hotels-api caído, `/search` sigue sirviendo y `/readyz` de search NO degrada por eso (decisión de esta sesión, ver desviaciones).
+  - Si un `releaseNights` agota reintentos queda log ERROR `requires manual reconciliation` con hotel/fecha/habitaciones — el runbook manual es decrementar `booked` en `reservation_inventory` (mismo criterio conservador: verificar antes de tocar).
+  - `stop_grace_period` del compose sigue en el default (10s) — igual al tope del `Shutdown`; si algún día el drain compite con el SIGKILL, subirlo a 15s en los 3 servicios.
+  - Siguen vigentes: nginx cachea IPs de upstreams al recrear contenedores (esta sesión se reinició nginx a mano tras el rebuild), eslint preexistente en `AuthContext.jsx:16`, memcached sin healthcheck (normal), 2 moderate de react-router-dom v6 (no cortan CI; plan 13).
+
+### Primera acción sugerida para la próxima sesión
+
+Commitear y pushear el plan 08 (ver CI verde — ahora con la suite de integración arreglada, abrir PR la ejercita). Después decir **"empecemos con el 09"** → leer `plans/09-cloud-native-k8s.md` completo, validar snippets contra el código actual — en particular: los 3 mains ya hacen graceful shutdown (los probes/preStop de k8s se apoyan en eso), los healthchecks `/livez`/`readyz` existen desde el 05, y no hay Dockerfiles multi-stage aún.

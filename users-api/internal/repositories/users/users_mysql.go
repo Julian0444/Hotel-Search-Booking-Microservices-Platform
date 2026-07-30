@@ -90,6 +90,15 @@ func (repository MySQL) Ping(ctx context.Context) error {
 	return sqlDB.PingContext(ctx)
 }
 
+// Close cierra el pool de conexiones a MySQL (graceful shutdown, C12).
+func (repository MySQL) Close() error {
+	sqlDB, err := repository.db.DB()
+	if err != nil {
+		return fmt.Errorf("error getting underlying sql.DB: %w", err)
+	}
+	return sqlDB.Close()
+}
+
 func (repository MySQL) GetAll(ctx context.Context, limit, offset int) ([]usersDAO.User, error) {
 	var usersList []usersDAO.User
 	// ORDER BY estable (RV8): LIMIT/OFFSET sin orden definido puede repetir o

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils"
 
 	"github.com/streadway/amqp"
 )
@@ -94,6 +96,32 @@ func TestHandleDelivery_PoisonMessageGoesToDLQ(t *testing.T) {
 	}
 	if acker.acks != 0 {
 		t.Fatalf("expected no acks, got %d", acker.acks)
+	}
+}
+
+// R2: el handler recibe un ctx CON deadline (antes: context.Background sin
+// tope — un Solr colgado frenaba el consumer para siempre) y con request_id.
+func TestHandleDelivery_ContextHasDeadlineAndRequestID(t *testing.T) {
+	queue := &Rabbit{}
+	acker := &fakeAcker{}
+
+	queue.handleDelivery(delivery(acker, `{"operation":"CREATE","hotel_id":"h1"}`, false),
+		func(ctx context.Context, _ hotels.HotelNew) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("expected per-message deadline in handler context")
+			}
+			if remaining := time.Until(deadline); remaining <= 0 || remaining > messageTimeout {
+				t.Fatalf("deadline out of range: %v remaining", remaining)
+			}
+			if utils.RequestIDFromContext(ctx) == "" {
+				t.Fatal("expected request_id in handler context")
+			}
+			return nil
+		})
+
+	if acker.acks != 1 {
+		t.Fatalf("expected 1 ack, got %d", acker.acks)
 	}
 }
 

@@ -9,10 +9,14 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils"
+
+	"github.com/sony/gobreaker/v2"
 )
 
 // newTestHTTP apunta el repositorio HTTP a un httptest.Server.
@@ -89,6 +93,106 @@ func TestGetHotelByID_FailsAfterMaxAttempts(t *testing.T) {
 	}
 	if requests != maxAttempts {
 		t.Fatalf("expected %d attempts, got %d", maxAttempts, requests)
+	}
+}
+
+// R5: tras 5 fallos consecutivos el breaker abre y los llamados siguientes
+// fallan rápido SIN pegarle al upstream caído.
+func TestCircuitBreaker_OpensAfterConsecutiveFailures(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	repo := newTestHTTP(t, server)
+
+	// 1ª llamada: 3 intentos fallidos (breaker en 3/5, sigue cerrado)
+	if _, err := repo.GetHotelByID(context.Background(), "h1"); err == nil {
+		t.Fatal("expected error while upstream is failing")
+	}
+	// 2ª llamada: intentos 4 y 5 fallan → el breaker abre; el 3er intento ya
+	// no toca el server (fail-fast)
+	if _, err := repo.GetHotelByID(context.Background(), "h1"); err == nil {
+		t.Fatal("expected error while upstream is failing")
+	}
+	if requests != 5 {
+		t.Fatalf("expected exactly 5 upstream hits before the breaker opens, got %d", requests)
+	}
+
+	// 3ª llamada: el breaker sigue abierto — cero requests nuevos al upstream
+	_, err := repo.GetHotelByID(context.Background(), "h1")
+	if !errors.Is(err, gobreaker.ErrOpenState) {
+		t.Fatalf("expected ErrOpenState while breaker is open, got %v", err)
+	}
+	if requests != 5 {
+		t.Fatalf("open breaker must not hit the upstream: got %d requests", requests)
+	}
+}
+
+// R5: el 404 es una respuesta válida, no un fallo del upstream — nunca abre
+// el breaker.
+func TestCircuitBreaker_404DoesNotCountAsFailure(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := newTestHTTP(t, server)
+	for i := 0; i < 6; i++ {
+		if _, err := repo.GetHotelByID(context.Background(), "gone"); !errors.Is(err, hotelsDomain.ErrHotelNotFound) {
+			t.Fatalf("call %d: expected typed 404, got %v", i+1, err)
+		}
+	}
+	if requests != 6 {
+		t.Fatalf("404s must keep the breaker closed (1 request per call): got %d requests", requests)
+	}
+}
+
+// R5: pasado el timeout el breaker entra en half-open, deja pasar una prueba
+// y si el upstream se recuperó vuelve a cerrar.
+func TestCircuitBreaker_HalfOpenRecovers(t *testing.T) {
+	var healthy atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !healthy.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": hotelsDomain.Hotel{ID: "h1", Name: "Back"}})
+	}))
+	defer server.Close()
+
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parsing test server url: %v", err)
+	}
+	// Breaker con timeout corto para no dormir 30s en la suite
+	repo := HTTP{
+		baseURL: fmt.Sprintf("http://%s:%s", parsed.Hostname(), parsed.Port()),
+		client:  &http.Client{Timeout: requestTimeout},
+		breaker: newHotelsBreaker(50 * time.Millisecond),
+	}
+
+	// Abrir el breaker: 5 fallos consecutivos en 2 llamadas
+	_, _ = repo.GetHotelByID(context.Background(), "h1")
+	_, _ = repo.GetHotelByID(context.Background(), "h1")
+	if _, err := repo.GetHotelByID(context.Background(), "h1"); !errors.Is(err, gobreaker.ErrOpenState) {
+		t.Fatalf("expected open breaker, got %v", err)
+	}
+
+	// Recuperar el upstream y esperar el timeout del breaker (half-open)
+	healthy.Store(true)
+	time.Sleep(80 * time.Millisecond)
+
+	hotel, err := repo.GetHotelByID(context.Background(), "h1")
+	if err != nil {
+		t.Fatalf("expected half-open probe to succeed, got %v", err)
+	}
+	if hotel.Name != "Back" {
+		t.Fatalf("unexpected hotel: %+v", hotel)
 	}
 }
 

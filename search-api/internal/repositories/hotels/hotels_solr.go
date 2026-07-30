@@ -7,11 +7,22 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels"
 
 	"github.com/stevenferrer/solr-go"
 )
+
+// solrOpTimeout acota cada llamada a Solr (R2): ni el consumer ni el backfill
+// pueden quedar colgados en un índice que no responde — con deadline, un
+// mensaje falla rápido y sigue la política retry/DLQ (E1).
+const solrOpTimeout = 5 * time.Second
+
+// solrOpCtx deriva el deadline por operación de Solr (R2).
+func solrOpCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, solrOpTimeout)
+}
 
 type SolrConfig struct {
 	Host       string // Solr host
@@ -23,32 +34,40 @@ type Solr struct {
 	Client     *solr.JSONClient
 	Collection string
 	baseURL    string
+	httpClient *http.Client
 }
 
 // Funcion para crear una nueva conexion a Solr
 func NewSolr(config SolrConfig) Solr {
 	// Construimos la URL base para la conexion a Solr
 	baseURL := fmt.Sprintf("http://%s:%s", config.Host, config.Port)
+	// Cliente HTTP con timeout propio (R2): red de contención por si alguna
+	// llamada llega sin deadline en el ctx; lo comparten solr-go y el Ping.
+	httpClient := &http.Client{Timeout: solrOpTimeout}
 	// Creamos un nuevo cliente JSON para Solr
-	client := solr.NewJSONClient(baseURL)
+	client := solr.NewJSONClient(baseURL).
+		WithRequestSender(solr.NewDefaultRequestSender().WithHTTPClient(httpClient))
 
 	// Devuelve una nueva instancia de Solr
 	return Solr{
 		Client:     client,
 		Collection: config.Collection,
 		baseURL:    baseURL,
+		httpClient: httpClient,
 	}
 }
 
 // Ping golpea el admin/ping del core (lo usa el /readyz, O3). solr-go no
 // expone ping, así que va directo por HTTP.
 func (searchEngine Solr) Ping(ctx context.Context) error {
+	ctx, cancel := solrOpCtx(ctx)
+	defer cancel()
 	url := fmt.Sprintf("%s/solr/%s/admin/ping", searchEngine.baseURL, searchEngine.Collection)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("error building solr ping request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := searchEngine.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("error pinging solr: %w", err)
 	}
@@ -96,6 +115,9 @@ func (searchEngine Solr) addDocument(ctx context.Context, hotel hotels.Hotel) er
 		return fmt.Errorf("error marshaling hotel document: %w", err)
 	}
 
+	// Deadline por operación (R2)
+	ctx, cancel := solrOpCtx(ctx)
+	defer cancel()
 	resp, err := searchEngine.Client.Update(ctx, searchEngine.Collection, solr.JSON, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("error indexing hotel: %w", err)
@@ -133,7 +155,9 @@ func (searchEngine Solr) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("error marshaling hotel document: %w", err)
 	}
 
-	// Ejecuta el request de borrado usando el metodo Update
+	// Ejecuta el request de borrado usando el metodo Update (deadline R2)
+	ctx, cancel := solrOpCtx(ctx)
+	defer cancel()
 	resp, err := searchEngine.Client.Update(ctx, searchEngine.Collection, solr.JSON, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("error deleting hotel: %w", err)
@@ -183,7 +207,9 @@ func buildSearchQuery(query string, limit int, offset int) *solr.Query {
 // (numFound) para el meta del envelope (A5/RV22): la página sola no alcanza
 // para que el cliente calcule cuántas páginas hay.
 func (searchEngine Solr) Search(ctx context.Context, query string, limit int, offset int) ([]hotels.Hotel, int, error) {
-	// Ejecuta la query en Solr (construcción segura, E2)
+	// Ejecuta la query en Solr (construcción segura E2, deadline R2)
+	ctx, cancel := solrOpCtx(ctx)
+	defer cancel()
 	resp, err := searchEngine.Client.Query(ctx, searchEngine.Collection, buildSearchQuery(query, limit, offset))
 	if err != nil {
 		return nil, 0, fmt.Errorf("error executing search query: %w", err)

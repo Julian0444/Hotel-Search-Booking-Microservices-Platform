@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/clients/queues"
@@ -147,9 +150,35 @@ func main() {
 	router.GET("/readyz", healthController.Readyz)
 	router.GET("/health", healthController.Livez)
 
-	// Ejecutar el servidor
-	if err := router.Run(":" + config.Port); err != nil {
-		slog.Error("failed to start server", "error", err)
-		os.Exit(1)
+	// Graceful shutdown (C12): el server corre en una goroutine y main espera
+	// SIGINT/SIGTERM. Al recibir la señal se drenan los requests en vuelo
+	// (hasta 10s) y recién entonces se cierran RabbitMQ y Mongo — es lo que
+	// permite rolling restarts sin 502 (compose hoy, k8s en el plan 09).
+	srv := &http.Server{
+		Addr:              ":" + config.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+
+	slog.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("server shutdown incomplete", "error", err)
+	}
+	eventsQueue.Close()
+	if err := hotelsRepo.Disconnect(shutdownCtx); err != nil {
+		slog.Warn("error disconnecting from mongo", "error", err)
+	}
+	slog.Info("shutdown complete")
 }
