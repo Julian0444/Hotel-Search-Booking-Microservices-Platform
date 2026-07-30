@@ -602,3 +602,23 @@ Commitear/pushear este fix y confirmar CI verde. Después, plan 08 (prompt ya pr
 ### Primera acción sugerida para la próxima sesión
 
 Commitear y pushear el plan 08 (ver CI verde — ahora con la suite de integración arreglada, abrir PR la ejercita). Después decir **"empecemos con el 09"** → leer `plans/09-cloud-native-k8s.md` completo, validar snippets contra el código actual — en particular: los 3 mains ya hacen graceful shutdown (los probes/preStop de k8s se apoyan en eso), los healthchecks `/livez`/`readyz` existen desde el 05, y no hay Dockerfiles multi-stage aún.
+
+---
+
+## Sesión — 2026-07-29 — Fix CI (frontend: npm audit)
+
+### Resumen
+
+El run del CI con el plan 08 falló SOLO en el job `frontend` (los 4 legs Go verdes): dos advisories **high** nuevos — **GHSA-mh99-v99m-4gvg** (`brace-expansion <=5.0.7`, DoS por OOM; llega vía eslint→minimatch→brace-expansion) y **GHSA-r28c-9q8g-f849** (`postcss <=8.5.17`, path traversal; vía vite).
+
+### Fix aplicado (a commitear: `frontend/package.json` + `package-lock.json`)
+
+- **postcss**: `npm audit fix` → 8.5.25 (in-range, trivial).
+- **brace-expansion**: el único parche es **5.0.8** (todo ≤5.0.7 vulnerable, incluida la línea 1.x) y npm sugería `--force` con **eslint@10.8.0 — inviable**: `eslint-plugin-react-hooks@5.2.0` solo acepta eslint hasta ^9. Además, el override de brace-expansion solo NO funciona (probado): minimatch@3 espera el export default callable de v1 y la v5 exporta nombrado → `TypeError: expand is not a function`. Solución que SÍ funciona (verificada con lint+build):
+  - `"overrides": { "minimatch": "^10.2.4", "brace-expansion": "^5.0.8" }` en `frontend/package.json` (minimatch 10 es dual CJS/ESM y depende de brace-expansion ^5.0.8)
+  - eslint bumpeado a **^9.39.5** dentro de la línea 9 (su config-array/eslintrc actuales toleran minimatch 10; el core también, verificado empíricamente).
+- **Verificado**: `npm audit --audit-level=high` exit 0 (quedan solo las 2 moderate de react-router-dom v6, bajo el gate; plan 13), `npm run build` OK, `npm run lint` corre sano (falla solo por el error preexistente de `AuthContext.jsx:16`, igual que siempre).
+
+### Advertencia para el futuro
+
+- Los `overrides` de minimatch/brace-expansion son una **muleta temporal**: sacarlos cuando se migre a eslint 10 (bloqueado por eslint-plugin-react-hooks; revisar al encarar el plan 13, junto con react-router v7).
