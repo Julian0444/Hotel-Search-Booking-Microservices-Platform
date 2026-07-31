@@ -194,6 +194,10 @@ npm run dev
 
 The frontend runs at `http://localhost:5173` and proxies API requests through Vite to the Nginx gateway.
 
+### Alternative: Kubernetes (kind)
+
+The same platform can run on Kubernetes: Deployments with real readiness/liveness probes, a Service replacing the static nginx upstream (scaling = `kubectl scale`, no YAML duplication), an HPA, and graceful rolling deploys. Dev-only StatefulSets keep the demo self-contained — in production the datastores would be managed services. See [`k8s/README.md`](k8s/README.md) for the quickstart and the honest dev-vs-prod notes.
+
 ---
 
 ## 🌐 API Endpoints (Gateway — Port 80)

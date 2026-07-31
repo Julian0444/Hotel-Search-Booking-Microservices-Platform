@@ -50,6 +50,12 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    # CN3 (plan 09): limits se enforcea vía cgroups; reservations es best-effort
+    # fuera de swarm. Mismos órdenes de magnitud que los requests/limits de k8s/.
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+        reservations: { cpus: "0.25", memory: 256M }
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
@@ -85,6 +91,10 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+        reservations: { cpus: "0.05", memory: 64M }
 
   mongo:
     image: mongo:6
@@ -103,6 +113,10 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+        reservations: { cpus: "0.25", memory: 256M }
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -121,6 +135,10 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 768M }
+        reservations: { cpus: "0.10", memory: 128M }
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -146,6 +164,10 @@ services:
       - solr-precreate
       - hotels
       - /opt/solr-config
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1536M } # CN3: Solr con menos de 1G hace OOM
+        reservations: { cpus: "0.50", memory: 512M }
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8983/solr/hotels/admin/ping || exit 1"]
       interval: 15s
@@ -189,6 +211,10 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/readyz"]
       interval: 10s
@@ -228,6 +254,10 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/readyz"]
       interval: 10s
@@ -267,6 +297,10 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/readyz"]
       interval: 10s
@@ -281,7 +315,7 @@ services:
     build:
       # contexto raíz: el build necesita ../platform-contracts (replace en go.mod)
       context: .
-      dockerfile: hotels-api/dockerfile
+      dockerfile: hotels-api/Dockerfile
     image: hotels-api:latest
     container_name: hotels-api-container
     environment:
@@ -313,6 +347,10 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8081/readyz"]
       interval: 10s
@@ -353,6 +391,10 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/readyz"]
       interval: 10s

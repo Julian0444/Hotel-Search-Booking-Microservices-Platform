@@ -1,0 +1,113 @@
+# users-api — template canónico (CN1): Deployment + Service + HPA.
+# hotels-api y search-api (21-/22-) son deltas de este archivo.
+#
+# El punto de venta del plan 09: escalar deja de ser "duplicar YAML del compose
+# + editar upstream de nginx + reiniciar" y pasa a ser
+#   kubectl scale deploy users-api --replicas=5   (o automático vía HPA)
+# porque el Service hace el balanceo que antes hacía el upstream estático.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: users-api
+  namespace: hotel-platform
+spec:
+  replicas: 3 # paridad con las 3 réplicas del compose; el HPA manda después
+  selector:
+    matchLabels:
+      app: users-api
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0 # rolling sin perder capacidad: sube el nuevo antes de bajar el viejo
+  template:
+    metadata:
+      labels:
+        app: users-api
+    spec:
+      securityContext:
+        runAsNonRoot: true # la imagen ya corre como appuser (I2)
+      # preStop + SIGTERM (plan 08): k8s saca el pod de los endpoints y ENVÍA
+      # SIGTERM en paralelo; el sleep cubre la ventana de propagación para que
+      # ningún request llegue a un listener ya cerrado, y recién después corre
+      # el graceful shutdown de main.go (tope 10s < grace period).
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: users-api
+          # Tag inmutable por git-SHA (CN4, lo publica el job docker del CI);
+          # nunca :latest. Actualizar al SHA buildeado — para kind local:
+          #   docker build -t ghcr.io/julian0444/users-api:sha-<sha> users-api/
+          #   kind load docker-image ghcr.io/julian0444/users-api:sha-<sha> --name hotel-platform
+          image: ghcr.io/julian0444/users-api:sha-1408d76
+          ports:
+            - containerPort: 8082 # users-api escucha en 8082 (config/Dockerfile/compose) — NO 8080
+          envFrom:
+            - configMapRef:
+                name: platform-config
+            - secretRef:
+                name: platform-secrets
+          env:
+            - name: PORT
+              value: "8082"
+            - name: INSTANCE_ID # en compose era users-api-1/2/3; acá, el nombre del pod
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "3"]
+          readinessProbe:
+            httpGet:
+              path: /readyz # pinguea MySQL + Memcached (plan 05)
+              port: 8082
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8082
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 128Mi } # obligatorio para el HPA
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+---
+# ClusterIP: reemplaza las 3 réplicas copy-paste del compose y el upstream
+# estático de nginx — los endpoints se actualizan solos al escalar.
+apiVersion: v1
+kind: Service
+metadata:
+  name: users-api
+  namespace: hotel-platform
+spec:
+  selector:
+    app: users-api
+  ports:
+    - port: 8082
+---
+# HPA por CPU (CN1). Necesita metrics-server en el cluster (en kind no viene:
+# ver k8s/README.md) y resources.requests en el Deployment — sin metrics no actúa.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: users-api
+  namespace: hotel-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: users-api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

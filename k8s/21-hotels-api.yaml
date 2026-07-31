@@ -1,0 +1,75 @@
+# hotels-api — delta del template canónico (20-users-api.yaml).
+# Diferencias: 1 réplica, containerPort 8081 FIJO (gotcha del plan: no depender
+# de la env — hoy config.Port ya lee PORT con default 8081, pero el puerto acá
+# queda explícito igual), sin HPA (se puede escalar con kubectl scale; el CRUD
+# es stateless — el no-overbooking vive en claims atómicos de Mongo, plan 04).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hotels-api
+  namespace: hotel-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hotels-api
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: hotels-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: hotels-api
+          image: ghcr.io/julian0444/hotels-api:sha-1408d76 # tag inmutable (CN4); build con contexto RAÍZ (replace de go.mod)
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: platform-config
+            - secretRef:
+                name: platform-secrets
+          env:
+            - name: PORT
+              value: "8081"
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "3"]
+          readinessProbe:
+            httpGet:
+              path: /readyz # pinguea Mongo + RabbitMQ (plan 05)
+              port: 8081
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8081
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hotels-api
+  namespace: hotel-platform
+spec:
+  selector:
+    app: hotels-api
+  ports:
+    - port: 8081

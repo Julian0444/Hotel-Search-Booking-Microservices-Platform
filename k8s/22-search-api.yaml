@@ -1,0 +1,75 @@
+# search-api — delta del template canónico (20-users-api.yaml).
+# 1 réplica: además de servir /search es el consumer de hotels-news; con >1
+# réplica los eventos se reparten (consumidores en competencia) — válido para
+# la sync de Solr, pero innecesario en la demo. El drenaje del consumer en
+# SIGTERM (plan 08) es lo que hace seguro el rolling.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-api
+  namespace: hotel-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: search-api
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: search-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: search-api
+          image: ghcr.io/julian0444/search-api:sha-1408d76 # tag inmutable (CN4); build con contexto RAÍZ (replace de go.mod)
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: platform-config
+            - secretRef:
+                name: platform-secrets
+          env:
+            - name: PORT
+              value: "8082"
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "3"]
+          readinessProbe:
+            httpGet:
+              path: /readyz # pinguea Solr + RabbitMQ/consumer (planes 05/06)
+              port: 8082
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8082
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-api
+  namespace: hotel-platform
+spec:
+  selector:
+    app: search-api
+  ports:
+    - port: 8082

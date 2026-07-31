@@ -1,8 +1,16 @@
-# Aplica a los builds con contexto raíz (hotels-api y search-api).
-# Allowlist: los Dockerfiles solo copian el módulo del servicio + platform-contracts.
-# Los .dockerignore por servicio llegan con el plan 09 (CN2).
+# Aplica a los builds con contexto raíz (hotels-api y search-api) — CN2.
+# Allowlist: los Dockerfiles solo copian el módulo del servicio + platform-contracts;
+# abajo se poda lo que el binario no necesita (tests, docs, seeds, config que se
+# monta en runtime). users-api y frontend tienen .dockerignore propio (contexto propio).
 *
 !platform-contracts/
 !hotels-api/
 !search-api/
+**/*_test.go
+**/testdata/
+**/*.md
 **/coverage.out
+# seed: lo montan compose/k8s en el contenedor de Mongo; la imagen no lo lee
+hotels-api/seed/
+# config de Solr: montada en el contenedor de Solr, no en la imagen de search
+search-api/internal/solr-config/

@@ -1,0 +1,41 @@
+# Memcached: Deployment (no StatefulSet) a propósito — es 100% RAM, sin estado
+# que persistir; un PVC acá sería mentirle al lector. L2 del read-through de
+# users-api; perder el pod solo enfría el caché.
+apiVersion: v1
+kind: Service
+metadata:
+  name: memcached
+  namespace: hotel-platform
+spec:
+  selector:
+    app: memcached
+  ports:
+    - port: 11211
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memcached
+  namespace: hotel-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memcached
+  template:
+    metadata:
+      labels:
+        app: memcached
+    spec:
+      containers:
+        - name: memcached
+          image: memcached:1.6-alpine
+          ports:
+            - containerPort: 11211
+          readinessProbe:
+            tcpSocket:
+              port: 11211
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }

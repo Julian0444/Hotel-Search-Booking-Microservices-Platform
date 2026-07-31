@@ -1,0 +1,11 @@
+# CN2 — obligatorio: sin esto el node_modules del host (binarios nativos de
+# macOS) sombrea el `npm ci` del contenedor y el build queda corrupto.
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+*.md
+.gitignore
+Dockerfile
+.dockerignore

@@ -1,0 +1,70 @@
+# MySQL como StatefulSet dev con PVC chico (CN1, paso 4).
+# Nota honesta: en prod sería un servicio managed (RDS/Cloud SQL); esto existe
+# para que el cluster demo sea autocontenido. Ver k8s/README.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: hotel-platform
+spec:
+  clusterIP: None # headless: DNS estable para el StatefulSet
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: hotel-platform
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: users-api
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          # mysqladmin ping responde "alive" aunque la auth falle — igual que el
+          # healthcheck del compose: alcanza como señal de proceso vivo.
+          startupProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "127.0.0.1"]
+            periodSeconds: 5
+            failureThreshold: 30 # hasta 150s para el init en frío (crea la DB)
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "127.0.0.1"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

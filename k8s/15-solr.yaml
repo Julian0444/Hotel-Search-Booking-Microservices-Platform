@@ -1,0 +1,253 @@
+# Solr como StatefulSet dev con PVC chico (CN1, paso 4).
+# Mismo arranque que el compose: solr-precreate crea el core `hotels` con el
+# configset montado. Límite de memoria ≥1G o hace OOM (CN3).
+#
+# schema.xml y solrconfig.xml son COPIA de search-api/internal/solr-config/conf/
+# (fuente canónica): si cambian, regenerar este ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: solr-config
+  namespace: hotel-platform
+data:
+  schema.xml: |
+    <?xml version="1.0" encoding="UTF-8" ?>
+    <schema name="hotels" version="1.6">
+        <fields>
+            <field name="id" type="string" indexed="true" stored="true" required="true"/>
+            <field name="name" type="text_general" indexed="true" stored="true"/>
+            <field name="description" type="text_general" indexed="true" stored="true"/>
+            <field name="address" type="text_general" indexed="true" stored="true"/>
+            <field name="city" type="text_general" indexed="true" stored="true"/>
+            <field name="state" type="text_general" indexed="true" stored="true"/>
+            <field name="country" type="text_general" indexed="true" stored="true"/>
+            <!-- DB7: phone/email son identificadores, no texto — match exacto
+                 (tokenizarlos solo generaba términos basura en el índice) -->
+            <field name="phone" type="string" indexed="true" stored="true"/>
+            <field name="email" type="string" indexed="true" stored="true"/>
+            <field name="price_per_night" type="pfloat" indexed="true" stored="true"/>
+            <field name="rating" type="pfloat" indexed="true" stored="true"/>
+            <field name="avaiable_rooms" type="pint" indexed="true" stored="true"/>
+            <!-- Horas del día "HH:mm" (RV21): son strings planos del contrato, no
+                 timestamps — pdate obligaba a inventar una fecha ficticia -->
+            <field name="check_in_time" type="string" indexed="true" stored="true"/>
+            <field name="check_out_time" type="string" indexed="true" stored="true"/>
+            <field name="amenities" type="string" indexed="true" stored="true" multiValued="true"/>
+            <field name="images" type="string" indexed="true" stored="true" multiValued="true"/>
+            <!-- DB7: catch-all para búsqueda por campo default (df) sin enumerar
+                 campos; se alimenta por copyField y no se almacena -->
+            <field name="_text_" type="text_general" indexed="true" stored="false" multiValued="true"/>
+            <!-- Campo requerido por Solr -->
+            <field name="_version_" type="plong" indexed="false" stored="false"/>
+        </fields>
+
+        <uniqueKey>id</uniqueKey>
+
+        <!-- DB7: los campos buscables alimentan el catch-all _text_ -->
+        <copyField source="name" dest="_text_"/>
+        <copyField source="description" dest="_text_"/>
+
+        <!-- Tipos de campo -->
+        <!-- DB7: docValues en los strings (id/phone/email/amenities) para facetar
+             y ordenar sin uninverted index en memoria -->
+        <fieldType name="string" class="solr.StrField" sortMissingLast="true" docValues="true"/>
+        <fieldType name="text_general" class="solr.TextField" positionIncrementGap="100">
+            <analyzer type="index">
+                <tokenizer class="solr.StandardTokenizerFactory"/>
+                <filter class="solr.LowerCaseFilterFactory"/>
+            </analyzer>
+            <analyzer type="query">
+                <tokenizer class="solr.StandardTokenizerFactory"/>
+                <filter class="solr.LowerCaseFilterFactory"/>
+            </analyzer>
+        </fieldType>
+        <fieldType name="pfloat" class="solr.FloatPointField" docValues="true"/>
+        <fieldType name="pint" class="solr.IntPointField" docValues="true"/>
+        <fieldType name="plong" class="solr.LongPointField" docValues="true"/>
+        <fieldType name="pdate" class="solr.DatePointField" docValues="true"/>
+    </schema>
+  solrconfig.xml: |
+    <?xml version="1.0" encoding="UTF-8" ?>
+    <config>
+        <luceneMatchVersion>9.0.0</luceneMatchVersion>
+
+        <dataDir>${solr.data.dir:}</dataDir>
+
+        <directoryFactory name="DirectoryFactory" class="solr.NRTCachingDirectoryFactory"/>
+
+        <schemaFactory class="ClassicIndexSchemaFactory"/>
+
+        <indexConfig>
+            <ramBufferSizeMB>100</ramBufferSizeMB>
+            <maxBufferedDocs>1000</maxBufferedDocs>
+        </indexConfig>
+
+        <updateHandler class="solr.DirectUpdateHandler2">
+            <updateLog>
+                <str name="dir">${solr.ulog.dir:}</str>
+                <int name="numVersionBuckets">65536</int>
+            </updateLog>
+            <autoCommit>
+                <maxTime>${solr.autoCommit.maxTime:15000}</maxTime>
+                <openSearcher>false</openSearcher>
+            </autoCommit>
+            <autoSoftCommit>
+                <maxTime>${solr.autoSoftCommit.maxTime:1000}</maxTime>
+            </autoSoftCommit>
+        </updateHandler>
+
+        <query>
+            <maxBooleanClauses>1024</maxBooleanClauses>
+            <filterCache class="solr.CaffeineCache"
+                         size="512"
+                         initialSize="512"
+                         autowarmCount="0"/>
+            <queryResultCache class="solr.CaffeineCache"
+                              size="512"
+                              initialSize="512"
+                              autowarmCount="0"/>
+            <documentCache class="solr.CaffeineCache"
+                           size="512"
+                           initialSize="512"
+                           autowarmCount="0"/>
+            <enableLazyFieldLoading>true</enableLazyFieldLoading>
+            <queryResultWindowSize>20</queryResultWindowSize>
+            <queryResultMaxDocsCached>200</queryResultMaxDocsCached>
+        </query>
+
+        <requestDispatcher>
+            <httpCaching never304="true"/>
+        </requestDispatcher>
+
+        <!-- df = _text_ (DB7): el campo default es el catch-all alimentado por
+             copyField (name + description), no un campo suelto -->
+        <requestHandler name="/select" class="solr.SearchHandler">
+            <lst name="defaults">
+                <str name="echoParams">explicit</str>
+                <str name="rows">10</str>
+                <str name="wt">json</str>
+                <str name="df">_text_</str>
+            </lst>
+        </requestHandler>
+
+        <requestHandler name="/query" class="solr.SearchHandler">
+            <lst name="defaults">
+                <str name="echoParams">explicit</str>
+                <str name="wt">json</str>
+                <str name="df">_text_</str>
+            </lst>
+        </requestHandler>
+
+        <requestHandler name="/update" class="solr.UpdateRequestHandler"/>
+
+        <requestHandler name="/update/json" class="solr.UpdateRequestHandler">
+            <lst name="defaults">
+                <str name="stream.contentType">application/json</str>
+            </lst>
+        </requestHandler>
+
+        <requestHandler name="/update/json/docs" class="solr.UpdateRequestHandler">
+            <lst name="defaults">
+                <str name="stream.contentType">application/json</str>
+                <str name="split">/</str>
+            </lst>
+        </requestHandler>
+
+        <requestHandler name="/admin/ping" class="solr.PingRequestHandler">
+            <lst name="invariants">
+                <str name="q">*:*</str>
+            </lst>
+            <lst name="defaults">
+                <str name="echoParams">all</str>
+            </lst>
+        </requestHandler>
+
+        <requestHandler name="/replication" class="solr.ReplicationHandler"/>
+
+        <queryResponseWriter name="json" class="solr.JSONResponseWriter">
+            <str name="content-type">application/json; charset=UTF-8</str>
+        </queryResponseWriter>
+    </config>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: solr
+  namespace: hotel-platform
+spec:
+  clusterIP: None # headless: DNS estable para el StatefulSet
+  selector:
+    app: solr
+  ports:
+    - port: 8983
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: solr
+  namespace: hotel-platform
+spec:
+  serviceName: solr
+  replicas: 1
+  selector:
+    matchLabels:
+      app: solr
+  template:
+    metadata:
+      labels:
+        app: solr
+    spec:
+      securityContext:
+        fsGroup: 8983 # uid/gid de solr en la imagen oficial: PVC escribible
+      containers:
+        - name: solr
+          image: solr:9
+          # Mismo override que el entrypoint del compose: precrea el core
+          # `hotels` con el configset de /opt/solr-config en el primer arranque.
+          command: ["docker-entrypoint.sh", "solr-precreate", "hotels", "/opt/solr-config"]
+          ports:
+            - containerPort: 8983
+          env:
+            - name: SOLR_HOME
+              value: /var/solr/data
+            - name: SOLR_LOGS_DIR
+              value: /var/solr/logs
+          volumeMounts:
+            - name: data
+              mountPath: /var/solr
+            - name: config
+              mountPath: /opt/solr-config/conf
+              readOnly: true
+          # Solr tarda ~90s en frío en aceptar pings del core (mismo margen que
+          # el start_period del compose, con resto).
+          startupProbe:
+            httpGet:
+              path: /solr/hotels/admin/ping
+              port: 8983
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /solr/hotels/admin/ping
+              port: 8983
+            periodSeconds: 15
+            timeoutSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8983
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { cpu: "1", memory: 1536Mi } # CN3: Solr < 1G hace OOM
+      volumes:
+        - name: config
+          configMap:
+            name: solr-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

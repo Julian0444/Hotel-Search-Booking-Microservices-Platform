@@ -1,0 +1,84 @@
+# Migraciones versionadas de users-api como Job one-shot (paridad con el
+# service `migrate` del compose): correrlas desde las réplicas contiende por el
+# advisory lock de golang-migrate (schema "dirty") — una sola instancia migra.
+#
+# Los .sql son COPIA de users-api/migrations/ (fuente canónica): si cambian las
+# migraciones, regenerar este ConfigMap. Gotcha de re-apply: el template de un
+# Job es inmutable — ante cambios, `kubectl delete job users-migrate` y re-aplicar.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: users-migrations
+  namespace: hotel-platform
+data:
+  0001_create_users.up.sql: |
+    -- 0001: tabla users. Copia EXACTA del schema que venía creando GORM AutoMigrate
+    -- (verificado con SHOW CREATE TABLE contra el contenedor mysql:8), para que
+    -- volúmenes existentes y volúmenes nuevos queden idénticos.
+    -- IF NOT EXISTS: en un volumen pre-migraciones la tabla ya existe; golang-migrate
+    -- registra la versión igual y el estado converge sin dirty flag.
+    CREATE TABLE IF NOT EXISTS `users` (
+      `id` bigint NOT NULL AUTO_INCREMENT,
+      `username` varchar(100) NOT NULL,
+      `password` varchar(255) NOT NULL,
+      `tipo` enum('cliente','administrador') DEFAULT 'cliente',
+      PRIMARY KEY (`id`),
+      UNIQUE KEY `uni_users_username` (`username`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  0001_create_users.down.sql: |
+    DROP TABLE IF EXISTS `users`;
+  0002_seed_demo_users.up.sql: |
+    -- 0002: cliente demo para el quickstart (P7).
+    -- El ADMIN NO se siembra acá a propósito: la única fuente del primer admin es el
+    -- seed env-driven de users-api al arranque (ADMIN_USERNAME/ADMIN_PASSWORD, plan 01).
+    -- Hash bcrypt $2a$ generado con golang.org/x/crypto/bcrypt (la lib de la app);
+    -- htpasswd genera $2y$ y la lib lo rechaza. Password: DemoCliente123
+    INSERT INTO `users` (`username`, `password`, `tipo`)
+    VALUES ('demo', '$2a$10$lPwUI6m7avM9T.qYWNp9PelLaGO.k1n32LQXb4jlf7AnZPUOzgyHi', 'cliente')
+    ON DUPLICATE KEY UPDATE `username` = `username`;
+  0002_seed_demo_users.down.sql: |
+    DELETE FROM `users` WHERE `username` = 'demo' AND `tipo` = 'cliente';
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: users-migrate
+  namespace: hotel-platform
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: users-migrate
+    spec:
+      restartPolicy: OnFailure
+      # Espera activa a MySQL: el Job arranca junto con todo el apply y el
+      # backoff de un migrate que falla en frío ensucia los logs sin necesidad.
+      initContainers:
+        - name: wait-for-mysql
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z mysql 3306; do echo waiting for mysql; sleep 2; done"]
+      containers:
+        - name: migrate
+          image: migrate/migrate:v4.18.3
+          args:
+            - -path
+            - /migrations
+            # $(VAR): expansión nativa de k8s desde el env de este contenedor
+            - -database
+            - mysql://root:$(MYSQL_ROOT_PASSWORD)@tcp(mysql:3306)/users-api
+            - up
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: MYSQL_ROOT_PASSWORD
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: users-migrations

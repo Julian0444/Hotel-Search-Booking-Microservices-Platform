@@ -1,0 +1,75 @@
+# RabbitMQ como StatefulSet dev con PVC chico (CN1, paso 4).
+# StatefulSet y no Deployment por el hostname: el data dir de mnesia se llama
+# rabbit@<hostname> — el nombre estable (rabbitmq-0) sobrevive reinicios.
+# En prod: servicio managed (CloudAMQP/Amazon MQ). Ver k8s/README.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: hotel-platform
+spec:
+  clusterIP: None # headless: DNS estable para el StatefulSet
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+    - name: management
+      port: 15672
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: hotel-platform
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      securityContext:
+        fsGroup: 999 # uid/gid de rabbitmq en la imagen oficial: PVC escribible
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3-management
+          ports:
+            - containerPort: 5672
+            - containerPort: 15672
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: root
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: RABBIT_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
+          startupProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            periodSeconds: 10
+            failureThreshold: 18 # hasta 3 min: erlang + plugins de management
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            periodSeconds: 15
+            timeoutSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 768Mi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
