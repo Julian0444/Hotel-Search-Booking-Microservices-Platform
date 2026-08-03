@@ -719,3 +719,7 @@ Commitear el plan 09 (**empezando por el `git mv` del Dockerfile de hotels**), p
 ### Primera acción sugerida para la próxima sesión
 
 Commitear y pushear el plan 10 (ver CI verde). Después decir **"empecemos con el 11"** → leer `plans/11-consistencia-limpieza.md` completo + su fila RV27–RV30 en `plans/fixes/README.md`, y validar snippets contra el código actual — en particular: cualquier cambio de CORS del 11 en `nginx.conf` debe **conservar los `include` del snippet de security-headers** (SD5 depende de eso), y C5 ("hotels-api ignora PORT") parece resuelto de facto desde antes del 09 — verificarlo y cerrarlo formalmente (nota de la sesión del 2026-07-30).
+
+### Post-cierre (2026-08-02)
+
+**El plan 10 quedó commiteado y pusheado por el usuario y el CI corrió TODO VERDE** (los 5 legs: 4 Go + frontend + docker — ninguno ejercita nginx, como se anticipó). Los `.pem` confirmados fuera del commit (solo entraron `nginx/certs/README.md` y `nginx/snippets/security-headers.conf` como nuevos). El working tree quedó limpio salvo esta nota del HANDOFF. Siguiente: **plan 11** (primera acción arriba).
