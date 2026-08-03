@@ -22,7 +22,11 @@ NC='\033[0m' # No Color
 BOLD='\033[1m'
 
 # Configuración
-BASE_URL="http://localhost"
+# Gateway con TLS local (plan 10): el cert es self-signed, así que TODOS los
+# curl contra BASE_URL llevan -k (controlado: solo apunta a localhost).
+# El monitoreo :8090 sigue siendo HTTP, publicado solo en 127.0.0.1 (RV26).
+BASE_URL="https://localhost"
+HTTP_URL="http://localhost"
 MONITOR_URL="http://localhost:8090"
 TOTAL_REQUESTS=12
 
@@ -32,9 +36,10 @@ FAILURES=0
 pass() { echo -e "  ${GREEN}✓ PASS${NC} $1"; }
 fail() { echo -e "  ${RED}✗ FAIL${NC} $1"; FAILURES=$((FAILURES + 1)); }
 
-# curl que nunca corta el script (devuelve 000 si no conecta)
+# curl que nunca corta el script (devuelve 000 si no conecta).
+# -k: solo por el cert self-signed local de nginx/certs (ver arriba).
 http_code() {
-    curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$@" 2>/dev/null || echo "000"
+    curl -sk -o /dev/null -w "%{http_code}" --max-time 10 "$@" 2>/dev/null || echo "000"
 }
 
 print_header() {
@@ -78,6 +83,56 @@ check_containers() {
         pass "containers: ${running}/${total} running"
     else
         fail "containers: ${running}/${total} running"
+    fi
+}
+
+# TLS + redirect (plan 10: SD4/SD5)
+check_tls() {
+    print_section "🔐 TLS / Redirect / Security Headers"
+
+    # HTTP → 301 https (curl sin -L: la respuesta ES el redirect)
+    response=$(http_code "$HTTP_URL/api/v1/hotels")
+    if [ "$response" = "301" ]; then
+        pass "HTTP → 301 redirect a https"
+    else
+        fail "HTTP /api/v1/hotels → $response (esperado 301)"
+    fi
+
+    # Security headers presentes en una ruta de API real (SD5)
+    headers=$(curl -sk -I --max-time 10 "$BASE_URL/api/v1/hotels" 2>/dev/null || true)
+    for h in "x-frame-options" "x-content-type-options" "strict-transport-security"; do
+        if echo "$headers" | grep -qi "^$h"; then
+            pass "header $h presente en /api/v1/hotels"
+        else
+            fail "header $h AUSENTE en /api/v1/hotels"
+        fi
+    done
+}
+
+# Cache de /search (plan 10: I3)
+check_search_cache() {
+    print_section "🗄️  Search Cache (/api/v1/search)"
+
+    # Query única por corrida: la 1ª pegada debe ser MISS y la 2ª HIT
+    q="cachecheck-$$-$RANDOM"
+    cache_status() {
+        curl -sk -D - -o /dev/null --max-time 10 "$BASE_URL/api/v1/search?q=$1&limit=5" 2>/dev/null \
+            | awk 'tolower($1) == "x-cache-status:" {print toupper($2)}' | tr -d '\r'
+    }
+    c1=$(cache_status "$q")
+    c2=$(cache_status "$q")
+    if [ "$c1" = "MISS" ] && [ "$c2" = "HIT" ]; then
+        pass "misma query: 1ª=MISS, 2ª=HIT"
+    else
+        fail "misma query: 1ª=$c1, 2ª=$c2 (esperado MISS→HIT)"
+    fi
+
+    # Una query distinta no comparte entrada de cache
+    c3=$(cache_status "$q-otra")
+    if [ "$c3" = "MISS" ]; then
+        pass "query distinta: MISS (no comparte cache)"
+    else
+        fail "query distinta: $c3 (esperado MISS)"
     fi
 }
 
@@ -131,7 +186,7 @@ test_load_balancing() {
     i=1
     while [ "$i" -le "$TOTAL_REQUESTS" ]; do
         # Hacer request y capturar el header X-Upstream-Server
-        upstream=$(curl -s -I --max-time 10 "$BASE_URL/api/v1/users" 2>/dev/null | grep -i "x-upstream-server" | awk '{print $2}' | tr -d '\r' || true)
+        upstream=$(curl -sk -I --max-time 10 "$BASE_URL/api/v1/users" 2>/dev/null | grep -i "x-upstream-server" | awk '{print $2}' | tr -d '\r' || true)
 
         if [ -n "$upstream" ]; then
             echo "$upstream" >> "$upstreams_file"
@@ -224,13 +279,18 @@ test_rate_limiting() {
 
     success=0
     limited=0
+    wrong_status=0
 
     i=1
     while [ "$i" -le 10 ]; do
         response=$(http_code -X POST "$BASE_URL/api/v1/login" -H "Content-Type: application/json" -d '{}')
-        if [ "$response" = "503" ] || [ "$response" = "429" ]; then
+        if [ "$response" = "429" ]; then
             limited=$((limited + 1))
             echo -n -e "${RED}X${NC}"
+        elif [ "$response" = "503" ]; then
+            # I7 (plan 10): el límite debe ser 429, nunca más 503
+            wrong_status=$((wrong_status + 1))
+            echo -n -e "${YELLOW}?${NC}"
         else
             success=$((success + 1))
             echo -n -e "${GREEN}.${NC}"
@@ -240,12 +300,25 @@ test_rate_limiting() {
 
     echo ""
     echo ""
-    echo -e "  ${GREEN}Passed through: $success${NC} | ${RED}Rate Limited: $limited${NC}"
+    echo -e "  ${GREEN}Passed through: $success${NC} | ${RED}Rate Limited (429): $limited${NC} | 503s: $wrong_status"
 
-    if [ "$limited" -gt 0 ]; then
-        pass "rate limiting activo ($limited/10 limitados)"
+    if [ "$limited" -gt 0 ] && [ "$wrong_status" -eq 0 ]; then
+        pass "rate limiting activo con 429 ($limited/10 limitados, cero 503)"
+    elif [ "$wrong_status" -gt 0 ]; then
+        fail "el rate limit devolvió $wrong_status respuestas 503 (esperado solo 429 — I7)"
     else
         fail "rate limiting no se disparó (0/10 limitados con burst=3)"
+    fi
+
+    # El 429 debe traer el envelope JSON estándar (a esta altura el budget de
+    # /login está agotado, así que este request extra viene limitado)
+    limited_response=$(curl -sk -D - --max-time 10 -X POST "$BASE_URL/api/v1/login" -H "Content-Type: application/json" -d '{}' 2>/dev/null || true)
+    if echo "$limited_response" | grep -qi "^content-type:.*application/json" \
+        && echo "$limited_response" | grep -q '"code":"rate_limited"' \
+        && echo "$limited_response" | grep -q '"trace_id"'; then
+        pass "429 con Content-Type JSON, envelope estándar y trace_id"
+    else
+        fail "el 429 no trae el envelope JSON estándar con trace_id"
     fi
 }
 
@@ -268,22 +341,28 @@ main() {
     # 1. Verificar containers
     check_containers
 
-    # 2. Health checks
+    # 2. TLS, redirect y security headers (plan 10)
+    check_tls
+
+    # 3. Health checks
     check_health
 
-    # 3. Load balancing test
+    # 4. Cache de /search (plan 10)
+    check_search_cache
+
+    # 5. Load balancing test
     test_load_balancing
 
-    # 4. Nginx status (informativo)
+    # 6. Nginx status (informativo)
     check_nginx_status
 
-    # 5. Test all endpoints
+    # 7. Test all endpoints
     test_all_endpoints
 
-    # 6. Rate limiting test (último: agota el budget de /login)
+    # 8. Rate limiting test (último: agota el budget de /login)
     test_rate_limiting
 
-    # 7. Show logs (informativo)
+    # 9. Show logs (informativo)
     show_nginx_logs
 
     if [ "$FAILURES" -eq 0 ]; then
@@ -293,8 +372,8 @@ main() {
     fi
 
     echo -e "  ${BOLD}Direct Service URLs (for debugging):${NC}"
-    echo "  • API Gateway:    http://localhost"
-    echo "  • Nginx Monitor:  http://localhost:8090/nginx_status"
+    echo "  • API Gateway:    https://localhost (self-signed: curl -k / aceptar en el browser)"
+    echo "  • Nginx Monitor:  http://localhost:8090/nginx_status (solo loopback — RV26)"
     echo "  • RabbitMQ:       http://localhost:15672"
     echo "  • Solr Admin:     http://localhost:8983"
     echo ""

@@ -9,10 +9,14 @@ export default defineConfig({
     host: true,
     proxy: {
       // El gateway expone la API versionada bajo /api/v1: se proxya tal cual,
-      // sin recortar el prefijo (plan 07 / A2)
+      // sin recortar el prefijo (plan 07 / A2).
+      // TLS local (plan 10): el gateway escucha en 443 con cert self-signed —
+      // secure:false para que el proxy de Vite no rechace ese cert; el browser
+      // sigue hablando http plano con el dev server.
       '/api': {
-        target: 'http://localhost',
+        target: 'https://localhost',
         changeOrigin: true,
+        secure: false,
       },
     },
   },

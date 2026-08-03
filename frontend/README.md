@@ -82,10 +82,14 @@ The application will be available at `http://localhost:5173`
 Create a `.env` file in the frontend root:
 
 ```env
-VITE_API_URL=http://localhost/api/v1
+VITE_API_URL=https://localhost/api/v1
 ```
 
-- `VITE_API_URL`: API Gateway URL (nginx)
+- `VITE_API_URL`: API Gateway URL (nginx). The gateway serves HTTPS with a
+  local self-signed certificate (see `nginx/certs/README.md` at the repo
+  root) — the browser will warn once until you accept it. In dev you normally
+  don't need this variable at all: the Vite proxy forwards `/api/v1` to the
+  gateway and already tolerates the self-signed cert.
 
 ## 📱 Pages
 

@@ -15,7 +15,7 @@ A full-stack hotel search and booking platform built with a microservices archit
                                            │
                               ┌────────────▼─────────────┐
                               │   Nginx API Gateway      │
-                              │   Port 80  │  Port 8090  │
+                              │ 443 TLS (80→301) │ 8090  │
                               │  (routing, rate limiting, │
                               │   load balancing, CORS)   │
                               └──┬─────────┼──────────┬──┘
@@ -167,10 +167,23 @@ git clone https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platf
 cd Hotel-Search-Booking-Microservices-Platform
 ```
 
-### 2. Configure environment & start backend services
+### 2. Configure environment & generate the local TLS certificate
 
 ```bash
 cp .env.example .env   # local demo credentials (JWT secret, DB passwords, admin seed)
+
+# The gateway terminates TLS: generate the local self-signed cert BEFORE the
+# first `docker compose up` (the .pem files are git-ignored; nginx won't start
+# without them). Full details in nginx/certs/README.md.
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout nginx/certs/key.pem -out nginx/certs/cert.pem \
+  -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+```
+
+### 3. Start backend services
+
+```bash
 docker compose up -d --build
 ```
 
@@ -184,7 +197,7 @@ Wait for all services to be healthy:
 docker compose ps
 ```
 
-### 3. Start the frontend
+### 4. Start the frontend
 
 ```bash
 cd frontend
@@ -200,7 +213,12 @@ The same platform can run on Kubernetes: Deployments with real readiness/livenes
 
 ---
 
-## 🌐 API Endpoints (Gateway — Port 80)
+## 🌐 API Endpoints (Gateway — HTTPS, Port 443)
+
+The gateway terminates TLS on port 443 (TLS 1.2/1.3, HSTS) and port 80 only
+answers a `301` redirect to HTTPS. Locally the certificate is self-signed, so
+use `curl -k` and accept the one-time browser warning; in production you'd
+swap in a real certificate (e.g. Let's Encrypt) — the config doesn't change.
 
 The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change to any contract ships as `/api/v2` alongside `v1`). Success responses use a single envelope — `{"data": ...}` for single resources, `{"data": [...], "meta": {"total", "limit", "offset"}}` for lists — and every error (services and gateway alike) has the shape `{"error": {"code", "message", "trace_id"}}` with stable machine-readable codes. Health endpoints are not versioned.
 
@@ -236,11 +254,13 @@ The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change
 - **Multi-Level Caching** — Users API: L1 (ccache) → L2 (Memcached) → MySQL. Hotels API: ccache (LRU) → MongoDB
 - **Event-Driven Architecture** — Hotels API publishes CRUD events to RabbitMQ; Search API consumes them (manual ack, one retry, then a `hotels-news-dlq` dead-letter queue) to keep the Solr index in sync, and rebuilds the index on startup / `POST /reindex` by paging `GET /hotels`
 - **Shared JWT Authentication** — Users API issues tokens; Hotels API and Search API validate them with the same secret and their own audience; role-based access control (`cliente` / `administrador`)
-- **Rate Limiting** — API requests: 10 req/s. Login endpoint: 5 req/min. Connection limit: 20 per IP
-- **Security Headers** — X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy
+- **TLS Termination** — HTTPS on 443 (TLS 1.2/1.3) with HTTP→HTTPS redirect and HSTS; local self-signed cert (recipe in `nginx/certs/README.md`), production-ready for a real certificate
+- **Rate Limiting** — API requests: 10 req/s. Login endpoint: 5 req/min. Connection limit: 20 per IP. Exceeding a limit returns `429` with the standard JSON error envelope (`rate_limited` + `trace_id`)
+- **Search Response Cache** — the gateway caches `GET /api/v1/search` responses for 5 minutes (key includes the query string, `X-Cache-Status: MISS/HIT`, serves stale on upstream errors). Results can be up to 5 minutes old — consistent with the CQRS-lite model, where the Solr index is already eventually consistent
+- **Security Headers** — X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, Strict-Transport-Security — applied to every API route and preflight response (nginx `add_header` inheritance is handled via an included snippet)
 - **CORS Configuration** — Centralized CORS handling at the gateway level with origin whitelist
 - **Gzip Compression** — Enabled for JSON, XML, JavaScript, and CSS responses
-- **Monitoring** — Nginx status and JSON config endpoint on port 8090
+- **Monitoring** — Nginx status and JSON config endpoint on port 8090, bound to `127.0.0.1` only
 - **Protected Frontend Routes** — React ProtectedRoute component with role-based access
 
 ### Known trade-offs (demo scope)
@@ -275,9 +295,9 @@ cd search-api && go test ./... -v
 | Service            | URL                            |
 |--------------------|--------------------------------|
 | Frontend           | http://localhost:5173           |
-| API Gateway        | http://localhost                |
-| Gateway Monitoring | http://localhost:8090/status    |
-| Nginx Status       | http://localhost:8090/nginx_status |
+| API Gateway        | https://localhost (self-signed cert; port 80 redirects here) |
+| Gateway Monitoring | http://localhost:8090/status (loopback only) |
+| Nginx Status       | http://localhost:8090/nginx_status (loopback only) |
 | RabbitMQ Dashboard | http://localhost:15672 (root/root) |
 | Solr Admin UI      | http://localhost:8983/solr      |
 | MongoDB            | localhost:27017                 |

@@ -665,3 +665,57 @@ El run del CI con el plan 08 falló SOLO en el job `frontend` (los 4 legs Go ver
 ### Primera acción sugerida para la próxima sesión
 
 Commitear el plan 09 (**empezando por el `git mv` del Dockerfile de hotels**), pushear y mirar el primer run del job `docker` (3 legs build+Trivy). Después decir **"empecemos con el 10"** → `plans/10-nginx-gateway.md` (TLS + redirect + HSTS, herencia de `add_header`, cache real de `/search`, 429) **sumando RV26** de `plans/fixes/README.md` (puerto de monitoreo 8090 → `127.0.0.1:8090:8090`). Validar snippets contra el `nginx.conf` actual (el 07 tocó locations).
+
+### Post-cierre (2026-07-31)
+
+**El plan 09 quedó commiteado y pusheado (git mv del rename OK) y el CI está TODO VERDE**, incluido el primer run real del job `docker` (3 legs build+Trivy). Único fix post-push: `aquasecurity/trivy-action@0.28.0` no resolvía — el proyecto usa tags con prefijo `v`; quedó pineado a **`v0.36.0`** (mismos inputs). El working tree quedó limpio salvo esta nota del HANDOFF.
+
+---
+
+## Sesión — 2026-08-02 — Plan 10
+
+### Resumen de lo hecho
+
+1. **Plan 10 (Gateway nginx: SD4, SD5, I3, I7 + fix triageado RV26) — IMPLEMENTADO Y VERIFICADO end-to-end** contra el stack en vivo. Lo esencial:
+   - **SD4 (TLS)**: server block **443 ssl** (TLS 1.2/1.3, `ssl_session_cache`), server 80 reducido a **`return 301 https://$host$request_uri`**, HSTS via snippet (abajo). Certs self-signed locales **NO commiteados** (`nginx/certs/*.pem` en `.gitignore`); receta reproducible en **`nginx/certs/README.md`** — `openssl req -x509` con **SAN `DNS:localhost,IP:127.0.0.1`** (el CN solo ya no alcanza a clientes modernos), alternativa mkcert documentada con su caveat HSTS. Compose: publica `443:443`, monta `./nginx/certs` y `./nginx/snippets` (ro).
+   - **SD5 (headers)**: **`nginx/snippets/security-headers.conf`** (X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy + **HSTS max-age=31536000**, todos `always`) incluido a nivel server 443 **Y en cada location con `add_header` propios** (las de CORS) **Y dentro de cada bloque `if` de OPTIONS** — el `if` crea contexto propio de add_header y las preflight 204 quedaban sin headers. Verificado con GET y OPTIONS reales.
+   - **I3 (cache real de /search)**: `proxy_cache_path` zona `search_cache` (keys 10m, max_size 100m, inactive 10m, `use_temp_path=off`) + en `/api/v1/search`: `proxy_cache_key "$request_uri"` (incluye la query string), `proxy_cache_valid 200 5m`, `proxy_cache_use_stale error timeout updating`, header **`X-Cache-Status`**. Tradeoff documentado en README: resultados hasta 5 min viejos, coherente con el CQRS-lite (Solr ya es eventual).
+   - **I7 (429)**: `limit_req_status 429` + `limit_conn_status 429` en el http block, y **`error_page 429 = @api_rate_limited`** que responde **status 429** con el envelope estándar (`rate_limited` + `trace_id`, `Content-Type: application/json`). **El mapeo `error_page 503` desapareció**: nginx ya no genera 503 propio (el del rate-limit era el único) y los 5xx de upstreams vivos pasan intactos como siempre; `@api_error` sigue cubriendo 500/502/504.
+   - **RV26**: monitoreo `8090` publicado **solo en loopback** (`127.0.0.1:8090:8090`).
+   - **Healthcheck de nginx** → `http://127.0.0.1:8090/nginx-health` (location movida del server principal al de monitoreo 8090): sobre el 80 el wget de busybox seguiría el 301 y fallaría por el cert self-signed.
+   - **`test_load_balancer.sh`**: `BASE_URL=https://localhost` con `-k` controlado (solo self-signed local, comentado); monitor sigue `http://localhost:8090`. Checks nuevos: HTTP→301, 3 security headers en ruta de API, cache **MISS→HIT** con query única por corrida + query distinta = MISS, y rate-limit que exige **429 y falla si aparece un 503** + assert del envelope JSON con `trace_id`.
+   - **Frontend**: proxy de Vite → `https://localhost` con **`secure: false`** (el browser sigue en http con el dev server); fallback prod de `BASE_URL` → `https://localhost/api/v1`; `frontend/README.md` con `VITE_API_URL` https y nota del self-signed. `healthCheck` no se tocó (URL relativa al origin del SPA, no le pega al gateway directo).
+   - **README raíz**: quickstart con **generación del cert ANTES del primer `docker compose up`** (desde clon limpio ahora es `.env` + certs + compose, sin pasos ocultos), tabla de endpoints como "Gateway — HTTPS, Port 443" con nota del redirect y el `-k`, features nuevos (TLS/HSTS, 429 con envelope, cache de /search, monitoreo loopback-only), URLs actualizadas.
+
+### Desviaciones del plan (validadas contra la realidad)
+
+- El plan (pre-07) solo pedía `limit_req_status 429`: como el 07 ya había puesto el envelope JSON en el 503 del rate-limit, el handler entero se movió a `error_page 429` → `return 429` con envelope, y se **eliminó** el mapeo de 503 (no quedó ningún handler describiéndose como rate-limit con otro status).
+- El snippet del plan ponía HSTS suelto en el server 443: acá vive **dentro** del snippet de security-headers — si no, cualquier location con add_header propio lo descartaba (la misma herencia de SD5 aplicaba al HSTS del propio plan).
+- Los `include` del snippet van también **dentro de cada `if` de OPTIONS** (el plan solo mencionaba las locations).
+- `/nginx-health` se movió al server 8090 y el healthcheck del compose apunta ahí (el plan no contemplaba que el healthcheck moría con el redirect).
+- Cert generado **con SAN**, no solo CN (el comando del plan daba un cert que los clientes modernos rechazan por falta de SAN; `-k` lo tapaba, mkcert no).
+- **Nota HSTS local documentada** (`nginx/certs/README.md`): los browsers ignoran HSTS sobre conexiones con error de cert (RFC 6797) → con el self-signed es inerte (queda demostrada la config de prod); con mkcert aplicaría a TODO el host `localhost` sin distinguir puertos y rompería `http://localhost:5173` (Vite dev).
+
+### Estado actual
+
+- **Branch:** `feat/plan-01-seguridad-auth` — **el plan 10 sin commitear**. Modificados: `nginx.conf`, `docker-compose.yml`, `.gitignore`, `README.md`, `test_load_balancer.sh`, `frontend/vite.config.js`, `frontend/src/constants/index.js`, `frontend/README.md`, `plans/README.md` (checkbox), este HANDOFF. Nuevos: `nginx/snippets/security-headers.conf`, `nginx/certs/README.md` (los `.pem` generados quedan git-ignored).
+- **Checkbox del plan 10 en `plans/README.md`: `[x]`.** Con él queda ejecutado RV26 del triage.
+- **Verificación (todo verde, stack 11/11 healthy)**: `docker compose config` OK (8090 resuelve con `host_ip: 127.0.0.1`); certs generados con el comando exacto del README nuevo; nginx recreado (`docker compose up -d nginx`) y `nginx -t` OK; `http://localhost/...` → **301** con `Location: https://...`; https con `-k`: hotels 200, search 200, /health 200, users 401; **los 5 security headers** en GET de API y en OPTIONS 204 (CORS intacto: ACAO presente); cache: misma query **MISS→HIT**, query distinta MISS, misma q con `limit` distinto MISS (la key es el URI completo); burst de 10 logins → **400×4 + 429×6, cero 503**, el 429 con `Content-Type: application/json`, envelope `rate_limited`, `trace_id` y los security headers heredados; `docker port api-gateway` → 8090 **solo** en 127.0.0.1; healthcheck **healthy**; `bash test_load_balancer.sh` **PASSED exit 0** (20 checks, incluye los nuevos); **proxy de Vite verificado en vivo** (dev server efímero → `GET /api/v1/hotels` 200 a través del gateway https); `npm run build` OK y `npm run lint` solo con el **error preexistente de `AuthContext.jsx:16`** (+ warning preexistente de `HotelForm.jsx:88`).
+
+### Trabajo restante (en orden — detalle en `plans/README.md`)
+
+1. **Plan 11 — Consistencia y limpieza** ← **siguiente** (02 ✓, 07 ✓), sumando del triage: RV27 (CORS duplicado gateway+servicio), RV28 (delete de Memcached), RV29 (hash bcrypt en L2), RV30 (limpieza menor) — e incluye el rename atómico `AvaiableRooms` (C11).
+2. Después 13 (frontend) → 12 (docs).
+
+### Bloqueos y advertencias
+
+- **Sin bloqueos.** Advertencias:
+  - **El usuario debe commitear el plan 10** y pushear (el CI no ejercita nginx: los 5 legs deberían seguir verdes sin cambios).
+  - **BREAKING local deliberado**: el gateway ahora es `https://localhost`; el 80 solo redirige. Curls guardados necesitan `-k`; el browser pide aceptar el cert una vez. **Clon limpio: generar los certs ANTES del primer `up`** (README paso 2 / `nginx/certs/README.md`) — sin `.pem` nginx no arranca (crash-loop en "cannot load certificate").
+  - **El cache de `/search` sirve resultados hasta 5 min viejos** para la MISMA query string; `docker compose restart nginx` lo vacía (vive en el filesystem efímero del contenedor). Ojo en las demos: tras crear/editar un hotel, una búsqueda repetida idéntica puede mostrar lo viejo hasta 5 min.
+  - **RV27 y la unificación de CORS quedan para el plan 11** (los add_header de CORS del gateway se conservaron tal cual, solo se les sumó el include del snippet); el rename `AvaiableRooms` tampoco se adelantó.
+  - Siguen vigentes: nginx cachea IPs de upstreams al recrear contenedores (`docker compose restart nginx` si hay 502 tras un `up --build`), eslint preexistente en `AuthContext.jsx:16`, memcached sin healthcheck (normal), 2 moderate de react-router-dom v6 (plan 13), muleta de overrides eslint/minimatch (plan 13).
+
+### Primera acción sugerida para la próxima sesión
+
+Commitear y pushear el plan 10 (ver CI verde). Después decir **"empecemos con el 11"** → leer `plans/11-consistencia-limpieza.md` completo + su fila RV27–RV30 en `plans/fixes/README.md`, y validar snippets contra el código actual — en particular: cualquier cambio de CORS del 11 en `nginx.conf` debe **conservar los `include` del snippet de security-headers** (SD5 depende de eso), y C5 ("hotels-api ignora PORT") parece resuelto de facto desde antes del 09 — verificarlo y cerrarlo formalmente (nota de la sesión del 2026-07-30).

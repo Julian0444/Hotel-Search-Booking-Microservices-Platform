@@ -6,10 +6,16 @@ services:
     image: nginx:alpine
     container_name: api-gateway
     ports:
-      - "80:80"
-      - "8090:8090"  # Monitoring port
+      - "80:80"    # redirect 301 → https (SD4)
+      - "443:443"  # TLS
+      # RV26: monitoreo (stub_status) solo en loopback — antes 0.0.0.0
+      - "127.0.0.1:8090:8090"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      # Los .pem no se commitean: generarlos ANTES del primer up
+      # (nginx/certs/README.md) o nginx no arranca.
+      - ./nginx/certs:/etc/nginx/certs:ro
     # service_healthy (I5): nginx recién arranca cuando los upstreams pasan su
     # /readyz — sin esto daba 502 tempranos en el arranque en frío.
     depends_on:
@@ -27,9 +33,11 @@ services:
       - app-network
     restart: unless-stopped
     healthcheck:
-      # 127.0.0.1 a propósito: nginx escucha solo IPv4 y el wget de busybox
-      # resuelve localhost → ::1 sin fallback (era el "(unhealthy)" cosmético).
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/nginx-health"]
+      # Contra el server de monitoreo :8090 (HTTP-only): el :80 ahora es un 301
+      # a https y el wget de busybox seguiría el redirect y fallaría por el
+      # cert self-signed. 127.0.0.1 a propósito: nginx escucha solo IPv4 y el
+      # wget de busybox resuelve localhost → ::1 sin fallback.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8090/nginx-health"]
       interval: 10s
       timeout: 5s
       retries: 3

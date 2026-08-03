@@ -1,6 +1,9 @@
 # Secrets — never commit real credentials
 .env
 
+# TLS local (plan 10) — generarlos según nginx/certs/README.md
+nginx/certs/*.pem
+
 # Go
 coverage.out
 *.test

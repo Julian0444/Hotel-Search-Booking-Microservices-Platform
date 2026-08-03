@@ -5,10 +5,11 @@
 
 // API Configuration
 // En desarrollo, usa el proxy de Vite (/api/v1) para evitar CORS
-// En producción (Docker), usa la URL directa del gateway
+// En producción (Docker), usa la URL directa del gateway — https desde el
+// plan 10 (cert self-signed en local: aceptar la advertencia del browser)
 // La API está versionada bajo /api/v1 (plan 07 / A2)
 export const API_CONFIG = {
-  BASE_URL: import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '/api/v1' : 'http://localhost/api/v1'),
+  BASE_URL: import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '/api/v1' : 'https://localhost/api/v1'),
   TIMEOUT: 30000,
 };
 
