@@ -27,7 +27,7 @@ data:
             <field name="email" type="string" indexed="true" stored="true"/>
             <field name="price_per_night" type="pfloat" indexed="true" stored="true"/>
             <field name="rating" type="pfloat" indexed="true" stored="true"/>
-            <field name="avaiable_rooms" type="pint" indexed="true" stored="true"/>
+            <field name="available_rooms" type="pint" indexed="true" stored="true"/>
             <!-- Horas del día "HH:mm" (RV21): son strings planos del contrato, no
                  timestamps — pdate obligaba a inventar una fecha ficticia -->
             <field name="check_in_time" type="string" indexed="true" stored="true"/>

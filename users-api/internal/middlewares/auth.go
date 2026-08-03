@@ -1,7 +1,7 @@
 // users-api/internal/middlewares/auth.go
 // Copiado de hotels-api/internal/middlewares/auth.go: mismo contrato de claims
 // (`tipo`, `user_id`) y mismas keys de contexto (`userType`, `userID`).
-package middleware
+package middlewares
 
 import (
 	"fmt"

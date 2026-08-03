@@ -39,6 +39,12 @@ type RabbitQueue struct {
 	reservationsQueueName string
 	mu                    sync.RWMutex
 	connected             bool
+
+	// Parámetros de reconexión: NewRabbit los fija desde las constantes; los
+	// tests que construyen el struct a mano los achican para no dormir el
+	// backoff real (~15s por corrida de suite, RV30). Cero = defaults.
+	maxConnectRetries     int
+	initialConnectBackoff time.Duration
 }
 
 // NewRabbit crea una nueva instancia de RabbitQueue con reconexión automática
@@ -48,6 +54,8 @@ func NewRabbit(config RabbitConfig) *RabbitQueue {
 		queueName:             config.QueueName,
 		reservationsQueueName: config.ReservationsQueueName,
 		connected:             false,
+		maxConnectRetries:     maxRetries,
+		initialConnectBackoff: initialBackoff,
 	}
 
 	// Intentar conexión inicial con reintentos
@@ -60,17 +68,24 @@ func NewRabbit(config RabbitConfig) *RabbitQueue {
 
 // connectWithRetry intenta conectar a RabbitMQ con backoff exponencial
 func (rq *RabbitQueue) connectWithRetry() error {
-	var lastErr error
-	backoff := initialBackoff
+	retries := rq.maxConnectRetries
+	if retries <= 0 {
+		retries = maxRetries
+	}
+	backoff := rq.initialConnectBackoff
+	if backoff <= 0 {
+		backoff = initialBackoff
+	}
 
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		slog.Info("RabbitMQ connection attempt", "attempt", attempt, "max_retries", maxRetries)
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		slog.Info("RabbitMQ connection attempt", "attempt", attempt, "max_retries", retries)
 
 		if err := rq.connect(); err != nil {
 			lastErr = err
 			slog.Warn("RabbitMQ connection attempt failed", "attempt", attempt, "error", err)
 
-			if attempt < maxRetries {
+			if attempt < retries {
 				slog.Info("retrying RabbitMQ connection", "backoff", backoff.String())
 				time.Sleep(backoff)
 
@@ -86,7 +101,7 @@ func (rq *RabbitQueue) connectWithRetry() error {
 		}
 	}
 
-	return fmt.Errorf("failed to connect after %d attempts: %w", maxRetries, lastErr)
+	return fmt.Errorf("failed to connect after %d attempts: %w", retries, lastErr)
 }
 
 // connect establece la conexión a RabbitMQ

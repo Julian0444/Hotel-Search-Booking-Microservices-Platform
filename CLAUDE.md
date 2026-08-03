@@ -10,18 +10,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cp .env.example .env          # required: compose uses ${VAR:?} and fails without it
 docker compose up -d --build
 docker compose ps             # wait until healthy (Solr takes ~90s)
+docker compose --profile frontend up -d   # optional: built SPA on http://localhost:5173 (I8)
 ```
 
 Both users-api and hotels-api `log.Fatal` at startup if `JWT_SECRET` is unset or still the code default.
 
 ### Go tests (no Docker needed — mock repositories + httptest)
 
-There is no root Makefile or `go.work` yet; each service is an independent Go module, so run commands from inside the service directory:
+There is a root `go.work` (users-api, hotels-api, search-api, platform-contracts) and a root Makefile. Note the workspace root is not itself a module, so from the root you must enumerate modules (or use the Makefile targets):
 
 ```bash
-cd users-api && go test ./...                                  # same for hotels-api, search-api
-go test ./internal/services/users/ -run TestLogin -v           # single test
-go vet ./...
+make build && make test           # all modules
+go build ./users-api/... ./hotels-api/... ./search-api/... ./platform-contracts/...
+cd users-api && go test ./internal/services/users/ -run TestLogin -v   # single test
 ```
 
 ### Frontend
@@ -65,6 +66,6 @@ When executing a plan: validate its code snippets against the current code first
 
 ## Known deliberate quirks — do not "fix" in passing
 
-- The `AvaiableRooms` typo (JSON/BSON tags, Solr schema, frontend) is kept on purpose until plan 11, where it is renamed as one atomic coordinated change.
-- search-api's module path is plain `search-api` (the other two use full GitHub paths) and it's on Go 1.22 — unified in plan 02.
+- The historical misspelling of `AvailableRooms`/`available_rooms` was renamed in plan 11 (C11) as one atomic coordinated change (contracts, BSON, Solr schema, frontend, seeds, goldens). Existing Mongo data needs the one-off migration `hotels-api/seed/rename-available-rooms.js` (the only file that still carries the old field name, on purpose).
+- search-api's module path and Go version were unified with the other services in plan 02 (full GitHub path, shared toolchain via `go.work`).
 - Plans and much of the documentation are in Spanish; code comments mix Spanish and English. Keep that style.

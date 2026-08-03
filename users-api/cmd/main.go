@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -15,11 +14,12 @@ import (
 	healthControllers "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/controllers/health"
 	controllers "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/controllers/users"
 	usersDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/domain/users"
-	middleware "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/middlewares"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/middlewares"
 	repositories "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/repositories/users"
 	services "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/services/users"
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/tokenizers"
-	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/utils"
+
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/platform-contracts/cors"
 
 	"github.com/gin-gonic/gin"
 )
@@ -80,7 +80,7 @@ func main() {
 	controller := controllers.NewController(service)
 
 	// JWT middleware (verify) — mismo contrato de claims que hotels-api
-	jwtMiddleware := middleware.NewJWTMiddleware(config.JWTKey)
+	jwtMiddleware := middlewares.NewJWTMiddleware(config.JWTKey)
 
 	// Seed del primer admin (idempotente entre réplicas)
 	seedAdmin(service)
@@ -95,14 +95,16 @@ func main() {
 	// middleware RequestID en JSON vía slog (O1/O2).
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(middleware.RequestID())
-	router.Use(utils.CorsMiddleware())
+	router.Use(middlewares.RequestID())
+	// CORS compartido de la plataforma (C1/CQ4): allowlist por env, sin
+	// credentials. El gateway ya no duplica estos headers (RV27).
+	router.Use(cors.Middleware())
 	// Deadline por request: DeadlineExceeded se mapea a 503 en los controllers (R1)
-	router.Use(middleware.RequestTimeout(config.RequestTimeout))
+	router.Use(middlewares.RequestTimeout(config.RequestTimeout))
 
 	// Rutas versionadas bajo /api/v1 (A2); health/livez/readyz quedan fuera.
 	// RequireJSON: la API es JSON-only, Accept incompatible → 406 (A8).
-	v1 := router.Group("/api/v1", middleware.RequireJSON())
+	v1 := router.Group("/api/v1", middlewares.RequireJSON())
 
 	// Rutas públicas
 	v1.POST("/users", controller.Create)
@@ -111,9 +113,9 @@ func main() {
 	// Rutas protegidas: listar solo admin; ver/borrar solo el dueño o admin
 	authRoutes := v1.Group("/", jwtMiddleware.Authenticate())
 	{
-		authRoutes.GET("/users", middleware.AdminOnly(), controller.GetAll)
-		authRoutes.GET("/users/:id", middleware.OwnerOrAdmin(), controller.GetByID)
-		authRoutes.DELETE("/users/:id", middleware.OwnerOrAdmin(), controller.Delete)
+		authRoutes.GET("/users", middlewares.AdminOnly(), controller.GetAll)
+		authRoutes.GET("/users/:id", middlewares.OwnerOrAdmin(), controller.GetByID)
+		authRoutes.DELETE("/users/:id", middlewares.OwnerOrAdmin(), controller.Delete)
 	}
 
 	// Health endpoints (O3): /livez barato, /readyz pinguea las deps propias
@@ -177,7 +179,8 @@ func seedAdmin(service services.Service) {
 	switch {
 	case err == nil:
 		slog.Info("seed: admin user created", "username", config.SeedAdminUsername)
-	case strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "duplicate"):
+	case errors.Is(err, usersDomain.ErrUsernameTaken):
+		// Idempotencia entre réplicas via sentinel tipado (C6)
 		slog.Info("seed: admin user already exists", "username", config.SeedAdminUsername)
 	default:
 		slog.Warn("seed: admin creation failed", "error", err)

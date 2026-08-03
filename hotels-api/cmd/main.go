@@ -14,13 +14,14 @@ import (
 	controllersHealth "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/controllers/health"
 	controllersHotels "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/controllers/hotels"
 	controllersMicroservices "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/controllers/microservices"
-	middleware "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/middlewares"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/middlewares"
 	repositoriesHotels "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/repositories/hotels"
-	servicesHotels "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/services"
+	servicesHotels "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/services/hotels"
 
 	config "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/config"
 
-	"github.com/gin-contrib/cors"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/platform-contracts/cors"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -72,10 +73,11 @@ func main() {
 
 	// Configuración de Controladores
 	hotelsController := controllersHotels.NewController(hotelsService)
-	microservicesController := controllersMicroservices.NewController()
+	microservicesController := controllersMicroservices.NewController(
+		controllersMicroservices.ParseTargets(config.MicroservicesTargets))
 
 	// Configuración de middlewares
-	jwtMiddleware := middleware.NewJWTMiddleware(config.JWTSecret)
+	jwtMiddleware := middlewares.NewJWTMiddleware(config.JWTSecret)
 
 	// Gin en release salvo override explícito (O4): GIN_MODE=debug lo
 	// restaura para desarrollo local.
@@ -87,33 +89,33 @@ func main() {
 	// access-log lo emite el middleware RequestID en JSON vía slog (O1/O2).
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(middleware.RequestID())
+	router.Use(middlewares.RequestID())
 
-	// Configuración de CORS (Idempotency-Key habilitado para el POST de reservas, A3)
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Content-Type", "Authorization", "Idempotency-Key"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
-	}))
+	// CORS compartido de la plataforma (C1/CQ4): allowlist por env, sin
+	// credentials — reemplaza el combo inválido "*" + AllowCredentials:true
+	// que el browser rechaza. El gateway ya no duplica estos headers (RV27).
+	// Idempotency-Key va en los Allow-Headers (POST de reservas, A3).
+	router.Use(cors.Middleware())
 
 	// Rutas versionadas bajo /api/v1 (A2); health/livez/readyz quedan fuera.
 	// RequireJSON: la API es JSON-only, Accept incompatible → 406 (A8).
-	v1 := router.Group("/api/v1", middleware.RequireJSON())
+	v1 := router.Group("/api/v1", middlewares.RequireJSON())
 
 	v1.GET("/hotels", hotelsController.GetHotels) // listado paginado (E3: lo consume el backfill de search-api)
 	v1.GET("/hotels/:hotel_id", hotelsController.GetHotelByID)
-	v1.GET("/hotels/:hotel_id/reservations", hotelsController.GetReservationsByHotelID)
 	v1.POST("/hotels/availability", hotelsController.GetAvailability)
 
+	// Las reservas de un hotel exponen user_id de todos los huéspedes (PII):
+	// solo admins (C3). Misma ruta, ahora autenticada.
+	v1.GET("/hotels/:hotel_id/reservations",
+		jwtMiddleware.Authenticate(), middlewares.AdminOnly(), hotelsController.GetReservationsByHotelID)
+
 	// Rutas protegidas para usuarios autenticados
-	userRoutes := v1.Group("/", jwtMiddleware.Authenticate(), middleware.LoggedUserOnly())
+	userRoutes := v1.Group("/", jwtMiddleware.Authenticate(), middlewares.LoggedUserOnly())
 	{
 		// POST de reservas con Idempotency-Key (A3): mismo key+user → misma
 		// respuesta, una sola reserva
-		userRoutes.POST("/reservations", middleware.Idempotency(hotelsRepo), hotelsController.CreateReservation)
+		userRoutes.POST("/reservations", middlewares.Idempotency(hotelsRepo), hotelsController.CreateReservation)
 		userRoutes.GET("/reservations/:id", hotelsController.GetReservationByID)
 		userRoutes.DELETE("/reservations/:id", hotelsController.CancelReservation)
 		userRoutes.GET("/users/:user_id/reservations", hotelsController.GetReservationsByUserID)
@@ -121,18 +123,17 @@ func main() {
 	}
 
 	// Rutas protegidas para administradores
-	adminRoutes := v1.Group("/admin", jwtMiddleware.Authenticate(), middleware.AdminOnly())
+	adminRoutes := v1.Group("/admin", jwtMiddleware.Authenticate(), middlewares.AdminOnly())
 	{
 		// Gestión de hoteles (solo admins)
 		adminRoutes.POST("/hotels", hotelsController.Create)
 		adminRoutes.PUT("/hotels/:hotel_id", hotelsController.Update)
 		adminRoutes.DELETE("/hotels/:hotel_id", hotelsController.Delete)
 
-		// Gestión de microservicios (solo admins)
+		// Panel de microservicios (solo admins): READ-ONLY con health real
+		// vía /readyz (C2) — las acciones mock de scale/restart/logs se
+		// eliminaron: un panel de solo estado no simula operaciones de escritura.
 		adminRoutes.GET("/microservices", microservicesController.GetMicroservicesStatus)
-		adminRoutes.POST("/microservices/scale", microservicesController.ScaleService)
-		adminRoutes.GET("/microservices/:service_name/logs", microservicesController.GetServiceLogs)
-		adminRoutes.POST("/microservices/:service_name/restart", microservicesController.RestartService)
 	}
 
 	// Health endpoints (O3): /livez barato, /readyz pinguea las deps propias

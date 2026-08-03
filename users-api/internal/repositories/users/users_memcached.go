@@ -16,6 +16,12 @@ type MemcachedConfig struct {
 	Port string
 }
 
+// memcachedTTLSeconds (C7): TTL explícito de cada item de L2. Sin Expiration
+// los items vivían para siempre — una cuenta borrada podía seguir logueando
+// desde L2 indefinidamente si su key por id había sido evictada (RV28); con
+// TTL, cualquier entrada huérfana muere sola en <=5 minutos.
+const memcachedTTLSeconds = 300
+
 type Memcached struct {
 	client *memcache.Client
 }
@@ -94,7 +100,12 @@ func (repository Memcached) GetByUsername(_ context.Context, username string) (u
 }
 
 func (repository Memcached) Create(_ context.Context, user usersDAO.User) (int64, error) {
-	// Serialize user data
+	// Tradeoff documentado (RV29): el DAO viaja serializado COMPLETO a L2,
+	// hash bcrypt incluido — Login lee a través de la caché y necesita el
+	// hash para comparar. Mitigaciones: Memcached solo es alcanzable en la
+	// red interna de compose/k8s, el TTL de arriba acota la ventana y bcrypt
+	// ya es el formato en reposo. La alternativa (cachear solo datos
+	// públicos) obligaría a Login a ir SIEMPRE a MySQL y anularía la caché.
 	data, err := json.Marshal(user)
 	if err != nil {
 		return 0, fmt.Errorf("error marshaling user: %w", err)
@@ -102,13 +113,13 @@ func (repository Memcached) Create(_ context.Context, user usersDAO.User) (int64
 
 	// Store user with ID as key and username as an alternate key
 	idKey := idKey(user.ID)
-	if err := repository.client.Set(&memcache.Item{Key: idKey, Value: data}); err != nil {
+	if err := repository.client.Set(&memcache.Item{Key: idKey, Value: data, Expiration: memcachedTTLSeconds}); err != nil {
 		return 0, fmt.Errorf("error storing user in memcached: %w", err)
 	}
 
 	// Set key for username as well for easier lookup by username
 	usernameKey := usernameKey(user.Username)
-	if err := repository.client.Set(&memcache.Item{Key: usernameKey, Value: data}); err != nil {
+	if err := repository.client.Set(&memcache.Item{Key: usernameKey, Value: data, Expiration: memcachedTTLSeconds}); err != nil {
 		return 0, fmt.Errorf("error storing username in memcached: %w", err)
 	}
 
@@ -125,29 +136,25 @@ func (repository Memcached) Update(_ context.Context, user usersDAO.User) error 
 
 	// Store user with ID as key
 	idKey := idKey(user.ID)
-	if err := repository.client.Set(&memcache.Item{Key: idKey, Value: data}); err != nil {
+	if err := repository.client.Set(&memcache.Item{Key: idKey, Value: data, Expiration: memcachedTTLSeconds}); err != nil {
 		return fmt.Errorf("error updating user in memcached: %w", err)
 	}
 
 	// Also update the username key
 	usernameKey := usernameKey(user.Username)
-	if err := repository.client.Set(&memcache.Item{Key: usernameKey, Value: data}); err != nil {
+	if err := repository.client.Set(&memcache.Item{Key: usernameKey, Value: data, Expiration: memcachedTTLSeconds}); err != nil {
 		return fmt.Errorf("error updating username in memcached: %w", err)
 	}
 
 	return nil
 }
 
-func (repository Memcached) Delete(_ context.Context, id int64) error {
-	// Best-effort delete: no fallar por cache miss
-	keyByID := idKey(id)
-	item, err := repository.client.Get(keyByID)
-	if err == nil {
-		var user usersDAO.User
-		if err := json.Unmarshal(item.Value, &user); err == nil {
-			_ = repository.client.Delete(usernameKey(user.Username))
-		}
-	}
-	_ = repository.client.Delete(keyByID)
+// Delete borra ambas keys directamente a partir del DAO (RV28): antes el
+// username se descubría con un Get por id — si esa key había sido evictada
+// (LRU), la key por username quedaba huérfana para siempre. Best-effort: un
+// miss no es error.
+func (repository Memcached) Delete(_ context.Context, user usersDAO.User) error {
+	_ = repository.client.Delete(idKey(user.ID))
+	_ = repository.client.Delete(usernameKey(user.Username))
 	return nil
 }

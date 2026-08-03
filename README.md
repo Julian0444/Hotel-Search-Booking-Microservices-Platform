@@ -85,7 +85,7 @@ A full-stack hotel search and booking platform built with a microservices archit
 │   │   ├── config/             # Env vars configuration
 │   │   ├── controllers/
 │   │   │   ├── hotels/         # Hotel & reservation handlers
-│   │   │   └── microservices/  # Admin panel service management
+│   │   │   └── microservices/  # Admin panel: read-only platform status (/readyz probes)
 │   │   ├── services/           # Business logic + cache-aside
 │   │   ├── repositories/hotels/# MongoDB + ccache
 │   │   ├── clients/queues/     # RabbitMQ producer
@@ -189,7 +189,13 @@ docker compose up -d --build
 
 The first admin account is created automatically at startup from `ADMIN_USERNAME` / `ADMIN_PASSWORD` in your `.env` — public registration always creates customer accounts.
 
-This starts **10 containers**: Nginx, MySQL, Memcached, MongoDB, RabbitMQ, Solr, Users API (x3), Hotels API, and Search API.
+This starts **10 containers**: Nginx, MySQL, Memcached, MongoDB, RabbitMQ, Solr, Users API (x3), Hotels API, and Search API (plus a one-shot `migrate` container that runs the MySQL migrations and exits).
+
+The built SPA can optionally run in Docker too, behind the `frontend` profile (for local development you'd normally use `npm run dev` instead):
+
+```bash
+docker compose --profile frontend up -d   # adds staylux-frontend on http://localhost:5173
+```
 
 Wait for all services to be healthy:
 
@@ -231,7 +237,7 @@ The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change
 | `DELETE` | `/api/v1/users/:id`                           | Users API  | Owner/Admin | Delete user (204)            |
 | `GET`    | `/api/v1/hotels?limit=&offset=`               | Hotels API | —        | List hotels (paginated)         |
 | `GET`    | `/api/v1/hotels/:id`                          | Hotels API | —        | Get hotel details               |
-| `GET`    | `/api/v1/hotels/:id/reservations`             | Hotels API | —        | List hotel reservations         |
+| `GET`    | `/api/v1/hotels/:id/reservations`             | Hotels API | Admin    | List hotel reservations (PII: guests' `user_id`) |
 | `POST`   | `/api/v1/hotels/availability`                 | Hotels API | —        | Check availability (multi)      |
 | `POST`   | `/api/v1/reservations`                        | Hotels API | JWT      | Create reservation (201 + `Location`; supports `Idempotency-Key`) |
 | `GET`    | `/api/v1/reservations/:id`                    | Hotels API | JWT      | Get reservation (owner/admin)   |
@@ -242,6 +248,7 @@ The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change
 | `POST`   | `/api/v1/admin/hotels`                        | Hotels API | Admin    | Create hotel (201 + `Location`) |
 | `PUT`    | `/api/v1/admin/hotels/:id`                    | Hotels API | Admin    | Update hotel (returns updated representation) |
 | `DELETE` | `/api/v1/admin/hotels/:id`                    | Hotels API | Admin    | Delete hotel (204)              |
+| `GET`    | `/api/v1/admin/microservices`                 | Hotels API | Admin    | Platform status (read-only, real `/readyz` probes) |
 | `GET`    | `/health`                                     | Gateway    | —        | Gateway health check            |
 
 > Each Go service also exposes internal (not routed through the gateway) health endpoints: `/livez` (process liveness, `/health` is an alias) and `/readyz` (pings its own dependencies — e.g. Mongo+RabbitMQ for Hotels API — and returns `503` with a per-check status map if any is down). Docker Compose healthchecks hit `/readyz`, and nginx only starts once every upstream is healthy.

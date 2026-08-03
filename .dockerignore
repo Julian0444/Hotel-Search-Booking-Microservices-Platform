@@ -1,9 +1,10 @@
-# Aplica a los builds con contexto raíz (hotels-api y search-api) — CN2.
+# Aplica a los builds con contexto raíz (users-api, hotels-api y search-api) — CN2.
 # Allowlist: los Dockerfiles solo copian el módulo del servicio + platform-contracts;
 # abajo se poda lo que el binario no necesita (tests, docs, seeds, config que se
-# monta en runtime). users-api y frontend tienen .dockerignore propio (contexto propio).
+# monta en runtime). frontend mantiene .dockerignore propio (contexto propio).
 *
 !platform-contracts/
+!users-api/
 !hotels-api/
 !search-api/
 **/*_test.go
@@ -14,3 +15,6 @@
 hotels-api/seed/
 # config de Solr: montada en el contenedor de Solr, no en la imagen de search
 search-api/internal/solr-config/
+# migrations: las corre el one-shot `migrate` montándolas del host (compose) o
+# desde un ConfigMap (k8s); la imagen nunca las lee
+users-api/migrations/

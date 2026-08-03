@@ -11,7 +11,7 @@ import (
 
 	config "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/config"
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels"
-	middleware "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/middlewares"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/middlewares"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -110,11 +110,11 @@ func setupRouter(ctrl Controller) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	jwtMiddleware := middleware.NewJWTMiddleware(config.JWTSecret)
+	jwtMiddleware := middlewares.NewJWTMiddleware(config.JWTSecret)
 
 	// RequireJSON global como en cmd/main.go (A8); acá sin el prefijo /api/v1
 	// para que los paths de los tests queden cortos
-	r.Use(middleware.RequireJSON())
+	r.Use(middlewares.RequireJSON())
 
 	// Rutas públicas (como en cmd/main.go)
 	r.GET("/hotels", ctrl.GetHotels)
@@ -123,7 +123,7 @@ func setupRouter(ctrl Controller) *gin.Engine {
 	r.POST("/hotels/availability", ctrl.GetAvailability)
 
 	// Rutas protegidas (usuarios autenticados)
-	userRoutes := r.Group("/", jwtMiddleware.Authenticate(), middleware.LoggedUserOnly())
+	userRoutes := r.Group("/", jwtMiddleware.Authenticate(), middlewares.LoggedUserOnly())
 	{
 		userRoutes.POST("/reservations", ctrl.CreateReservation)
 		userRoutes.GET("/reservations/:id", ctrl.GetReservationByID)
@@ -133,7 +133,7 @@ func setupRouter(ctrl Controller) *gin.Engine {
 	}
 
 	// Rutas protegidas (admins)
-	adminRoutes := r.Group("/admin", jwtMiddleware.Authenticate(), middleware.AdminOnly())
+	adminRoutes := r.Group("/admin", jwtMiddleware.Authenticate(), middlewares.AdminOnly())
 	{
 		adminRoutes.POST("/hotels", ctrl.Create)
 		adminRoutes.PUT("/hotels/:hotel_id", ctrl.Update)

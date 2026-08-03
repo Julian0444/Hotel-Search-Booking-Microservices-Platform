@@ -2,7 +2,7 @@
 // nuevo (docker-entrypoint-initdb.d). Para re-sembrar: docker compose down -v.
 //
 // Los nombres de campo son los bson tags reales de hotels_dao.go — incluido el
-// typo deliberado `avaiable_rooms` (se renombra recién en el plan 11 / C11).
+// available_rooms ya con el nombre corregido (rename C11, plan 11).
 //
 // Nota (plan 06): estos hoteles NO aparecen en /search hasta que exista el
 // backfill de Solr — el índice se alimenta por eventos de RabbitMQ que el seed
@@ -23,7 +23,7 @@ if (db.hotels.countDocuments() === 0) {
       email: 'reservas@sierrascba.demo',
       price_per_night: 95.0,
       rating: 4.5,
-      avaiable_rooms: 12,
+      available_rooms: 12,
       check_in_time: '14:00',
       check_out_time: '10:00',
       amenities: ['wifi', 'pileta', 'desayuno', 'estacionamiento'],
@@ -43,7 +43,7 @@ if (db.hotels.countDocuments() === 0) {
       email: 'hola@palermosuites.demo',
       price_per_night: 140.0,
       rating: 4.7,
-      avaiable_rooms: 20,
+      available_rooms: 20,
       check_in_time: '15:00',
       check_out_time: '11:00',
       amenities: ['wifi', 'gimnasio', 'rooftop', 'bar'],
@@ -63,7 +63,7 @@ if (db.hotels.countDocuments() === 0) {
       email: 'info@posadadelvino.demo',
       price_per_night: 110.0,
       rating: 4.6,
-      avaiable_rooms: 8,
+      available_rooms: 8,
       check_in_time: '14:00',
       check_out_time: '10:30',
       amenities: ['wifi', 'bodega', 'desayuno', 'spa'],
@@ -83,7 +83,7 @@ if (db.hotels.countDocuments() === 0) {
       email: 'reservas@refugiodellago.demo',
       price_per_night: 180.0,
       rating: 4.8,
-      avaiable_rooms: 6,
+      available_rooms: 6,
       check_in_time: '15:00',
       check_out_time: '10:00',
       amenities: ['wifi', 'chimenea', 'muelle', 'desayuno'],
@@ -103,7 +103,7 @@ if (db.hotels.countDocuments() === 0) {
       email: 'contacto@hostalquebrada.demo',
       price_per_night: 70.0,
       rating: 4.3,
-      avaiable_rooms: 15,
+      available_rooms: 15,
       check_in_time: '13:00',
       check_out_time: '10:00',
       amenities: ['wifi', 'terraza', 'desayuno'],

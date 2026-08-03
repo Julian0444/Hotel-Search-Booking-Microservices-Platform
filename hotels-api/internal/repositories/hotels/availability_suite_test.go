@@ -164,7 +164,7 @@ func TestCacheAvailabilitySuite(t *testing.T) {
 	ctx := context.Background()
 
 	hotelID := "suite-hotel-1"
-	if _, err := cache.Create(ctx, hotelsDAO.Hotel{ID: hotelID, Name: "Suite Hotel", AvaiableRooms: 1}); err != nil {
+	if _, err := cache.Create(ctx, hotelsDAO.Hotel{ID: hotelID, Name: "Suite Hotel", AvailableRooms: 1}); err != nil {
 		t.Fatalf("creating hotel in cache: %v", err)
 	}
 
@@ -177,7 +177,7 @@ func TestCacheAvailability_NoReservationsListIsAvailable(t *testing.T) {
 	ctx := context.Background()
 
 	hotelID := "fresh-hotel"
-	if _, err := cache.Create(ctx, hotelsDAO.Hotel{ID: hotelID, Name: "Fresh", AvaiableRooms: 2}); err != nil {
+	if _, err := cache.Create(ctx, hotelsDAO.Hotel{ID: hotelID, Name: "Fresh", AvailableRooms: 2}); err != nil {
 		t.Fatalf("creating hotel in cache: %v", err)
 	}
 

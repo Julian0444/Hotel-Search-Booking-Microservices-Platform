@@ -165,7 +165,7 @@ const HotelDetail = () => {
   const mainImage = hotel.images?.[0] || PLACEHOLDER_IMAGES[0];
   const galleryImages = hotel.images?.slice(1, 4) || PLACEHOLDER_IMAGES.slice(1);
   const pricePerNight = hotel.price_per_night || hotel.pricePerNight || 0;
-  const availableRooms = hotel.avaiable_rooms || hotel.avaiableRooms || 0;
+  const availableRooms = hotel.available_rooms || hotel.availableRooms || 0;
   const checkInTime = hotel.check_in_time || hotel.checkInTime || DEFAULT_TIMES.CHECK_IN;
   const checkOutTime = hotel.check_out_time || hotel.checkOutTime || DEFAULT_TIMES.CHECK_OUT;
 

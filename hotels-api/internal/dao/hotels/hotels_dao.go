@@ -6,22 +6,22 @@ import "time"
 // en el contrato wire. Los volúmenes de Mongo anteriores las tienen como Date:
 // migrarlas con la receta de plans/HANDOFF.md antes de levantar esta versión.
 type Hotel struct {
-	ID            string   `bson:"_id,omitempty"`
-	Name          string   `bson:"name"`
-	Description   string   `bson:"description"`
-	Address       string   `bson:"address"`
-	City          string   `bson:"city"`
-	State         string   `bson:"state"`
-	Country       string   `bson:"country"`
-	Phone         string   `bson:"phone"`
-	Email         string   `bson:"email"`
-	PricePerNight float64  `bson:"price_per_night"`
-	Rating        float64  `bson:"rating"`
-	AvaiableRooms int      `bson:"avaiable_rooms"`
-	CheckInTime   string   `bson:"check_in_time"`
-	CheckOutTime  string   `bson:"check_out_time"`
-	Amenities     []string `bson:"amenities"`
-	Images        []string `bson:"images"`
+	ID             string   `bson:"_id,omitempty"`
+	Name           string   `bson:"name"`
+	Description    string   `bson:"description"`
+	Address        string   `bson:"address"`
+	City           string   `bson:"city"`
+	State          string   `bson:"state"`
+	Country        string   `bson:"country"`
+	Phone          string   `bson:"phone"`
+	Email          string   `bson:"email"`
+	PricePerNight  float64  `bson:"price_per_night"`
+	Rating         float64  `bson:"rating"`
+	AvailableRooms int      `bson:"available_rooms"`
+	CheckInTime    string   `bson:"check_in_time"`
+	CheckOutTime   string   `bson:"check_out_time"`
+	Amenities      []string `bson:"amenities"`
+	Images         []string `bson:"images"`
 }
 
 // Estados del lifecycle de una reserva (DM1). Cancelar es un soft-delete:

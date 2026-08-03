@@ -14,10 +14,12 @@ import (
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/config"
 	healthControllers "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/controllers/health"
 	controllers "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/controllers/search"
-	middleware "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/middlewares"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/middlewares"
 	repositories "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/repositories/hotels"
 	services "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/services/search"
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils"
+
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/platform-contracts/cors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -101,20 +103,22 @@ func main() {
 	// el middleware RequestID en JSON vía slog (O1/O2).
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(middleware.RequestID())
+	router.Use(middlewares.RequestID())
 
-	// Use CORS middleware
-	router.Use(utils.CorsMiddleware())
+	// CORS compartido de la plataforma (C1/CQ4): allowlist por env, sin
+	// credentials — reemplaza el "*" + credentials hardcodeado. El gateway ya
+	// no duplica estos headers (RV27).
+	router.Use(cors.Middleware())
 
 	// Middleware JWT (audiencia search-api) para las rutas de administración
-	jwtMiddleware := middleware.NewJWTMiddleware(config.JWTSecret)
+	jwtMiddleware := middlewares.NewJWTMiddleware(config.JWTSecret)
 
 	// Rutas versionadas bajo /api/v1 (A2); health/livez/readyz quedan fuera.
 	// RequireJSON: la API es JSON-only, Accept incompatible → 406 (A8).
-	v1 := router.Group("/api/v1", middleware.RequireJSON())
+	v1 := router.Group("/api/v1", middlewares.RequireJSON())
 	v1.GET("/search", controller.Search)
 	// Reindex on-demand (E3): mismo backfill del arranque, solo admins
-	v1.POST("/reindex", jwtMiddleware.Authenticate(), middleware.AdminOnly(), controller.Reindex)
+	v1.POST("/reindex", jwtMiddleware.Authenticate(), middlewares.AdminOnly(), controller.Reindex)
 
 	// Health endpoints (O3): /livez barato, /readyz pinguea las deps propias
 	// (Solr + RabbitMQ); /health queda como alias de /livez por compat.

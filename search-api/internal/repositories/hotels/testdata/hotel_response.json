@@ -10,7 +10,7 @@
   "email": "reservas@sierrashotel.example.com",
   "price_per_night": 150.5,
   "rating": 4.5,
-  "avaiable_rooms": 20,
+  "available_rooms": 20,
   "check_in_time": "15:00",
   "check_out_time": "10:00",
   "amenities": ["wifi", "spa", "pileta"],

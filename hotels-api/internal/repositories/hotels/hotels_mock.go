@@ -160,7 +160,7 @@ func (m Mock) CreateReservation(ctx context.Context, reservation hotelsDAO.Reser
 	if rooms < 1 {
 		rooms = 1
 	}
-	if rooms > hotel.AvaiableRooms {
+	if rooms > hotel.AvailableRooms {
 		return "", hotelsDomain.ErrNoAvailability
 	}
 
@@ -168,7 +168,7 @@ func (m Mock) CreateReservation(ctx context.Context, reservation hotelsDAO.Reser
 	to := normalizeDate(reservation.CheckOut)
 	roomsByDay := countRoomsByNight(m.allReservations(), reservation.HotelID, from, to)
 	for date := from; date.Before(to); date = date.AddDate(0, 0, 1) {
-		if roomsByDay[date]+rooms > hotel.AvaiableRooms {
+		if roomsByDay[date]+rooms > hotel.AvailableRooms {
 			return "", hotelsDomain.ErrNoAvailability
 		}
 	}
@@ -289,7 +289,7 @@ func (m Mock) IsHotelAvailable(ctx context.Context, hotelID, checkIn, checkOut s
 
 	roomsByDay := countRoomsByNight(m.allReservations(), hotelID, checkInTime, checkOutTime)
 	for date := checkInTime; date.Before(checkOutTime); date = date.AddDate(0, 0, 1) {
-		if roomsByDay[date] >= hotel.AvaiableRooms {
+		if roomsByDay[date] >= hotel.AvailableRooms {
 			return false, nil
 		}
 	}
@@ -479,7 +479,7 @@ func (m MockCache) IsHotelAvailable(ctx context.Context, hotelID, checkIn, check
 
 	roomsByDay := countRoomsByNight(list, hotelID, checkInTime, checkOutTime)
 	for date := checkInTime; date.Before(checkOutTime); date = date.AddDate(0, 0, 1) {
-		if roomsByDay[date] >= hotel.AvaiableRooms {
+		if roomsByDay[date] >= hotel.AvailableRooms {
 			return false, nil
 		}
 	}

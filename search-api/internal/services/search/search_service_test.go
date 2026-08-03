@@ -8,16 +8,15 @@ import (
 
 	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels"
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
-	hotelsRepo "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/repositories/hotels"
 	service "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/services/search"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-func newTestService() (service.Service, *hotelsRepo.Mock, *hotelsRepo.ExternalMock) {
-	solrRepo := hotelsRepo.NewMock()
-	hotelsAPI := hotelsRepo.NewExternalMock()
+func newTestService() (service.Service, *solrMock, *hotelsAPIMock) {
+	solrRepo := newSolrMock()
+	hotelsAPI := newHotelsAPIMock()
 
 	svc := service.NewService(solrRepo, hotelsAPI)
 	return svc, solrRepo, hotelsAPI
@@ -29,28 +28,28 @@ func TestService_Search(t *testing.T) {
 
 		mockHotels := []hotelsDAO.Hotel{
 			{
-				ID:            "hotel1",
-				Name:          "Hotel Paradise",
-				Description:   "Un hotel de lujo",
-				City:          "Buenos Aires",
-				Country:       "Argentina",
-				Rating:        4.5,
-				PricePerNight: 150.0,
-				AvaiableRooms: 10,
-				Amenities:     []string{"wifi", "pool"},
-				Images:        []string{"img1.jpg"},
+				ID:             "hotel1",
+				Name:           "Hotel Paradise",
+				Description:    "Un hotel de lujo",
+				City:           "Buenos Aires",
+				Country:        "Argentina",
+				Rating:         4.5,
+				PricePerNight:  150.0,
+				AvailableRooms: 10,
+				Amenities:      []string{"wifi", "pool"},
+				Images:         []string{"img1.jpg"},
 			},
 			{
-				ID:            "hotel2",
-				Name:          "Hotel Sunset",
-				Description:   "Vista al mar",
-				City:          "Cancun",
-				Country:       "Mexico",
-				Rating:        4.8,
-				PricePerNight: 200.0,
-				AvaiableRooms: 5,
-				Amenities:     []string{"wifi", "spa"},
-				Images:        []string{"img2.jpg"},
+				ID:             "hotel2",
+				Name:           "Hotel Sunset",
+				Description:    "Vista al mar",
+				City:           "Cancun",
+				Country:        "Mexico",
+				Rating:         4.8,
+				PricePerNight:  200.0,
+				AvailableRooms: 5,
+				Amenities:      []string{"wifi", "spa"},
+				Images:         []string{"img2.jpg"},
 			},
 		}
 
@@ -123,18 +122,18 @@ func TestService_HandleHotelNew_Create(t *testing.T) {
 		svc, solrRepo, hotelsAPI := newTestService()
 
 		hotelDomain := hotelsDomain.Hotel{
-			ID:            "hotel1",
-			Name:          "New Hotel",
-			Description:   "Brand new hotel",
-			City:          "Lima",
-			Country:       "Peru",
-			Rating:        4.0,
-			PricePerNight: 100.0,
-			AvaiableRooms: 20,
-			CheckInTime:   "14:00",
-			CheckOutTime:  "10:00",
-			Amenities:     []string{"wifi"},
-			Images:        []string{"new.jpg"},
+			ID:             "hotel1",
+			Name:           "New Hotel",
+			Description:    "Brand new hotel",
+			City:           "Lima",
+			Country:        "Peru",
+			Rating:         4.0,
+			PricePerNight:  100.0,
+			AvailableRooms: 20,
+			CheckInTime:    "14:00",
+			CheckOutTime:   "10:00",
+			Amenities:      []string{"wifi"},
+			Images:         []string{"new.jpg"},
 		}
 
 		hotelsAPI.On("GetHotelByID", mock.Anything, "hotel1").Return(hotelDomain, nil).Once()

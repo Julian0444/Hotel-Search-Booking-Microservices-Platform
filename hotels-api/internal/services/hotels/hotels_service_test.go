@@ -1,4 +1,4 @@
-package services
+package hotels
 
 import (
 	"context"
@@ -187,7 +187,7 @@ func TestCreateReservation(t *testing.T) {
 	service, _, _ := getTestService()
 	ctx := context.Background()
 
-	hotel := hotelsDomain.Hotel{Name: "HotelRes", AvaiableRooms: 2, PricePerNight: 100}
+	hotel := hotelsDomain.Hotel{Name: "HotelRes", AvailableRooms: 2, PricePerNight: 100}
 	hotelID, _ := service.Create(ctx, hotel)
 	res := hotelsDomain.Reservation{
 		HotelID:  hotelID,
@@ -235,7 +235,7 @@ func TestCreateReservation_NoAvailability(t *testing.T) {
 	service, _, _ := getTestService()
 	ctx := context.Background()
 
-	hotelID, _ := service.Create(ctx, hotelsDomain.Hotel{Name: "Full", AvaiableRooms: 1, PricePerNight: 50})
+	hotelID, _ := service.Create(ctx, hotelsDomain.Hotel{Name: "Full", AvailableRooms: 1, PricePerNight: 50})
 
 	res := hotelsDomain.Reservation{
 		HotelID:  hotelID,
@@ -259,7 +259,7 @@ func TestCreateReservation_Validations(t *testing.T) {
 	service, _, _ := getTestService()
 	ctx := context.Background()
 
-	hotelID, _ := service.Create(ctx, hotelsDomain.Hotel{Name: "Valid", AvaiableRooms: 2, PricePerNight: 50})
+	hotelID, _ := service.Create(ctx, hotelsDomain.Hotel{Name: "Valid", AvailableRooms: 2, PricePerNight: 50})
 
 	t.Run("checkout before checkin", func(t *testing.T) {
 		_, err := service.CreateReservation(ctx, hotelsDomain.Reservation{
@@ -317,7 +317,7 @@ func TestReservationEventsPublished(t *testing.T) {
 	service := NewService(mainRepo, cacheRepo, queue)
 	ctx := context.Background()
 
-	hotelID, _ := service.Create(ctx, hotelsDomain.Hotel{Name: "Events", AvaiableRooms: 1, PricePerNight: 10})
+	hotelID, _ := service.Create(ctx, hotelsDomain.Hotel{Name: "Events", AvailableRooms: 1, PricePerNight: 10})
 	resID, err := service.CreateReservation(ctx, hotelsDomain.Reservation{
 		HotelID: hotelID, UserID: "u", CheckIn: futureDate(t, 10), CheckOut: futureDate(t, 11), NumRooms: 1,
 	})
@@ -345,7 +345,7 @@ func TestCancelReservation(t *testing.T) {
 	service, _, _ := getTestService()
 	ctx := context.Background()
 
-	hotel := hotelsDomain.Hotel{Name: "HotelResCancel", AvaiableRooms: 1, PricePerNight: 50}
+	hotel := hotelsDomain.Hotel{Name: "HotelResCancel", AvailableRooms: 1, PricePerNight: 50}
 	hotelID, _ := service.Create(ctx, hotel)
 	res := hotelsDomain.Reservation{
 		HotelID:  hotelID,
@@ -391,7 +391,7 @@ func TestGetReservationsByHotelID(t *testing.T) {
 	service, _, _ := getTestService()
 	ctx := context.Background()
 
-	hotel := hotelsDomain.Hotel{Name: "HotelRes2", AvaiableRooms: 1, PricePerNight: 50}
+	hotel := hotelsDomain.Hotel{Name: "HotelRes2", AvailableRooms: 1, PricePerNight: 50}
 	hotelID, _ := service.Create(ctx, hotel)
 	res := hotelsDomain.Reservation{
 		HotelID:  hotelID,
@@ -414,7 +414,7 @@ func TestGetReservationsByUserID(t *testing.T) {
 	service, _, _ := getTestService()
 	ctx := context.Background()
 
-	hotel := hotelsDomain.Hotel{Name: "HotelRes3", AvaiableRooms: 1, PricePerNight: 50}
+	hotel := hotelsDomain.Hotel{Name: "HotelRes3", AvailableRooms: 1, PricePerNight: 50}
 	hotelID, _ := service.Create(ctx, hotel)
 	res := hotelsDomain.Reservation{
 		HotelID:  hotelID,
@@ -437,7 +437,7 @@ func TestGetReservationsByUserAndHotelID(t *testing.T) {
 	service, _, _ := getTestService()
 	ctx := context.Background()
 
-	hotel := hotelsDomain.Hotel{Name: "HotelRes4", AvaiableRooms: 1, PricePerNight: 50}
+	hotel := hotelsDomain.Hotel{Name: "HotelRes4", AvailableRooms: 1, PricePerNight: 50}
 	hotelID, _ := service.Create(ctx, hotel)
 	res := hotelsDomain.Reservation{
 		HotelID:  hotelID,
@@ -461,8 +461,8 @@ func TestGetAvailability(t *testing.T) {
 	ctx := context.Background()
 
 	hotel := hotelsDomain.Hotel{
-		Name:          "HotelAvail",
-		AvaiableRooms: 1, // necesario para que IsHotelAvailable devuelva true
+		Name:           "HotelAvail",
+		AvailableRooms: 1, // necesario para que IsHotelAvailable devuelva true
 	}
 	hotelID, _ := service.Create(ctx, hotel)
 	availability, err := service.GetAvailability(ctx, []string{hotelID}, "2024-01-01", "2024-01-02")
@@ -512,7 +512,7 @@ func TestGetReservationByID_PopulatesCache(t *testing.T) {
 	ctx := context.Background()
 
 	// Crear hotel en main para asociar reserva (con capacidad para el mock)
-	hotelID, err := mainRepo.Create(ctx, hotelsDAO.Hotel{Name: "HotelForReservation", AvaiableRooms: 1})
+	hotelID, err := mainRepo.Create(ctx, hotelsDAO.Hotel{Name: "HotelForReservation", AvailableRooms: 1})
 	if err != nil {
 		t.Fatalf("error creating hotel in main repo: %v", err)
 	}
@@ -548,9 +548,9 @@ func TestAvailabilityWithReservation(t *testing.T) {
 	ctx := context.Background()
 
 	hotelID, _ := service.Create(ctx, hotelsDomain.Hotel{
-		Name:          "HotelOcc",
-		AvaiableRooms: 1,
-		PricePerNight: 50,
+		Name:           "HotelOcc",
+		AvailableRooms: 1,
+		PricePerNight:  50,
 	})
 
 	checkIn := futureDate(t, 10)

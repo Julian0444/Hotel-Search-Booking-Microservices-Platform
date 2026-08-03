@@ -1,4 +1,4 @@
-package middleware_test
+package middlewares_test
 
 import (
 	"net/http"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	middleware "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/middlewares"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/middlewares"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -49,10 +49,10 @@ func setupAuthRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	m := middleware.NewJWTMiddleware(testSecret)
+	m := middlewares.NewJWTMiddleware(testSecret)
 	auth := router.Group("/", m.Authenticate())
-	auth.GET("/me", middleware.LoggedUserOnly(), func(c *gin.Context) { c.Status(http.StatusOK) })
-	auth.GET("/admin", middleware.AdminOnly(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	auth.GET("/me", middlewares.LoggedUserOnly(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	auth.GET("/admin", middlewares.AdminOnly(), func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	return router
 }

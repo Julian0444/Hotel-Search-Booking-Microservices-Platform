@@ -35,6 +35,10 @@ data:
   MONGO_COLLECTION_IDEMPOTENCY: idempotency_keys
   CACHE_MAX_SIZE: "100000"
   CACHE_ITEMS_TO_PRUNE: "100"
+  # Panel admin de microservicios (C2): acá se prueba el Service de cada API
+  # (una entrada por servicio; el default del código usa los hostnames del
+  # compose y en k8s no resuelve)
+  MICROSERVICES_TARGETS: users-api=http://users-api:8082;hotels-api=http://hotels-api:8081;search-api=http://search-api:8082
 
   # compartidas users/hotels
   CACHE_DURATION: 30s

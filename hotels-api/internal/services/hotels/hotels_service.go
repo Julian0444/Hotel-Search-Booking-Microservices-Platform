@@ -1,4 +1,4 @@
-package services
+package hotels
 
 import (
 	"context"
@@ -67,22 +67,22 @@ func NewService(mainRepository Repository, cacheRepository CacheRepository, even
 // hotelToDomain convierte el modelo DAO al de dominio para respuestas.
 func hotelToDomain(hotelDAO hotelsDAO.Hotel) hotelsDomain.Hotel {
 	return hotelsDomain.Hotel{
-		ID:            hotelDAO.ID,
-		Name:          hotelDAO.Name,
-		Description:   hotelDAO.Description,
-		Address:       hotelDAO.Address,
-		City:          hotelDAO.City,
-		State:         hotelDAO.State,
-		Country:       hotelDAO.Country,
-		Phone:         hotelDAO.Phone,
-		Email:         hotelDAO.Email,
-		PricePerNight: hotelDAO.PricePerNight,
-		Rating:        hotelDAO.Rating,
-		AvaiableRooms: hotelDAO.AvaiableRooms,
-		CheckInTime:   hotelDAO.CheckInTime,
-		CheckOutTime:  hotelDAO.CheckOutTime,
-		Amenities:     hotelDAO.Amenities,
-		Images:        hotelDAO.Images,
+		ID:             hotelDAO.ID,
+		Name:           hotelDAO.Name,
+		Description:    hotelDAO.Description,
+		Address:        hotelDAO.Address,
+		City:           hotelDAO.City,
+		State:          hotelDAO.State,
+		Country:        hotelDAO.Country,
+		Phone:          hotelDAO.Phone,
+		Email:          hotelDAO.Email,
+		PricePerNight:  hotelDAO.PricePerNight,
+		Rating:         hotelDAO.Rating,
+		AvailableRooms: hotelDAO.AvailableRooms,
+		CheckInTime:    hotelDAO.CheckInTime,
+		CheckOutTime:   hotelDAO.CheckOutTime,
+		Amenities:      hotelDAO.Amenities,
+		Images:         hotelDAO.Images,
 	}
 }
 
@@ -133,21 +133,21 @@ func (service Service) Create(ctx context.Context, hotel hotelsDomain.Hotel) (st
 	// Convierte el modelo de dominio a modelo DAO
 	//Modelo de como viene -> modelo base de datos
 	record := hotelsDAO.Hotel{
-		Name:          hotel.Name,
-		Description:   hotel.Description,
-		Address:       hotel.Address,
-		City:          hotel.City,
-		State:         hotel.State,
-		Country:       hotel.Country,
-		Phone:         hotel.Phone,
-		Email:         hotel.Email,
-		PricePerNight: hotel.PricePerNight,
-		Rating:        hotel.Rating,
-		AvaiableRooms: hotel.AvaiableRooms,
-		CheckInTime:   hotel.CheckInTime,
-		CheckOutTime:  hotel.CheckOutTime,
-		Amenities:     hotel.Amenities,
-		Images:        hotel.Images,
+		Name:           hotel.Name,
+		Description:    hotel.Description,
+		Address:        hotel.Address,
+		City:           hotel.City,
+		State:          hotel.State,
+		Country:        hotel.Country,
+		Phone:          hotel.Phone,
+		Email:          hotel.Email,
+		PricePerNight:  hotel.PricePerNight,
+		Rating:         hotel.Rating,
+		AvailableRooms: hotel.AvailableRooms,
+		CheckInTime:    hotel.CheckInTime,
+		CheckOutTime:   hotel.CheckOutTime,
+		Amenities:      hotel.Amenities,
+		Images:         hotel.Images,
 	}
 	// Crea el hotel en el repositorio principal (base de datos -> MongoDB)
 	id, err := service.mainRepository.Create(ctx, record)
@@ -175,22 +175,22 @@ func (service Service) Create(ctx context.Context, hotel hotelsDomain.Hotel) (st
 func (service Service) Update(ctx context.Context, hotel hotelsDomain.Hotel) error {
 	// Convierte el modelo de dominio a modelo DAO
 	record := hotelsDAO.Hotel{
-		ID:            hotel.ID,
-		Name:          hotel.Name,
-		Description:   hotel.Description,
-		Address:       hotel.Address,
-		City:          hotel.City,
-		State:         hotel.State,
-		Country:       hotel.Country,
-		Phone:         hotel.Phone,
-		Email:         hotel.Email,
-		PricePerNight: hotel.PricePerNight,
-		Rating:        hotel.Rating,
-		AvaiableRooms: hotel.AvaiableRooms,
-		CheckInTime:   hotel.CheckInTime,
-		CheckOutTime:  hotel.CheckOutTime,
-		Amenities:     hotel.Amenities,
-		Images:        hotel.Images,
+		ID:             hotel.ID,
+		Name:           hotel.Name,
+		Description:    hotel.Description,
+		Address:        hotel.Address,
+		City:           hotel.City,
+		State:          hotel.State,
+		Country:        hotel.Country,
+		Phone:          hotel.Phone,
+		Email:          hotel.Email,
+		PricePerNight:  hotel.PricePerNight,
+		Rating:         hotel.Rating,
+		AvailableRooms: hotel.AvailableRooms,
+		CheckInTime:    hotel.CheckInTime,
+		CheckOutTime:   hotel.CheckOutTime,
+		Amenities:      hotel.Amenities,
+		Images:         hotel.Images,
 	}
 
 	// Actualiza el hotel en el repositorio principal (MongoDB)
@@ -314,8 +314,8 @@ func (service Service) CreateReservation(ctx context.Context, reservation hotels
 	if reservation.NumRooms < 1 {
 		return "", fmt.Errorf("num_rooms must be at least 1: %w", hotelsDomain.ErrInvalidReservation)
 	}
-	if reservation.NumRooms > hotel.AvaiableRooms {
-		return "", fmt.Errorf("num_rooms must be between 1 and the hotel capacity (%d): %w", hotel.AvaiableRooms, hotelsDomain.ErrNoAvailability)
+	if reservation.NumRooms > hotel.AvailableRooms {
+		return "", fmt.Errorf("num_rooms must be between 1 and the hotel capacity (%d): %w", hotel.AvailableRooms, hotelsDomain.ErrNoAvailability)
 	}
 	if reservation.NumGuests < 1 {
 		return "", fmt.Errorf("num_guests must be at least 1: %w", hotelsDomain.ErrInvalidReservation)
@@ -420,7 +420,7 @@ func (service Service) GetReservationsByHotelID(ctx context.Context, hotelID str
 		// Si no se encuentran en la cache, se obtienen del repositorio principal
 		reservationsDAO, err = service.mainRepository.GetReservationsByHotelID(ctx, hotelID, limit, offset)
 		if err != nil {
-			return nil, fmt.Errorf("error getting reservations from repository: %v", err)
+			return nil, fmt.Errorf("error getting reservations from repository: %w", err)
 		}
 		// Se guarda en la cache SOLO si esta página es la lista completa
 		// (offset 0 y menos resultados que el límite); cachear una página
@@ -447,7 +447,7 @@ func (service Service) GetReservationsByUserAndHotelID(ctx context.Context, hote
 		// Si no se encuentran en la cache, se obtienen del repositorio principal
 		reservationsDAO, err = service.mainRepository.GetReservationsByUserAndHotelID(ctx, hotelID, userID, limit, offset)
 		if err != nil {
-			return nil, fmt.Errorf("error getting reservations from repository: %v", err)
+			return nil, fmt.Errorf("error getting reservations from repository: %w", err)
 		}
 		// Ver GetReservationsByHotelID: solo se cachea la lista completa; best-effort (R3)
 		if offset == 0 && int64(len(reservationsDAO)) < limit {
@@ -471,7 +471,7 @@ func (service Service) GetReservationsByUserID(ctx context.Context, userID strin
 		// Si no se encuentran en la cache, se obtienen del repositorio principal
 		reservationsDAO, err = service.mainRepository.GetReservationsByUserID(ctx, userID, limit, offset)
 		if err != nil {
-			return nil, fmt.Errorf("error getting reservations from repository: %v", err)
+			return nil, fmt.Errorf("error getting reservations from repository: %w", err)
 		}
 		// Ver GetReservationsByHotelID: solo se cachea la lista completa; best-effort (R3)
 		if offset == 0 && int64(len(reservationsDAO)) < limit {
@@ -496,7 +496,7 @@ func (service Service) GetAvailability(ctx context.Context, hotelIDs []string, c
 		// Si no se encuentran en la cache, se obtienen del repositorio principal
 		availability, err = service.mainRepository.GetAvailability(ctx, hotelIDs, checkIn, checkOut)
 		if err != nil {
-			return nil, fmt.Errorf("error getting availability from repository: %v", err)
+			return nil, fmt.Errorf("error getting availability from repository: %w", err)
 		}
 	}
 

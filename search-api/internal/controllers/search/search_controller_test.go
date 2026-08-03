@@ -66,16 +66,16 @@ func TestController_Search(t *testing.T) {
 
 		mockHotels := []hotelsDomain.Hotel{
 			{
-				ID:            "hotel1",
-				Name:          "Hotel Paradise",
-				Description:   "Luxury hotel",
-				City:          "Buenos Aires",
-				Country:       "Argentina",
-				Rating:        4.5,
-				PricePerNight: 150.0,
-				AvaiableRooms: 10,
-				Amenities:     []string{"wifi", "pool"},
-				Images:        []string{"img1.jpg"},
+				ID:             "hotel1",
+				Name:           "Hotel Paradise",
+				Description:    "Luxury hotel",
+				City:           "Buenos Aires",
+				Country:        "Argentina",
+				Rating:         4.5,
+				PricePerNight:  150.0,
+				AvailableRooms: 10,
+				Amenities:      []string{"wifi", "pool"},
+				Images:         []string{"img1.jpg"},
 			},
 			{
 				ID:            "hotel2",

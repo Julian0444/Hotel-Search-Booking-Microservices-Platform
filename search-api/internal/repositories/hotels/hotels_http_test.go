@@ -242,8 +242,8 @@ func TestHotelResponseUnmarshal(t *testing.T) {
 	if hotel.PricePerNight != 150.5 {
 		t.Errorf("PricePerNight: got %v", hotel.PricePerNight)
 	}
-	if hotel.AvaiableRooms != 20 {
-		t.Errorf("AvaiableRooms: got %d", hotel.AvaiableRooms)
+	if hotel.AvailableRooms != 20 {
+		t.Errorf("AvailableRooms: got %d", hotel.AvailableRooms)
 	}
 	if len(hotel.Amenities) != 3 {
 		t.Errorf("Amenities: got %d, want 3", len(hotel.Amenities))

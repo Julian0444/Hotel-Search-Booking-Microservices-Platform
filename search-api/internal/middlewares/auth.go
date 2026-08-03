@@ -1,6 +1,6 @@
 // search-api/middleware/auth.go — copia del middleware JWT de hotels-api con
 // la audiencia propia de este servicio (protege POST /reindex, plan 06).
-package middleware
+package middlewares
 
 import (
 	"fmt"

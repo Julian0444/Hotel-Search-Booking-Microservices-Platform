@@ -285,8 +285,8 @@ func (repository Mongo) Update(ctx context.Context, hotel hotelsDAO.Hotel) error
 	if hotel.PricePerNight != 0 { // Asumiendo que 0 es el valor por defecto para PricePerNight
 		update["price_per_night"] = hotel.PricePerNight
 	}
-	if hotel.AvaiableRooms != 0 { // Asumiendo que 0 es el valor por defecto para AvaiableRooms
-		update["avaiable_rooms"] = hotel.AvaiableRooms
+	if hotel.AvailableRooms != 0 { // Asumiendo que 0 es el valor por defecto para AvailableRooms
+		update["available_rooms"] = hotel.AvailableRooms
 	}
 	if hotel.CheckInTime != "" { // Asumiendo que "" es el valor por defecto para CheckInTime
 		update["check_in_time"] = hotel.CheckInTime
@@ -357,7 +357,7 @@ func nightsBetween(checkIn, checkOut time.Time) []string {
 	return nights
 }
 
-// hotelCapacity lee la capacidad actual del hotel (avaiable_rooms).
+// hotelCapacity lee la capacidad actual del hotel (available_rooms).
 func (repository Mongo) hotelCapacity(ctx context.Context, hotelID string) (int, error) {
 	objectID, err := primitive.ObjectIDFromHex(hotelID)
 	if err != nil {
@@ -365,17 +365,17 @@ func (repository Mongo) hotelCapacity(ctx context.Context, hotelID string) (int,
 	}
 
 	var hotel struct {
-		AvaiableRooms int `bson:"avaiable_rooms"`
+		AvailableRooms int `bson:"available_rooms"`
 	}
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
 	err = repository.client.Database(repository.database).Collection(repository.collection_hotel).
-		FindOne(ctx, bson.M{"_id": objectID}, options.FindOne().SetProjection(bson.M{"avaiable_rooms": 1, "_id": 0})).
+		FindOne(ctx, bson.M{"_id": objectID}, options.FindOne().SetProjection(bson.M{"available_rooms": 1, "_id": 0})).
 		Decode(&hotel)
 	if err != nil {
 		return 0, fmt.Errorf("error finding hotel: %w", err)
 	}
-	return hotel.AvaiableRooms, nil
+	return hotel.AvailableRooms, nil
 }
 
 // claimNight reclama atómicamente `rooms` habitaciones para una noche vía
@@ -669,8 +669,7 @@ func (repository Mongo) DeleteReservationsByHotelID(ctx context.Context, hotelID
 		return fmt.Errorf("error deleting inventory for hotel %s: %w", hotelID, err)
 	}
 
-	// Log para debugging
-	fmt.Printf("Deleted %d reservations for hotel %s\n", result.DeletedCount, hotelID)
+	slog.Info("deleted reservations for hotel", "count", result.DeletedCount, "hotel_id", hotelID)
 
 	return nil
 }

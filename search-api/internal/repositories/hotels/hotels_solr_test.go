@@ -35,8 +35,8 @@ func TestSolrFieldHelpers(t *testing.T) {
 	if got := getFloatField(doc, "price_per_night"); got != 150.5 {
 		t.Errorf("getFloatField(price_per_night): got %v, want 150.5", got)
 	}
-	if got := int(getFloatField(doc, "avaiable_rooms")); got != 20 {
-		t.Errorf("getFloatField(avaiable_rooms): got %d, want 20", got)
+	if got := int(getFloatField(doc, "available_rooms")); got != 20 {
+		t.Errorf("getFloatField(available_rooms): got %d, want 20", got)
 	}
 
 	// RV21: check_in_time/check_out_time son strings "HH:mm" planos — salen

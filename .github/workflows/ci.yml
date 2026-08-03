@@ -84,10 +84,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # hotels/search buildean con contexto RAÍZ: el replace de go.mod
-          # necesita platform-contracts/ dentro del contexto
+          # los 3 buildean con contexto RAÍZ: el replace de go.mod necesita
+          # platform-contracts/ dentro del contexto (users-api desde el plan 11)
           - service: users-api
-            context: ./users-api
+            context: .
             dockerfile: ./users-api/Dockerfile
           - service: hotels-api
             context: .

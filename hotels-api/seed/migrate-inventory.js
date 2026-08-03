@@ -54,7 +54,7 @@ db.reservations.find({ status: 'confirmed' }).forEach(function (r) {
       capacities[r.hotel_id] = null;
       return;
     }
-    capacities[r.hotel_id] = hotel.avaiable_rooms;
+    capacities[r.hotel_id] = hotel.available_rooms;
   }
   if (capacities[r.hotel_id] === null) {
     return;

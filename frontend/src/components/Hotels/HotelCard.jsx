@@ -37,7 +37,7 @@ const amenityIcons = {
 const HotelCard = ({ hotel }) => {
   const imageUrl = getHotelImage(hotel.id, hotel.images);
   const pricePerNight = hotel.price_per_night || hotel.pricePerNight || 0;
-  const availableRooms = hotel.avaiable_rooms || hotel.avaiableRooms || 0;
+  const availableRooms = hotel.available_rooms || hotel.availableRooms || 0;
 
   return (
     <Card

@@ -5,11 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/apperr"
 	usersDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/domain/users"
-	usersRepo "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/repositories/users"
 	usersService "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/services/users"
 
 	"github.com/gin-gonic/gin"
@@ -100,7 +98,7 @@ func (c Controller) GetByID(ctx *gin.Context) {
 
 	user, err := c.service.GetByID(ctx.Request.Context(), id)
 	if err != nil {
-		if errors.Is(err, usersRepo.ErrUserNotFound) {
+		if errors.Is(err, usersDomain.ErrUserNotFound) {
 			apperr.Abort(ctx, http.StatusNotFound, "user_not_found", "user not found", err)
 			return
 		}
@@ -131,13 +129,13 @@ func (c Controller) Create(ctx *gin.Context) {
 		Tipo:     "cliente",
 	})
 	if err != nil {
-		// Errores de validación -> 400 (el texto es nuestro, no filtra internals)
-		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "invalid tipo") || strings.Contains(err.Error(), "too long") {
+		// Sentinels del dominio via errors.Is (C6): nada de parsear el texto
+		// del driver. El mensaje de validación es nuestro, no filtra internals.
+		if errors.Is(err, usersDomain.ErrValidation) {
 			apperr.Abort(ctx, http.StatusBadRequest, "invalid_body", err.Error(), nil)
 			return
 		}
-		// Duplicado de username -> 409
-		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "duplicate") {
+		if errors.Is(err, usersDomain.ErrUsernameTaken) {
 			apperr.Abort(ctx, http.StatusConflict, "username_taken", "username already exists", err)
 			return
 		}
@@ -163,6 +161,11 @@ func (c Controller) Delete(ctx *gin.Context) {
 	}
 
 	if err := c.service.Delete(ctx.Request.Context(), id); err != nil {
+		// C9: borrar un usuario inexistente es 404, consistente con GetByID.
+		if errors.Is(err, usersDomain.ErrUserNotFound) {
+			apperr.Abort(ctx, http.StatusNotFound, "user_not_found", "user not found", err)
+			return
+		}
 		if abortIfTimedOut(ctx, err) {
 			return
 		}

@@ -92,9 +92,9 @@ func TestMongo_CreateReservationAvailability(t *testing.T) {
 	repository := NewMongo(startMongoContainer(t))
 
 	hotelID, err := repository.Create(ctx, hotelsDAO.Hotel{
-		Name:          "Integration Hotel",
-		City:          "Córdoba",
-		AvaiableRooms: 1,
+		Name:           "Integration Hotel",
+		City:           "Córdoba",
+		AvailableRooms: 1,
 	})
 	if err != nil {
 		t.Fatalf("creating hotel: %v", err)
@@ -127,8 +127,8 @@ func TestMongo_AvailabilitySuite(t *testing.T) {
 	repository := NewMongo(startMongoContainer(t))
 
 	hotelID, err := repository.Create(ctx, hotelsDAO.Hotel{
-		Name:          "Suite Hotel",
-		AvaiableRooms: 1,
+		Name:           "Suite Hotel",
+		AvailableRooms: 1,
 	})
 	if err != nil {
 		t.Fatalf("creating hotel: %v", err)
@@ -145,8 +145,8 @@ func TestMongo_ConcurrentClaimLastRoom(t *testing.T) {
 	repository := NewMongo(config)
 
 	hotelID, err := repository.Create(ctx, hotelsDAO.Hotel{
-		Name:          "Race Hotel",
-		AvaiableRooms: 1,
+		Name:           "Race Hotel",
+		AvailableRooms: 1,
 	})
 	if err != nil {
 		t.Fatalf("creating hotel: %v", err)
@@ -204,8 +204,8 @@ func TestMongo_GetAvailabilityPartialOnBadID(t *testing.T) {
 	repository := NewMongo(startMongoContainer(t))
 
 	hotelID, err := repository.Create(ctx, hotelsDAO.Hotel{
-		Name:          "Partial Hotel",
-		AvaiableRooms: 1,
+		Name:           "Partial Hotel",
+		AvailableRooms: 1,
 	})
 	if err != nil {
 		t.Fatalf("creating hotel: %v", err)
@@ -236,8 +236,8 @@ func TestMongo_CancelReservationIdempotent(t *testing.T) {
 	repository := NewMongo(config)
 
 	hotelID, err := repository.Create(ctx, hotelsDAO.Hotel{
-		Name:          "Cancel Hotel",
-		AvaiableRooms: 1,
+		Name:           "Cancel Hotel",
+		AvailableRooms: 1,
 	})
 	if err != nil {
 		t.Fatalf("creating hotel: %v", err)

@@ -1,5 +1,5 @@
 // hotels-api/middleware/auth.go
-package middleware
+package middlewares
 
 import (
 	"fmt"

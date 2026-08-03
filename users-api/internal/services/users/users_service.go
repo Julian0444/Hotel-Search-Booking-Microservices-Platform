@@ -8,7 +8,6 @@ import (
 
 	usersDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/dao/users"
 	usersDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/domain/users"
-	usersRepo "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/repositories/users"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -23,7 +22,9 @@ type Repository interface {
 	GetByUsername(ctx context.Context, username string) (usersDAO.User, error)
 	Create(ctx context.Context, user usersDAO.User) (int64, error)
 	Update(ctx context.Context, user usersDAO.User) error
-	Delete(ctx context.Context, id int64) error
+	// Delete recibe el DAO completo: las cachés borran su key por username
+	// sin depender de un lookup por id que puede haber sido evictado (RV28).
+	Delete(ctx context.Context, user usersDAO.User) error
 }
 
 // Tokenizer define la generación de JWT tokens.
@@ -100,10 +101,10 @@ func (s Service) GetByID(ctx context.Context, id int64) (usersDomain.User, error
 // Create registra un nuevo usuario con password hasheado.
 func (s Service) Create(ctx context.Context, request usersDomain.LoginRequest) (int64, error) {
 	if request.Username == "" {
-		return 0, fmt.Errorf("username is required")
+		return 0, fmt.Errorf("%w: username is required", usersDomain.ErrValidation)
 	}
 	if request.Password == "" {
-		return 0, fmt.Errorf("password is required")
+		return 0, fmt.Errorf("%w: password is required", usersDomain.ErrValidation)
 	}
 
 	// Default tipo = cliente
@@ -142,12 +143,20 @@ func (s Service) Create(ctx context.Context, request usersDomain.LoginRequest) (
 
 // Delete elimina un usuario por ID.
 func (s Service) Delete(ctx context.Context, id int64) error {
-	if err := s.mainRepository.Delete(ctx, id); err != nil {
+	// Resolver el usuario primero (RV28): el username hace determinística la
+	// invalidación de la key user:username:* en L1/L2, y un id inexistente
+	// corta acá con ErrUserNotFound (C9) sin tocar nada.
+	user, err := s.mainRepository.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("error getting user for delete: %w", err)
+	}
+
+	if err := s.mainRepository.Delete(ctx, user); err != nil {
 		return fmt.Errorf("error deleting user: %w", err)
 	}
 
 	// Best-effort: invalidar caches
-	s.invalidateCaches(ctx, id)
+	s.invalidateCaches(ctx, user)
 
 	return nil
 }
@@ -160,7 +169,7 @@ func (s Service) Login(ctx context.Context, username, password string) (usersDom
 
 	user, err := s.getByUsernameFromCaches(ctx, username)
 	if err != nil {
-		if errors.Is(err, usersRepo.ErrUserNotFound) {
+		if errors.Is(err, usersDomain.ErrUserNotFound) {
 			// Igualar el costo del camino "no existe" al de un login real para
 			// no filtrar existencia de usuarios por timing (RV7): el resultado
 			// se descarta, solo importa quemar el mismo bcrypt.
@@ -248,7 +257,9 @@ func (s Service) populateCaches(ctx context.Context, user usersDAO.User) {
 	}
 }
 
-// invalidateCaches elimina el usuario de L1 y L2 (best-effort).
+// invalidateCaches elimina el usuario de L1 y L2 (best-effort). Recibe el DAO
+// completo para que cada caché borre sus DOS keys (id y username) sin lookups
+// intermedios (RV28).
 //
 // Tradeoff documentado (RV10): con 3 réplicas y L1 por proceso, esto solo
 // limpia la réplica que atendió el DELETE — durante <=CACHE_DURATION (30s) un
@@ -258,12 +269,12 @@ func (s Service) populateCaches(ctx context.Context, user usersDAO.User) {
 // L1-por-réplica + JWT stateless y se acepta para el alcance del proyecto;
 // en producción: invalidación por pub/sub, denylist de tokens o TTL corto +
 // refresh tokens (ver "Known trade-offs" en el README).
-func (s Service) invalidateCaches(ctx context.Context, id int64) {
-	if err := s.cacheRepository.Delete(ctx, id); err != nil {
-		slog.Warn("cache delete failed", "user_id", id, "error", err)
+func (s Service) invalidateCaches(ctx context.Context, user usersDAO.User) {
+	if err := s.cacheRepository.Delete(ctx, user); err != nil {
+		slog.Warn("cache delete failed", "user_id", user.ID, "error", err)
 	}
-	if err := s.memcachedRepository.Delete(ctx, id); err != nil {
-		slog.Warn("memcached delete failed", "user_id", id, "error", err)
+	if err := s.memcachedRepository.Delete(ctx, user); err != nil {
+		slog.Warn("memcached delete failed", "user_id", user.ID, "error", err)
 	}
 }
 
@@ -273,7 +284,7 @@ func validateTipo(tipo string) error {
 	case "cliente", "administrador":
 		return nil
 	default:
-		return fmt.Errorf("invalid tipo: %s", tipo)
+		return fmt.Errorf("%w: invalid tipo %q", usersDomain.ErrValidation, tipo)
 	}
 }
 
@@ -282,7 +293,7 @@ func (s Service) hashPassword(plain string) (string, error) {
 	// bcrypt solo opera sobre los primeros 72 bytes; rechazamos explícitamente
 	// en vez de depender del comportamiento de la librería.
 	if len(plain) > 72 {
-		return "", fmt.Errorf("password is too long: maximum 72 bytes")
+		return "", fmt.Errorf("%w: password is too long (maximum 72 bytes)", usersDomain.ErrValidation)
 	}
 
 	cost := s.bcryptCost

@@ -65,7 +65,7 @@ const HotelForm = () => {
       email: '',
       price_per_night: '',
       rating: '',
-      avaiable_rooms: '',
+      available_rooms: '',
       check_in_time: DEFAULT_TIMES.CHECK_IN,
       check_out_time: DEFAULT_TIMES.CHECK_OUT,
       amenities: [],
@@ -102,7 +102,7 @@ const HotelForm = () => {
         email: hotel.email || '',
         price_per_night: hotel.price_per_night || hotel.pricePerNight || '',
         rating: hotel.rating || '',
-        avaiable_rooms: hotel.avaiable_rooms || hotel.avaiableRooms || '',
+        available_rooms: hotel.available_rooms || hotel.availableRooms || '',
         check_in_time: hotel.check_in_time || hotel.checkInTime || DEFAULT_TIMES.CHECK_IN,
         check_out_time: hotel.check_out_time || hotel.checkOutTime || DEFAULT_TIMES.CHECK_OUT,
         amenities: hotel.amenities || [],
@@ -132,7 +132,7 @@ const HotelForm = () => {
         email: data.email,
         price_per_night: parseFloat(data.price_per_night) || 0,
         rating: parseFloat(data.rating) || 0,
-        avaiable_rooms: parseInt(data.avaiable_rooms) || 0,
+        available_rooms: parseInt(data.available_rooms) || 0,
         check_in_time: data.check_in_time,
         check_out_time: data.check_out_time,
         amenities: data.amenities,
@@ -353,12 +353,12 @@ const HotelForm = () => {
                     label="Available Rooms"
                     type="number"
                     inputProps={{ min: 0 }}
-                    {...register('avaiable_rooms', {
+                    {...register('available_rooms', {
                       required: 'This field is required',
                       min: { value: 0, message: 'Minimum 0' },
                     })}
-                    error={!!errors.avaiable_rooms}
-                    helperText={errors.avaiable_rooms?.message}
+                    error={!!errors.available_rooms}
+                    helperText={errors.available_rooms?.message}
                   />
                 </Grid>
 

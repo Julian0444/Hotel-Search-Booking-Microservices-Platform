@@ -39,6 +39,14 @@ var (
 
 	// Server
 	Port = getEnv("PORT", "8081")
+
+	// Panel admin de microservicios (C2): a qué /readyz le pega cada probe.
+	// Formato: "svc=url1,url2;svc2=url3". El default refleja los nombres DNS
+	// de docker-compose; en k8s se sobreescribe por env (Services propios).
+	MicroservicesTargets = getEnv("MICROSERVICES_TARGETS",
+		"users-api=http://users-api-1:8082,http://users-api-2:8082,http://users-api-3:8082;"+
+			"hotels-api=http://127.0.0.1:8081;"+
+			"search-api=http://search-api-container:8082")
 )
 
 func getEnv(key, defaultValue string) string {

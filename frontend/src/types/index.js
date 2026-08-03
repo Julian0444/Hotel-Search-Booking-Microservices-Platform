@@ -44,7 +44,7 @@
  * @property {string} email - Contact email
  * @property {number} price_per_night - Price per night in USD
  * @property {number} rating - Rating (0-5)
- * @property {number} avaiable_rooms - Available rooms count
+ * @property {number} available_rooms - Available rooms count
  * @property {string} check_in_time - Check-in time (HH:mm)
  * @property {string} check_out_time - Check-out time (HH:mm)
  * @property {string[]} amenities - List of amenities
@@ -63,7 +63,7 @@
  * @property {string} [email] - Contact email
  * @property {number} price_per_night - Price per night
  * @property {number} [rating=0] - Initial rating
- * @property {number} avaiable_rooms - Available rooms
+ * @property {number} available_rooms - Available rooms
  * @property {string} [check_in_time='15:00'] - Check-in time
  * @property {string} [check_out_time='11:00'] - Check-out time
  * @property {string[]} [amenities=[]] - Amenities list

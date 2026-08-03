@@ -1,4 +1,7 @@
-# Build stage
+# Multi-stage / no-root (I2). Build context = raíz del repo (ver
+# docker-compose.yml): el replace de go.mod necesita ./platform-contracts
+# dentro del contexto (desde el plan 11 users-api usa el CORS compartido).
+#
 # Bases pineadas por digest del MANIFEST-LIST (CN4), no de una arquitectura
 # suelta — un digest por-arch rompe el build multi-arch del CI.
 # Refrescar con: docker buildx imagetools inspect <imagen:tag>
@@ -7,14 +10,18 @@
 # a $TARGETOS/$TARGETARCH — sin emular el toolchain de Go bajo QEMU.
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
 
-WORKDIR /app
+WORKDIR /src
+
+# Módulo de contratos compartido (resuelto vía replace ../platform-contracts)
+COPY platform-contracts/ ./platform-contracts/
 
 # Dependencias primero para cache de Docker
-COPY go.mod go.sum ./
+COPY users-api/go.mod users-api/go.sum ./users-api/
+WORKDIR /src/users-api
 RUN go mod download
 
 # Copiar código y compilar
-COPY . .
+COPY users-api/ .
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -ldflags="-s -w" -o /out/users-api ./cmd/main.go

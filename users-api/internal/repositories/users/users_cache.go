@@ -103,20 +103,11 @@ func (repository Cache) Update(_ context.Context, user usersDAO.User) error {
 	return nil
 }
 
-func (repository Cache) Delete(_ context.Context, id int64) error {
-	// Delete user by ID and username from cache
-	idKey := fmt.Sprintf("user:id:%d", id)
-
-	// Best-effort: no fallar si no existe en cache
-	item := repository.client.Get(idKey)
-	if item != nil && !item.Expired() {
-		if user, ok := item.Value().(usersDAO.User); ok {
-			userKey := fmt.Sprintf("user:username:%s", user.Username)
-			repository.client.Delete(userKey)
-		}
-	}
-
-	repository.client.Delete(idKey)
-
+// Delete borra ambas keys directamente a partir del DAO (RV28): antes el
+// username salía de un Get por id, y si esa entrada ya no estaba la key
+// user:username:* quedaba huérfana.
+func (repository Cache) Delete(_ context.Context, user usersDAO.User) error {
+	repository.client.Delete(fmt.Sprintf("user:id:%d", user.ID))
+	repository.client.Delete(fmt.Sprintf("user:username:%s", user.Username))
 	return nil
 }

@@ -45,7 +45,7 @@ const hotelsService = {
   },
 
   /**
-   * Get reservations for a hotel
+   * Get reservations for a hotel (admin-only: exposes guests' user_id — C3)
    * @param {string} hotelId - Hotel ID
    * @returns {Promise<import('../types').Reservation[]>} List of reservations
    */

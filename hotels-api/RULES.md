@@ -94,9 +94,9 @@ Reglas:
 
 ## 6) “Microservices controller” (nota importante)
 
-El controller `internal/controllers/microservices` es **simulado/mock**:
-- No interactúa realmente con Docker/Kubernetes.
-- Se usa como endpoint administrativo de demostración.
+El controller `internal/controllers/microservices` es **read-only con health real** (C2, plan 11):
+- Prueba el `GET /readyz` de cada instancia (targets por env `MICROSERVICES_TARGETS`) y reporta estado + latencia medidos.
+- No ejecuta acciones de escritura: los endpoints mock de scale/restart/logs se eliminaron.
 - Mantenerlo bajo `/admin/*` y con `AdminOnly()`.
 
 ---
@@ -105,7 +105,7 @@ El controller `internal/controllers/microservices` es **simulado/mock**:
 
 Reglas:
 - No renombrar campos públicos sin migración/compatibilidad.
-- Ojo con el naming existente: `AvaiableRooms` (se mantiene por contrato actual).
+- `AvailableRooms`/`available_rooms` es el nombre vigente desde el rename atómico C11 (plan 11).
 - No cambiar firmas de interfaces (`Service`/`Repository`) sin actualizar implementaciones y tests.
 
 ---

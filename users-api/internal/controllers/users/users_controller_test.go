@@ -12,7 +12,6 @@ import (
 
 	controllers "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/controllers/users"
 	usersDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/domain/users"
-	usersRepo "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/repositories/users"
 	usersService "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/services/users"
 
 	"github.com/gin-gonic/gin"
@@ -135,14 +134,14 @@ func TestController_GetByID(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusBadRequest, rr.Code)
-		svc.AssertNotCalled(t, "GetByID", mock.Anything)
+		svc.AssertNumberOfCalls(t, "GetByID", 0)
 	})
 
 	t.Run("not found -> 404", func(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("GetByID", mock.Anything, int64(999)).Return(usersDomain.User{}, usersRepo.ErrUserNotFound).Once()
+		svc.On("GetByID", mock.Anything, int64(999)).Return(usersDomain.User{}, usersDomain.ErrUserNotFound).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/users/999", nil)
 		rr := httptest.NewRecorder()
@@ -192,7 +191,7 @@ func TestController_Create(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusBadRequest, rr.Code)
-		svc.AssertNotCalled(t, "Create", mock.Anything)
+		svc.AssertNumberOfCalls(t, "Create", 0)
 	})
 
 	t.Run("weak password -> 400", func(t *testing.T) {
@@ -206,7 +205,7 @@ func TestController_Create(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusBadRequest, rr.Code)
-		svc.AssertNotCalled(t, "Create", mock.Anything)
+		svc.AssertNumberOfCalls(t, "Create", 0)
 	})
 
 	t.Run("success -> 201", func(t *testing.T) {
@@ -266,7 +265,7 @@ func TestController_Delete(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusBadRequest, rr.Code)
-		svc.AssertNotCalled(t, "Delete", mock.Anything)
+		svc.AssertNumberOfCalls(t, "Delete", 0)
 	})
 
 	t.Run("error -> 500", func(t *testing.T) {
@@ -280,6 +279,22 @@ func TestController_Delete(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusInternalServerError, rr.Code)
+		svc.AssertExpectations(t)
+	})
+
+	t.Run("user not found -> 404 (C9)", func(t *testing.T) {
+		svc := &mockService{}
+		router := setupRouter(svc)
+
+		svc.On("Delete", mock.Anything, int64(99999)).Return(usersDomain.ErrUserNotFound).Once()
+
+		req := httptest.NewRequest(http.MethodDelete, "/users/99999", nil)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+		assert.Contains(t, rr.Body.String(), "user_not_found")
+
 		svc.AssertExpectations(t)
 	})
 
@@ -301,6 +316,44 @@ func TestController_Delete(t *testing.T) {
 	})
 }
 
+// C6: el controller decide el status con errors.Is sobre sentinels del
+// dominio — antes parseaba el texto del error del driver.
+func TestController_Create_TypedErrors(t *testing.T) {
+	t.Run("username taken -> 409", func(t *testing.T) {
+		svc := &mockService{}
+		router := setupRouter(svc)
+
+		svc.On("Create", mock.Anything, mock.Anything).
+			Return(int64(0), fmt.Errorf("username %q: %w", "dup", usersDomain.ErrUsernameTaken)).Once()
+
+		body := `{"username":"dupusername","password":"supersecret1"}`
+		req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusConflict, rr.Code)
+		assert.Contains(t, rr.Body.String(), "username_taken")
+	})
+
+	t.Run("validation error -> 400", func(t *testing.T) {
+		svc := &mockService{}
+		router := setupRouter(svc)
+
+		svc.On("Create", mock.Anything, mock.Anything).
+			Return(int64(0), fmt.Errorf("%w: invalid tipo %q", usersDomain.ErrValidation, "hacker")).Once()
+
+		body := `{"username":"someusername","password":"supersecret1"}`
+		req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Contains(t, rr.Body.String(), "invalid_body")
+	})
+}
+
 func TestController_Login(t *testing.T) {
 	t.Run("invalid body -> 400", func(t *testing.T) {
 		svc := &mockService{}
@@ -312,7 +365,7 @@ func TestController_Login(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusBadRequest, rr.Code)
-		svc.AssertNotCalled(t, "Login", mock.Anything, mock.Anything)
+		svc.AssertNumberOfCalls(t, "Login", 0)
 	})
 
 	t.Run("invalid credentials -> 401", func(t *testing.T) {

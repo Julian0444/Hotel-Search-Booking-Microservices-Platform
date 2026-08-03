@@ -47,46 +47,13 @@ const adminService = {
   },
 
   /**
-   * Get microservices status
-   * @returns {Promise<Object>} Microservices status
+   * Get microservices status (read-only, real health via /readyz).
+   * The old scale/restart/logs endpoints were mocks and no longer exist.
+   * @returns {Promise<{ services: Array, summary: Object }>} Platform status
    */
   getMicroservicesStatus: async () => {
     const response = await api.get('/admin/microservices');
-    return response.data;
-  },
-
-  /**
-   * Scale a service
-   * @param {string} serviceName - Service name
-   * @param {number} replicas - Number of replicas
-   * @returns {Promise<void>}
-   */
-  scaleService: async (serviceName, replicas) => {
-    const response = await api.post('/admin/microservices/scale', {
-      service_name: serviceName,
-      replicas,
-    });
-    return response.data;
-  },
-
-  /**
-   * Get service logs
-   * @param {string} serviceName - Service name
-   * @returns {Promise<{ logs: string[] }>} Service logs
-   */
-  getServiceLogs: async (serviceName) => {
-    const response = await api.get(`/admin/microservices/${serviceName}/logs`);
-    return response.data;
-  },
-
-  /**
-   * Restart a service
-   * @param {string} serviceName - Service name
-   * @returns {Promise<void>}
-   */
-  restartService: async (serviceName) => {
-    const response = await api.post(`/admin/microservices/${serviceName}/restart`);
-    return response.data;
+    return response.data.data;
   },
 };
 

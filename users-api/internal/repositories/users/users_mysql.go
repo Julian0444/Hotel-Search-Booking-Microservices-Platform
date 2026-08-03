@@ -8,7 +8,9 @@ import (
 	"time"
 
 	usersDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/dao/users"
+	usersDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/domain/users"
 
+	gosqlmysql "github.com/go-sql-driver/mysql"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -28,11 +30,10 @@ type MySQL struct {
 	db *gorm.DB
 }
 
-var (
-	// ErrUserNotFound representa que el usuario no existe en el repositorio principal.
-	// Se usa para mapear a HTTP 404 en controllers mediante `errors.Is`.
-	ErrUserNotFound = errors.New("user not found")
-)
+// mysqlDuplicateEntry es el número de error de MySQL para violaciones de
+// índice único (C6): la detección del username duplicado es tipada
+// (errors.As), no por substring del mensaje del driver.
+const mysqlDuplicateEntry = 1062
 
 var (
 	migrate = []interface{}{
@@ -121,7 +122,7 @@ func (repository MySQL) GetByID(ctx context.Context, id int64) (usersDAO.User, e
 	var user usersDAO.User
 	if err := repository.db.WithContext(ctx).First(&user, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return user, ErrUserNotFound
+			return user, usersDomain.ErrUserNotFound
 		}
 		return user, fmt.Errorf("error fetching user by id: %w", err)
 	}
@@ -132,7 +133,7 @@ func (repository MySQL) GetByUsername(ctx context.Context, username string) (use
 	var user usersDAO.User
 	if err := repository.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return user, ErrUserNotFound
+			return user, usersDomain.ErrUserNotFound
 		}
 		return user, fmt.Errorf("error fetching user by username: %w", err)
 	}
@@ -141,6 +142,11 @@ func (repository MySQL) GetByUsername(ctx context.Context, username string) (use
 
 func (repository MySQL) Create(ctx context.Context, user usersDAO.User) (int64, error) {
 	if err := repository.db.WithContext(ctx).Create(&user).Error; err != nil {
+		// Duplicado del índice único de username -> sentinel tipado (C6)
+		var mysqlErr *gosqlmysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlDuplicateEntry {
+			return 0, fmt.Errorf("username %q: %w", user.Username, usersDomain.ErrUsernameTaken)
+		}
 		return 0, fmt.Errorf("error creating user: %w", err)
 	}
 	return user.ID, nil
@@ -153,9 +159,17 @@ func (repository MySQL) Update(ctx context.Context, user usersDAO.User) error {
 	return nil
 }
 
-func (repository MySQL) Delete(ctx context.Context, id int64) error {
-	if err := repository.db.WithContext(ctx).Delete(&usersDAO.User{}, id).Error; err != nil {
-		return fmt.Errorf("error deleting user: %w", err)
+// Delete recibe el DAO completo (no solo el id): las cachés necesitan el
+// username para invalidar su key user:username:* sin depender de un lookup
+// previo (RV28). Acá solo se usa el ID.
+func (repository MySQL) Delete(ctx context.Context, user usersDAO.User) error {
+	result := repository.db.WithContext(ctx).Delete(&usersDAO.User{}, user.ID)
+	if result.Error != nil {
+		return fmt.Errorf("error deleting user: %w", result.Error)
+	}
+	// C9: borrar un id inexistente es 404, consistente con GetByID.
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("user %d: %w", user.ID, usersDomain.ErrUserNotFound)
 	}
 	return nil
 }

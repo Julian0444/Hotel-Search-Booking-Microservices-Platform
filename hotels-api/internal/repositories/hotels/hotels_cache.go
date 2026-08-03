@@ -165,8 +165,8 @@ func (repository Cache) Update(ctx context.Context, hotel hotelsDAO.Hotel) error
 	if hotel.PricePerNight != 0 {
 		currentHotel.PricePerNight = hotel.PricePerNight
 	}
-	if hotel.AvaiableRooms != 0 {
-		currentHotel.AvaiableRooms = hotel.AvaiableRooms
+	if hotel.AvailableRooms != 0 {
+		currentHotel.AvailableRooms = hotel.AvailableRooms
 	}
 	if hotel.CheckInTime != "" {
 		currentHotel.CheckInTime = hotel.CheckInTime
@@ -429,7 +429,7 @@ func (repository Cache) IsHotelAvailable(ctx context.Context, hotelID, checkIn, 
 
 	// Verificar disponibilidad para cada noche solicitada (excluye día de checkout)
 	for date := checkInTime; date.Before(checkOutTime); date = date.AddDate(0, 0, 1) {
-		if reservationsByDay[date] >= hotel.AvaiableRooms {
+		if reservationsByDay[date] >= hotel.AvailableRooms {
 			return false, nil
 		}
 	}

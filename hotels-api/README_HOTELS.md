@@ -95,7 +95,7 @@ type Hotel struct {
     Country       string    // Country
     Rating        float64   // Average rating (0-5)
     PricePerNight float64   // Price per night in USD
-    AvaiableRooms int       // Total available rooms
+    AvailableRooms int       // Total available rooms
     Amenities     []string  // List of amenities (WiFi, Pool, etc.)
 }
 ```
@@ -163,7 +163,7 @@ newHotel := Hotel{
     Name:          "Grand Plaza Hotel",
     City:          "New York",
     PricePerNight: 299.99,
-    AvaiableRooms: 50,
+    AvailableRooms: 50,
 }
 id, err := service.Create(ctx, newHotel)
 ```
@@ -184,7 +184,7 @@ id, err := service.Create(ctx, newHotel)
 **Example:**
 ```go
 hotel.PricePerNight = 349.99
-hotel.AvaiableRooms = 45
+hotel.AvailableRooms = 45
 err := service.Update(ctx, hotel)
 ```
 
@@ -313,7 +313,7 @@ if len(existing) > 0 {
 1. For each hotel (using goroutines):
    - Get hotel details (available rooms count)
    - Count active reservations overlapping with requested dates
-   - Available = (AvaiableRooms - ActiveReservations) > 0
+   - Available = (AvailableRooms - ActiveReservations) > 0
 2. Return map[hotelID]bool indicating availability
 
 **Use Case:** Search results page showing which hotels have availability.
@@ -487,7 +487,7 @@ newHotel := domain.Hotel{
     Country:       "USA",
     Rating:        4.5,
     PricePerNight: 199.99,
-    AvaiableRooms: 30,
+    AvailableRooms: 30,
     Amenities:     []string{"WiFi", "Pool", "Spa", "Restaurant"},
 }
 

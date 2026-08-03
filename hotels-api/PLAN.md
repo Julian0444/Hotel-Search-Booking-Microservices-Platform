@@ -24,7 +24,7 @@ La IA debe:
 - Leer `README_HOTELS.md`, `RULES.md` y `cmd/main.go` (rutas y middlewares).
 - Identificar capa afectada: `controllers/` vs `services/` vs `repositories/` vs `domain/` vs `dao/`.
 - Revisar naming/contratos:
-  - Campo del modelo: `AvaiableRooms` (sí, está escrito así).
+  - Campo del modelo: `AvailableRooms` (sí, está escrito así).
   - Claims JWT esperados: `user_id` y `tipo`.
 - Ejecutar tests y formateo al terminar cambios:
   - `gofmt -w ./...`

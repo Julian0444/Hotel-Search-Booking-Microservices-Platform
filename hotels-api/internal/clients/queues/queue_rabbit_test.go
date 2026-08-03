@@ -2,12 +2,16 @@ package queues
 
 import (
 	"testing"
+	"time"
 
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels"
 )
 
 func TestRabbitQueuePublishWithoutChannel(t *testing.T) {
-	// Crear un RabbitQueue sin conexión (simula fallo de conexión)
+	// Crear un RabbitQueue sin conexión (simula fallo de conexión).
+	// Retries mínimos (RV30): con los defaults este test dormía ~15s de
+	// backoff real; acá solo interesa que Publish falle, no la persistencia
+	// del reintento.
 	rq := &RabbitQueue{
 		config: RabbitConfig{
 			Host:      "invalid-host",
@@ -16,8 +20,10 @@ func TestRabbitQueuePublishWithoutChannel(t *testing.T) {
 			Password:  "guest",
 			QueueName: "test-queue",
 		},
-		connected: false,
-		channel:   nil,
+		connected:             false,
+		channel:               nil,
+		maxConnectRetries:     1,
+		initialConnectBackoff: time.Millisecond,
 	}
 
 	// Debe fallar porque no hay conexión y el host es inválido

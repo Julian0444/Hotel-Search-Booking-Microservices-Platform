@@ -1,4 +1,4 @@
-package middleware_test
+package middlewares_test
 
 import (
 	"net/http"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	middleware "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/middlewares"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/middlewares"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -49,9 +49,9 @@ func setupAuthRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	m := middleware.NewJWTMiddleware(testSecret)
+	m := middlewares.NewJWTMiddleware(testSecret)
 	// Como POST /reindex en cmd/main.go: autenticado + solo admins
-	router.POST("/reindex", m.Authenticate(), middleware.AdminOnly(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.POST("/reindex", m.Authenticate(), middlewares.AdminOnly(), func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	return router
 }
