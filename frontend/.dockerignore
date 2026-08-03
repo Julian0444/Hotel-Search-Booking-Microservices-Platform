@@ -9,3 +9,9 @@ coverage/
 .gitignore
 Dockerfile
 .dockerignore
+# E2E (plan 13 fase 10): no invalidar el contexto del build del SPA por specs
+e2e/
+playwright.config.js
+playwright-report/
+test-results/
+e2e-evidence/

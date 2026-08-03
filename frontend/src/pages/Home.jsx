@@ -1,339 +1,208 @@
 /**
- * Home Page
- * Landing page with hero section, features, and featured hotels
+ * Home (plan 13 fase 4): tres actos — hero editorial con búsqueda,
+ * selección real del catálogo, "how it works" verificable — más una franja
+ * discreta de arquitectura. Cero claims inventados: todo lo visible se
+ * puede demostrar en la app.
  */
 
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router';
+import { alpha } from '@mui/material/styles';
+import { Box, Button, Container, Grid, Typography } from '@mui/material';
 import {
-  Box,
-  Container,
-  Typography,
-  Grid,
-  Button,
-  Card,
-  CardContent,
-  Skeleton,
-  Alert,
-} from '@mui/material';
-import {
-  Search as SearchIcon,
-  Verified as VerifiedIcon,
-  Support as SupportIcon,
-  Security as SecurityIcon,
+  SearchOutlined as SearchIcon,
+  EventAvailableOutlined as ReserveIcon,
+  ManageHistoryOutlined as ManageIcon,
+  ArrowForward as ArrowIcon,
 } from '@mui/icons-material';
-import { SearchBar, HotelCard } from '../components/Hotels';
-import { hotelsService } from '../services';
-import { ROUTES } from '../constants';
+import { SearchBar, HotelCard, HotelGridSkeleton } from '../components/Hotels';
+import { ErrorState, RouteMeta } from '../components/common';
+import { useHotelSearch } from '../hooks/queries';
+import { ROUTES, REPO_URL } from '../constants';
+import { tokens } from '../theme/theme';
 
-const features = [
+const steps = [
   {
-    icon: <SearchIcon sx={{ fontSize: 40 }} />,
-    title: 'Smart Search',
-    description: 'Find the perfect hotel with our advanced search system by city, country, or hotel name.',
+    icon: <SearchIcon sx={{ fontSize: 32 }} />,
+    title: 'Search',
+    description: 'Full-text search over a Solr index that stays in sync with the catalog through events.',
   },
   {
-    icon: <VerifiedIcon sx={{ fontSize: 40 }} />,
-    title: 'Verified Hotels',
-    description: 'All our hotels undergo a rigorous verification process to guarantee quality.',
+    icon: <ReserveIcon sx={{ fontSize: 32 }} />,
+    title: 'Reserve',
+    description: 'Per-night availability is claimed atomically — no overbooking, and retries never double-book.',
   },
   {
-    icon: <SupportIcon sx={{ fontSize: 40 }} />,
-    title: '24/7 Support',
-    description: 'Our customer service team is available around the clock to assist you.',
-  },
-  {
-    icon: <SecurityIcon sx={{ fontSize: 40 }} />,
-    title: 'Secure Booking',
-    description: 'Your information is protected with the highest security standards.',
+    icon: <ManageIcon sx={{ fontSize: 32 }} />,
+    title: 'Manage',
+    description: 'Your reservation history keeps every booking, including cancelled ones, with real statuses.',
   },
 ];
 
 const Home = () => {
   const navigate = useNavigate();
-  const [featuredHotels, setFeaturedHotels] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    const fetchFeaturedHotels = async () => {
-      try {
-        setLoading(true);
-        const response = await hotelsService.search('', 0, 6);
-        setFeaturedHotels(response.data || []);
-      } catch (err) {
-        console.error('Error fetching hotels:', err);
-        setError('Could not load featured hotels');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchFeaturedHotels();
-  }, []);
+  const { data, isPending, isError, error, refetch } = useHotelSearch({ q: '', offset: 0, limit: 6 });
+  const featured = data?.items ?? [];
 
   const handleSearch = (query) => {
-    navigate(`${ROUTES.SEARCH}?q=${encodeURIComponent(query)}`);
+    navigate(query ? `${ROUTES.SEARCH}?q=${encodeURIComponent(query)}` : ROUTES.SEARCH);
   };
 
   return (
     <Box>
-      {/* Hero Section */}
+      <RouteMeta
+        title="Stays worth returning to"
+        description="Search indexed stays, reserve with protected availability, and manage your bookings."
+      />
+
+      {/* Acto 1 — hero editorial */}
       <Box
+        component="section"
+        aria-labelledby="hero-heading"
         sx={{
+          bgcolor: 'primary.main',
+          color: 'white',
           position: 'relative',
-          minHeight: { xs: '70vh', md: '80vh' },
-          display: 'flex',
-          alignItems: 'center',
           overflow: 'hidden',
+          py: { xs: 8, md: 12 },
+          // Trama editorial sutil, inline — sin imágenes remotas
           '&::before': {
             content: '""',
             position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundImage: 'url(https://images.unsplash.com/photo-1564501049412-61c2a3083791?w=1920)',
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            filter: 'brightness(0.4)',
-            zIndex: 0,
+            inset: 0,
+            opacity: 0.35,
+            background: `radial-gradient(1200px 500px at 85% -10%, ${alpha(tokens.gold, 0.35)}, transparent 60%),
+                         radial-gradient(800px 400px at -10% 110%, ${alpha(tokens.inkLight, 0.9)}, transparent 55%)`,
           },
         }}
       >
-        <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1 }}>
-          <Box sx={{ maxWidth: 800, mx: 'auto', textAlign: 'center' }}>
+        <Container maxWidth="lg" sx={{ position: 'relative' }}>
+          <Box sx={{ maxWidth: 760 }}>
             <Typography
               variant="overline"
-              sx={{
-                color: 'secondary.main',
-                letterSpacing: '0.2em',
-                mb: 2,
-                display: 'block',
-              }}
+              component="p"
+              sx={{ color: 'secondary.main', letterSpacing: '0.2em', mb: 2 }}
             >
-              WELCOME TO STAYLUX
+              STAYLUX — SEARCH · RESERVE · MANAGE
             </Typography>
-            <Typography
-              variant="h1"
-              sx={{
-                color: 'white',
-                fontSize: { xs: '2.5rem', md: '4rem', lg: '5rem' },
-                fontWeight: 700,
-                mb: 3,
-                lineHeight: 1.1,
-              }}
-            >
-              Discover Your Next Unforgettable Experience
+            <Typography id="hero-heading" variant="h1" component="h1" sx={{ mb: 3, lineHeight: 1.08 }}>
+              Stays worth returning to
             </Typography>
-            <Typography
-              variant="h6"
-              sx={{
-                color: 'rgba(255,255,255,0.8)',
-                mb: 5,
-                fontWeight: 400,
-                maxWidth: 600,
-                mx: 'auto',
-              }}
-            >
-              Explore the world's finest hotels and book with confidence, 
-              knowing every detail has been designed for you.
+            <Typography variant="h6" component="p" sx={{ color: 'rgba(255,255,255,0.82)', fontWeight: 400, mb: 5, maxWidth: 560 }}>
+              Browse a curated catalog — from Villa Carlos Paz to El Calafate — with instant search,
+              protected availability and a booking flow you can trust twice.
             </Typography>
-
-            <Box sx={{ maxWidth: 700, mx: 'auto' }}>
+            <Box sx={{ maxWidth: 640 }}>
               <SearchBar onSearch={handleSearch} />
             </Box>
           </Box>
         </Container>
-
-        {/* Decorative gradient overlay */}
-        <Box
-          sx={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 200,
-            background: 'linear-gradient(to top, rgba(247,245,242,1) 0%, rgba(247,245,242,0) 100%)',
-            zIndex: 1,
-          }}
-        />
       </Box>
 
-      {/* Features Section */}
-      <Container maxWidth="lg" sx={{ py: 10 }}>
-        <Box sx={{ textAlign: 'center', mb: 8 }}>
-          <Typography
-            variant="overline"
-            sx={{ color: 'secondary.main', letterSpacing: '0.15em' }}
-          >
-            WHY CHOOSE US
-          </Typography>
-          <Typography variant="h3" sx={{ mt: 1, fontWeight: 600 }}>
-            Excellence in Every Detail
-          </Typography>
-        </Box>
-
-        <Grid container spacing={4}>
-          {features.map((feature, index) => (
-            <Grid key={index} size={{ xs: 12, sm: 6, md: 3 }}>
-              <Card
-                elevation={0}
-                sx={{
-                  height: '100%',
-                  textAlign: 'center',
-                  bgcolor: 'transparent',
-                  transition: 'all 0.3s ease',
-                  '&:hover': {
-                    bgcolor: 'white',
-                    boxShadow: '0 8px 40px rgba(26, 54, 93, 0.1)',
-                  },
-                }}
-              >
-                <CardContent sx={{ p: 4 }}>
-                  <Box
-                    sx={{
-                      width: 80,
-                      height: 80,
-                      borderRadius: '50%',
-                      bgcolor: 'primary.main',
-                      color: 'white',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      mx: 'auto',
-                      mb: 3,
-                    }}
-                  >
-                    {feature.icon}
-                  </Box>
-                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-                    {feature.title}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {feature.description}
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
-      </Container>
-
-      {/* Featured Hotels Section */}
-      <Box sx={{ bgcolor: 'white', py: 10 }}>
+      {/* Acto 2 — selección real del catálogo */}
+      <Box component="section" aria-labelledby="featured-heading" sx={{ py: { xs: 6, md: 9 } }}>
         <Container maxWidth="lg">
           <Box
             sx={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'flex-end',
-              mb: 6,
+              mb: 4,
               flexWrap: 'wrap',
               gap: 2,
             }}
           >
             <Box>
-              <Typography
-                variant="overline"
-                sx={{ color: 'secondary.main', letterSpacing: '0.15em' }}
-              >
-                FEATURED DESTINATIONS
+              <Typography variant="overline" component="p" sx={{ color: 'secondary.dark', letterSpacing: '0.15em' }}>
+                FROM THE CATALOG
               </Typography>
-              <Typography variant="h3" sx={{ mt: 1, fontWeight: 600 }}>
-                Popular Hotels
+              <Typography id="featured-heading" variant="h3" component="h2" sx={{ mt: 0.5 }}>
+                Featured stays
               </Typography>
             </Box>
             <Button
+              component={Link}
+              to={ROUTES.SEARCH}
               variant="outlined"
-              size="large"
-              onClick={() => navigate(ROUTES.SEARCH)}
-              sx={{ borderWidth: 2 }}
+              endIcon={<ArrowIcon />}
             >
-              View All
+              Browse all
             </Button>
           </Box>
 
-          {error && (
-            <Alert severity="info" sx={{ mb: 4 }}>
-              {error}. Showing sample data.
-            </Alert>
+          {isError ? (
+            <ErrorState compact error={error} title="The catalog is unavailable" onRetry={refetch} />
+          ) : isPending ? (
+            <HotelGridSkeleton count={6} />
+          ) : featured.length === 0 ? (
+            <Typography color="text.secondary">
+              No stays in the catalog yet — an administrator can add the first one.
+            </Typography>
+          ) : (
+            <Grid container spacing={3}>
+              {featured.map((hotel) => (
+                <Grid key={hotel.id} size={{ xs: 12, sm: 6, md: 4 }}>
+                  <HotelCard hotel={hotel} />
+                </Grid>
+              ))}
+            </Grid>
           )}
+        </Container>
+      </Box>
+
+      {/* Acto 3 — how it works, verificable */}
+      <Box component="section" aria-labelledby="how-heading" sx={{ bgcolor: 'background.paper', py: { xs: 6, md: 9 } }}>
+        <Container maxWidth="lg">
+          <Typography variant="overline" component="p" sx={{ color: 'secondary.dark', letterSpacing: '0.15em', textAlign: 'center' }}>
+            HOW IT WORKS
+          </Typography>
+          <Typography id="how-heading" variant="h3" component="h2" sx={{ textAlign: 'center', mt: 0.5, mb: 6 }}>
+            Three steps, no surprises
+          </Typography>
 
           <Grid container spacing={4}>
-            {loading
-              ? Array.from({ length: 6 }).map((_, index) => (
-                  <Grid key={index} size={{ xs: 12, sm: 6, md: 4 }}>
-                    <Card>
-                      <Skeleton variant="rectangular" height={220} />
-                      <CardContent>
-                        <Skeleton variant="text" height={32} width="80%" />
-                        <Skeleton variant="text" height={24} width="60%" />
-                        <Skeleton variant="text" height={20} width="40%" />
-                        <Skeleton variant="text" height={60} />
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                ))
-              : featuredHotels.map((hotel) => (
-                  <Grid key={hotel.id} size={{ xs: 12, sm: 6, md: 4 }}>
-                    <HotelCard hotel={hotel} />
-                  </Grid>
-                ))}
+            {steps.map((step, index) => (
+              <Grid key={step.title} size={{ xs: 12, md: 4 }}>
+                <Box sx={{ textAlign: 'center', px: 2 }}>
+                  <Box
+                    sx={{
+                      width: 64,
+                      height: 64,
+                      borderRadius: '50%',
+                      border: '1.5px solid',
+                      borderColor: 'secondary.main',
+                      color: 'secondary.dark',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      mx: 'auto',
+                      mb: 2,
+                    }}
+                    aria-hidden
+                  >
+                    {step.icon}
+                  </Box>
+                  <Typography variant="h6" component="h3" sx={{ mb: 1 }}>
+                    {index + 1}. {step.title}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {step.description}
+                  </Typography>
+                </Box>
+              </Grid>
+            ))}
           </Grid>
         </Container>
       </Box>
 
-      {/* CTA Section */}
-      <Box
-        sx={{
-          position: 'relative',
-          py: 12,
-          overflow: 'hidden',
-          '&::before': {
-            content: '""',
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundImage: 'url(https://images.unsplash.com/photo-1571003123894-1f0594d2b5d9?w=1920)',
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            filter: 'brightness(0.3)',
-            zIndex: 0,
-          },
-        }}
-      >
-        <Container maxWidth="md" sx={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
-          <Typography
-            variant="h2"
-            sx={{ color: 'white', fontWeight: 600, mb: 3 }}
-          >
-            Ready for Your Next Adventure?
+      {/* Franja de arquitectura — la única "promesa externa" y es el repo */}
+      <Box component="section" sx={{ py: { xs: 4, md: 5 }, borderTop: '1px solid', borderColor: 'divider' }}>
+        <Container maxWidth="lg" sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            Built as three Go microservices behind an nginx gateway — MySQL, MongoDB, Solr, RabbitMQ and
+            layered caching, wired with event-driven sync.
           </Typography>
-          <Typography
-            variant="h6"
-            sx={{ color: 'rgba(255,255,255,0.8)', mb: 4, fontWeight: 400 }}
-          >
-            Join thousands of travelers who trust StayLux to find 
-            the best hospitality experiences.
-          </Typography>
-          <Button
-            variant="contained"
-            size="large"
-            onClick={() => navigate(ROUTES.REGISTER)}
-            sx={{
-              bgcolor: 'secondary.main',
-              color: 'primary.main',
-              px: 5,
-              py: 1.5,
-              '&:hover': {
-                bgcolor: 'secondary.dark',
-              },
-            }}
-          >
-            Create Free Account
+          <Button href={REPO_URL} target="_blank" rel="noreferrer" size="small" variant="text">
+            Read the architecture →
           </Button>
         </Container>
       </Box>

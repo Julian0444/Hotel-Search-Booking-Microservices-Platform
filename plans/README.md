@@ -26,7 +26,7 @@
 | [x] | [09 — Cloud-native / k8s](09-cloud-native-k8s.md) | k8s con Deployments+Service+HPA+probes, Dockerfiles multi-stage/no-root, `.dockerignore`, resource limits, tags inmutables/Trivy/GHCR | 05 (`/readyz`), 08 (SIGTERM), 02 |
 | [x] | [10 — Gateway nginx: TLS + hardening](10-nginx-gateway.md) | TLS + redirect + HSTS, fix de herencia de `add_header`, cache real de `/search`, 429 en rate-limit | independiente (ideal tras 07 para no re-tocar locations) |
 | [x] | [11 — Consistencia y limpieza de código](11-consistencia-limpieza.md) | CORS válido, panel microservices, endpoint con PII, `PORT`, errores tipados, TTL L2, 404 en delete, **rename `AvaiableRooms` (cambio coordinado atómico)**, mocks fuera del binario, layering, perfil frontend | 02 y 07 (obligatorios para C11) |
-| [ ] | [13 — Frontend portfolio-grade](13-stretch-dominio-frontend.md) | **Núcleo:** contratos/UI, búsqueda, booking, historial, admin, a11y, tests y lazy loading. **Menú opcional:** User rico/TS; reviews, pagos y room-types se difieren | 07 y 11 · **antes del 12** |
+| [x] | [13 — Frontend portfolio-grade](13-stretch-dominio-frontend.md) | **Núcleo:** contratos/UI, búsqueda, booking, historial, admin, a11y, tests y lazy loading. **Menú opcional:** User rico/TS; reviews, pagos y room-types se difieren | 07 y 11 · **antes del 12** |
 | [ ] | [12 — Documentación y presentación](12-documentacion-portfolio.md) | README nuevo, capturas/GIF/diagrama, OpenAPI, traducción de `ProyectoBackend.md`, errores fácticos, badges, prep de entrevista | 01–11 + núcleo de 13 (retrata el producto final) |
 
 ### Fixes de la review externa (2026-07-11)

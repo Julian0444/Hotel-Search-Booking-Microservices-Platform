@@ -1,142 +1,140 @@
 /**
- * Main Application Component
- * Sets up routing, theme, and authentication context
+ * Main Application Component (plan 13).
+ * QueryClientProvider envuelve a AuthProvider (el provider invalida queries
+ * en logout/expiración). Rutas con React.lazy (FE2): Home queda eager; el
+ * admin jamás entra al bundle inicial del visitante.
  */
 
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router';
 import { ThemeProvider, CssBaseline } from '@mui/material';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { AuthProvider } from './context/AuthContext';
+import { createQueryClient } from './services/queryClient';
 import theme from './theme/theme';
 import { ROUTES } from './constants';
 
-// Layout
 import { Layout } from './components/Layout';
-
-// Pages
+import ProtectedRoute from './components/auth/ProtectedRoute';
+import SessionExpiredNavigator from './components/auth/SessionExpiredNavigator';
+import RouteAnnouncer from './components/a11y/RouteAnnouncer';
+import RouteFallback from './components/common/RouteFallback';
 import Home from './pages/Home';
-import Search from './pages/Search';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import HotelDetail from './pages/HotelDetail';
-import MyReservations from './pages/MyReservations';
-import { Dashboard, HotelForm } from './pages/Admin';
 
-/**
- * Protected Route Component
- * Restricts access based on authentication and admin status
- */
-const ProtectedRoute = ({ children, adminOnly = false }) => {
-  const { isAuthenticated, isAdmin, loading } = useAuth();
+const Search = lazy(() => import('./pages/Search'));
+const HotelDetail = lazy(() => import('./pages/HotelDetail'));
+const Login = lazy(() => import('./pages/Login'));
+const Register = lazy(() => import('./pages/Register'));
+const MyReservations = lazy(() => import('./pages/MyReservations'));
+const Dashboard = lazy(() => import('./pages/Admin/Dashboard'));
+const HotelForm = lazy(() => import('./pages/Admin/HotelForm'));
+const NotFound = lazy(() => import('./pages/NotFound'));
 
-  if (loading) {
-    return null;
-  }
+const queryClient = createQueryClient();
 
-  if (!isAuthenticated) {
-    return <Navigate to={ROUTES.LOGIN} replace />;
-  }
+const AppRoutes = () => (
+  <Suspense fallback={<RouteFallback />}>
+    <Routes>
+      {/* Public routes with layout */}
+      <Route
+        path={ROUTES.HOME}
+        element={
+          <Layout>
+            <Home />
+          </Layout>
+        }
+      />
+      <Route
+        path={ROUTES.SEARCH}
+        element={
+          <Layout>
+            <Search />
+          </Layout>
+        }
+      />
+      <Route
+        path="/hotels/:id"
+        element={
+          <Layout>
+            <HotelDetail />
+          </Layout>
+        }
+      />
 
-  if (adminOnly && !isAdmin) {
-    return <Navigate to={ROUTES.HOME} replace />;
-  }
+      {/* Auth routes - no layout */}
+      <Route path={ROUTES.LOGIN} element={<Login />} />
+      <Route path={ROUTES.REGISTER} element={<Register />} />
 
-  return children;
-};
-
-/**
- * App content wrapped in AuthProvider
- */
-const AppContent = () => {
-  return (
-    <Router>
-      <Routes>
-        {/* Public routes with layout */}
-        <Route
-          path={ROUTES.HOME}
-          element={
+      {/* Protected routes */}
+      <Route
+        path={ROUTES.RESERVATIONS}
+        element={
+          <ProtectedRoute>
             <Layout>
-              <Home />
+              <MyReservations />
             </Layout>
-          }
-        />
-        <Route
-          path={ROUTES.SEARCH}
-          element={
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Admin routes */}
+      <Route
+        path={ROUTES.ADMIN}
+        element={
+          <ProtectedRoute adminOnly>
             <Layout>
-              <Search />
+              <Dashboard />
             </Layout>
-          }
-        />
-        <Route
-          path="/hotels/:id"
-          element={
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/hotels/new"
+        element={
+          <ProtectedRoute adminOnly>
             <Layout>
-              <HotelDetail />
-            </Layout>
-          }
-        />
-
-        {/* Auth routes - no layout */}
-        <Route path={ROUTES.LOGIN} element={<Login />} />
-        <Route path={ROUTES.REGISTER} element={<Register />} />
-
-        {/* Protected routes */}
-        <Route
-          path={ROUTES.RESERVATIONS}
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <MyReservations />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
-        {/* Admin routes */}
-        <Route
-          path={ROUTES.ADMIN}
-          element={
-            <ProtectedRoute adminOnly>
-              <Layout>
-                <Dashboard />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/hotels/new"
-          element={
-            <ProtectedRoute adminOnly>
               <HotelForm />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/hotels/:id/edit"
-          element={
-            <ProtectedRoute adminOnly>
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/hotels/:id/edit"
+        element={
+          <ProtectedRoute adminOnly>
+            <Layout>
               <HotelForm />
-            </ProtectedRoute>
-          }
-        />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
 
-        {/* 404 redirect */}
-        <Route path="*" element={<Navigate to={ROUTES.HOME} replace />} />
-      </Routes>
-    </Router>
-  );
-};
+      {/* 404 real (fase 8): página útil, no un redirect silencioso */}
+      <Route
+        path="*"
+        element={
+          <Layout>
+            <NotFound />
+          </Layout>
+        }
+      />
+    </Routes>
+  </Suspense>
+);
 
-/**
- * Root App Component
- */
 function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <Router>
+            <SessionExpiredNavigator />
+            <RouteAnnouncer />
+            <AppRoutes />
+          </Router>
+        </AuthProvider>
+      </QueryClientProvider>
     </ThemeProvider>
   );
 }

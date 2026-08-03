@@ -281,19 +281,31 @@ The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change
 Each microservice includes unit tests for both the service and controller layers, using mock repositories.
 
 ```bash
-# Users API
+# All Go modules (race detector included)
+make test
+
+# A single module
 cd users-api && go test ./... -v
+```
 
-# Hotels API
-cd hotels-api && go test ./... -v
+The frontend has its own test pyramid (Vitest + Testing Library + MSW for unit/component, Playwright for end-to-end):
 
-# Search API
-cd search-api && go test ./... -v
+```bash
+cd frontend
+npm run test:run        # unit/component suite
+npm run test:coverage   # same suite with coverage thresholds
+npm run check           # lint + coverage + production build (same gate as CI)
+
+# End-to-end (requires the full stack with the frontend profile):
+npx playwright install chromium   # first time only
+make e2e                          # or: docker compose --profile frontend up -d --build && cd frontend && npm run test:e2e
 ```
 
 **Test strategy:**
 - **Controller tests:** Gin + `httptest`, real JWT tokens in headers, covers 401/403/400/200 scenarios
 - **Service tests:** Mock repositories (main + cache + queue), validates cache-aside behavior and business logic
+- **Frontend unit/component:** MSW mocks the `/api/v1` contract (envelopes, errors with `trace_id`); axe runs on every main route
+- **Frontend E2E:** Playwright drives the built SPA against the real gateway — anonymous search, customer booking/cancellation, admin CRUD with search sync, service-degradation states, and 320/390 px viewport checks
 
 ---
 

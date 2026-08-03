@@ -53,9 +53,9 @@ func TestService_Search(t *testing.T) {
 			},
 		}
 
-		solrRepo.On("Search", mock.Anything, "paradise", 10, 0).Return(mockHotels, 25, nil).Once()
+		solrRepo.On("Search", mock.Anything, "paradise", "", 10, 0).Return(mockHotels, 25, nil).Once()
 
-		result, total, err := svc.Search(context.Background(), "paradise", 0, 10)
+		result, total, err := svc.Search(context.Background(), "paradise", "", 0, 10)
 
 		assert.NoError(t, err)
 		// A5/RV22: el total (numFound) atraviesa el service para el meta
@@ -73,9 +73,9 @@ func TestService_Search(t *testing.T) {
 	t.Run("empty results", func(t *testing.T) {
 		svc, solrRepo, _ := newTestService()
 
-		solrRepo.On("Search", mock.Anything, "nonexistent", 10, 0).Return([]hotelsDAO.Hotel{}, 0, nil).Once()
+		solrRepo.On("Search", mock.Anything, "nonexistent", "", 10, 0).Return([]hotelsDAO.Hotel{}, 0, nil).Once()
 
-		result, total, err := svc.Search(context.Background(), "nonexistent", 0, 10)
+		result, total, err := svc.Search(context.Background(), "nonexistent", "", 0, 10)
 
 		assert.NoError(t, err)
 		assert.Zero(t, total)
@@ -87,9 +87,9 @@ func TestService_Search(t *testing.T) {
 	t.Run("solr error", func(t *testing.T) {
 		svc, solrRepo, _ := newTestService()
 
-		solrRepo.On("Search", mock.Anything, "test", 10, 0).Return(nil, 0, errors.New("solr connection error")).Once()
+		solrRepo.On("Search", mock.Anything, "test", "", 10, 0).Return(nil, 0, errors.New("solr connection error")).Once()
 
-		result, _, err := svc.Search(context.Background(), "test", 0, 10)
+		result, _, err := svc.Search(context.Background(), "test", "", 0, 10)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -105,14 +105,28 @@ func TestService_Search(t *testing.T) {
 			{ID: "hotel3", Name: "Hotel Paginated", City: "Madrid"},
 		}
 
-		solrRepo.On("Search", mock.Anything, "hotel", 5, 10).Return(mockHotels, 1, nil).Once()
+		solrRepo.On("Search", mock.Anything, "hotel", "", 5, 10).Return(mockHotels, 1, nil).Once()
 
-		result, _, err := svc.Search(context.Background(), "hotel", 10, 5)
+		result, _, err := svc.Search(context.Background(), "hotel", "", 10, 5)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "hotel3", result[0].ID)
 
+		solrRepo.AssertExpectations(t)
+	})
+
+	// plan 13: el sort llega al repositorio tal cual (el controller ya lo
+	// whitelisteó; el mapping a Solr es del repo)
+	t.Run("sort passes through to the repository", func(t *testing.T) {
+		svc, solrRepo, _ := newTestService()
+
+		solrRepo.On("Search", mock.Anything, "hotel", "price_asc", 10, 0).
+			Return([]hotelsDAO.Hotel{}, 0, nil).Once()
+
+		_, _, err := svc.Search(context.Background(), "hotel", "price_asc", 0, 10)
+
+		assert.NoError(t, err)
 		solrRepo.AssertExpectations(t)
 	})
 }

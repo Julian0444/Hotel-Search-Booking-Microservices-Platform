@@ -54,7 +54,7 @@ func TestSolrFieldHelpers(t *testing.T) {
 // los metacaracteres Lucene escapados, y rows/start (limit/offset) son reales.
 func TestBuildSearchQuery(t *testing.T) {
 	t.Run("multi-word query goes as dereferenced param", func(t *testing.T) {
-		qm := buildSearchQuery("hotel spa", 10, 20).BuildQuery()
+		qm := buildSearchQuery("hotel spa", "", 10, 20).BuildQuery()
 
 		if got := qm["query"]; got != "{!edismax qf='name description' v=$qq}" {
 			t.Errorf("query: got %v", got)
@@ -75,7 +75,7 @@ func TestBuildSearchQuery(t *testing.T) {
 	})
 
 	t.Run("empty query is match-all", func(t *testing.T) {
-		qm := buildSearchQuery("   ", 10, 0).BuildQuery()
+		qm := buildSearchQuery("   ", "", 10, 0).BuildQuery()
 
 		if got := qm["query"]; got != "*:*" {
 			t.Errorf("query: got %v, want *:*", got)
@@ -86,12 +86,45 @@ func TestBuildSearchQuery(t *testing.T) {
 	})
 
 	t.Run("lucene metacharacters are escaped", func(t *testing.T) {
-		qm := buildSearchQuery(`"(malicious:*"`, 10, 0).BuildQuery()
+		qm := buildSearchQuery(`"(malicious:*"`, "", 10, 0).BuildQuery()
 
 		params := qm["params"].(solr.M)
 		want := `\"\(malicious\:\*\"`
 		if got := params["qq"]; got != want {
 			t.Errorf("qq: got %q, want %q", got, want)
+		}
+	})
+
+	// plan 13 (F13-03): el sort whitelisteado se mapea a cláusulas fijas de
+	// Solr con `id asc` de desempate (paginación estable); relevance/desconocido
+	// no agregan cláusula (score de edismax)
+	t.Run("sort maps to fixed solr clauses", func(t *testing.T) {
+		cases := []struct{ sort, want string }{
+			{"price_asc", "price_per_night asc, id asc"},
+			{"price_desc", "price_per_night desc, id asc"},
+			{"rating_desc", "rating desc, id asc"},
+		}
+		for _, c := range cases {
+			qm := buildSearchQuery("spa", c.sort, 10, 0).BuildQuery()
+			if got := qm["sort"]; got != c.want {
+				t.Errorf("sort=%s: got %v, want %q", c.sort, got, c.want)
+			}
+		}
+	})
+
+	t.Run("relevance and unknown sorts add no clause", func(t *testing.T) {
+		for _, sort := range []string{"", "relevance", "drop table"} {
+			qm := buildSearchQuery("spa", sort, 10, 0).BuildQuery()
+			if _, hasSort := qm["sort"]; hasSort {
+				t.Errorf("sort=%q: unexpected sort clause %v", sort, qm["sort"])
+			}
+		}
+	})
+
+	t.Run("sort also applies to match-all", func(t *testing.T) {
+		qm := buildSearchQuery("", "price_asc", 10, 0).BuildQuery()
+		if got := qm["sort"]; got != "price_per_night asc, id asc" {
+			t.Errorf("sort: got %v", got)
 		}
 	})
 }

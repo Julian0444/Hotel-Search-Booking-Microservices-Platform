@@ -1,73 +1,77 @@
 /**
  * Hotels Service
- * Handles hotel search, details, and availability checking
+ * Búsqueda (Solr vía search-api), catálogo y disponibilidad (hotels-api).
+ * Devuelve SIEMPRE el shape final del contrato (plan 13, F13-01): nada de
+ * camelCase ni fallbacks legacy aguas arriba de este archivo.
  */
 
 import api from './api';
+import { unwrapList, unwrapObject } from './envelope';
 import { PAGINATION } from '../constants';
 
 /**
  * @typedef {import('../types').Hotel} Hotel
- * @typedef {import('../types').SearchParams} SearchParams
- * @typedef {import('../types').AvailabilityRequest} AvailabilityRequest
  */
 
-/**
- * Hotels API endpoints
- */
 const hotelsService = {
   /**
-   * Search hotels. Returns the standard list envelope so callers can
-   * paginate against the real index total (RV22).
-   * @param {string} [query=''] - Search query
-   * @param {number} [offset=0] - Pagination offset
-   * @param {number} [limit=20] - Results limit
-   * @returns {Promise<{ data: Hotel[], meta: { total: number, limit: number, offset: number } }>} Search page
+   * Search hotels (global, ordenado por Solr — plan 13).
+   * @param {{ q?: string, offset?: number, limit?: number, sort?: string }} params
+   * @param {{ signal?: AbortSignal }} [options] - AbortSignal de TanStack Query
+   * @returns {Promise<import('../types').ListPage<Hotel>>}
    */
-  search: async (query = '', offset = PAGINATION.DEFAULT_OFFSET, limit = PAGINATION.DEFAULT_PAGE_SIZE) => {
+  search: async (
+    { q = '', offset = PAGINATION.DEFAULT_OFFSET, limit = PAGINATION.DEFAULT_PAGE_SIZE, sort = '' } = {},
+    { signal } = {},
+  ) => {
     const params = new URLSearchParams();
-    if (query) params.append('q', query);
-    params.append('offset', offset.toString());
-    params.append('limit', limit.toString());
+    if (q) params.set('q', q);
+    params.set('offset', String(offset));
+    params.set('limit', String(limit));
+    if (sort && sort !== 'relevance') params.set('sort', sort);
 
-    const response = await api.get(`/search?${params.toString()}`);
-    return response.data;
+    const response = await api.get(`/search?${params.toString()}`, { signal });
+    return unwrapList(response.data);
+  },
+
+  /**
+   * Catálogo paginado desde hotels-api (fuente de verdad, sin lag de índice).
+   * @param {{ offset?: number, limit?: number }} params
+   * @param {{ signal?: AbortSignal }} [options]
+   * @returns {Promise<import('../types').ListPage<Hotel>>}
+   */
+  list: async ({ offset = 0, limit = PAGINATION.DEFAULT_PAGE_SIZE } = {}, { signal } = {}) => {
+    const response = await api.get(`/hotels?limit=${limit}&offset=${offset}`, { signal });
+    return unwrapList(response.data);
   },
 
   /**
    * Get hotel by ID
    * @param {string} hotelId - Hotel ID
+   * @param {{ signal?: AbortSignal }} [options]
    * @returns {Promise<Hotel>} Hotel details
    */
-  getById: async (hotelId) => {
-    const response = await api.get(`/hotels/${hotelId}`);
-    return response.data.data;
+  getById: async (hotelId, { signal } = {}) => {
+    const response = await api.get(`/hotels/${hotelId}`, { signal });
+    return unwrapObject(response.data);
   },
 
   /**
-   * Get reservations for a hotel (admin-only: exposes guests' user_id — C3)
-   * @param {string} hotelId - Hotel ID
-   * @returns {Promise<import('../types').Reservation[]>} List of reservations
+   * Disponibilidad para un rango (feedback rápido; POST /reservations es la
+   * autoridad atómica).
+   * @param {string[]} hotelIds
+   * @param {string} checkIn - "YYYY-MM-DD"
+   * @param {string} checkOut - "YYYY-MM-DD"
+   * @param {{ signal?: AbortSignal }} [options]
+   * @returns {Promise<Object.<string, boolean>>} hotelId → disponible
    */
-  getReservationsByHotel: async (hotelId) => {
-    const response = await api.get(`/hotels/${hotelId}/reservations`);
-    return response.data.data;
-  },
-
-  /**
-   * Check availability for hotels
-   * @param {string[]} hotelIds - List of hotel IDs
-   * @param {string} checkIn - Check-in date
-   * @param {string} checkOut - Check-out date
-   * @returns {Promise<Object.<string, boolean>>} Availability map
-   */
-  checkAvailability: async (hotelIds, checkIn, checkOut) => {
-    const response = await api.post('/hotels/availability', {
-      hotel_ids: hotelIds,
-      check_in: checkIn,
-      check_out: checkOut,
-    });
-    return response.data.data;
+  checkAvailability: async (hotelIds, checkIn, checkOut, { signal } = {}) => {
+    const response = await api.post(
+      '/hotels/availability',
+      { hotel_ids: hotelIds, check_in: checkIn, check_out: checkOut },
+      { signal },
+    );
+    return unwrapObject(response.data);
   },
 };
 

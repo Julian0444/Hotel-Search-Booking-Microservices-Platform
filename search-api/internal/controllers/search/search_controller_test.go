@@ -21,8 +21,8 @@ type mockService struct {
 	mock.Mock
 }
 
-func (m *mockService) Search(ctx context.Context, query string, offset int, limit int) ([]hotelsDomain.Hotel, int, error) {
-	args := m.Called(ctx, query, offset, limit)
+func (m *mockService) Search(ctx context.Context, query string, sort string, offset int, limit int) ([]hotelsDomain.Hotel, int, error) {
+	args := m.Called(ctx, query, sort, offset, limit)
 	if args.Get(0) == nil {
 		return nil, 0, args.Error(2)
 	}
@@ -88,7 +88,7 @@ func TestController_Search(t *testing.T) {
 			},
 		}
 
-		svc.On("Search", mock.Anything, "paradise", 0, 10).Return(mockHotels, len(mockHotels), nil).Once()
+		svc.On("Search", mock.Anything, "paradise", "", 0, 10).Return(mockHotels, len(mockHotels), nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=paradise&offset=0&limit=10", nil)
 		rr := httptest.NewRecorder()
@@ -114,7 +114,7 @@ func TestController_Search(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("Search", mock.Anything, "nonexistent", 0, 10).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
+		svc.On("Search", mock.Anything, "nonexistent", "", 0, 10).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=nonexistent&offset=0&limit=10", nil)
 		rr := httptest.NewRecorder()
@@ -134,7 +134,7 @@ func TestController_Search(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("Search", mock.Anything, "test", 0, 20).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
+		svc.On("Search", mock.Anything, "test", "", 0, 20).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
 		rr := httptest.NewRecorder()
@@ -148,7 +148,7 @@ func TestController_Search(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("Search", mock.Anything, "test", 0, 20).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
+		svc.On("Search", mock.Anything, "test", "", 0, 20).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=test&offset=abc&limit=xyz", nil)
 		rr := httptest.NewRecorder()
@@ -163,7 +163,7 @@ func TestController_Search(t *testing.T) {
 		router := setupRouter(svc)
 
 		// offset -5 → 0; limit -1 → 20 (post-E2 un rows negativo era 500)
-		svc.On("Search", mock.Anything, "test", 0, 20).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
+		svc.On("Search", mock.Anything, "test", "", 0, 20).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=test&offset=-5&limit=-1", nil)
 		rr := httptest.NewRecorder()
@@ -177,7 +177,7 @@ func TestController_Search(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("Search", mock.Anything, "test", 0, 100).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
+		svc.On("Search", mock.Anything, "test", "", 0, 100).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=test&offset=0&limit=99999", nil)
 		rr := httptest.NewRecorder()
@@ -191,7 +191,7 @@ func TestController_Search(t *testing.T) {
 		svc := &mockService{}
 		router := setupRouter(svc)
 
-		svc.On("Search", mock.Anything, "test", 0, 10).Return(nil, 0, errors.New("solr connection error")).Once()
+		svc.On("Search", mock.Anything, "test", "", 0, 10).Return(nil, 0, errors.New("solr connection error")).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=test&offset=0&limit=10", nil)
 		rr := httptest.NewRecorder()
@@ -221,7 +221,7 @@ func TestController_Search(t *testing.T) {
 			{ID: "hotel3", Name: "Paginated Hotel"},
 		}
 
-		svc.On("Search", mock.Anything, "hotel", 20, 5).Return(mockHotels, len(mockHotels), nil).Once()
+		svc.On("Search", mock.Anything, "hotel", "", 20, 5).Return(mockHotels, len(mockHotels), nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=hotel&offset=20&limit=5", nil)
 		rr := httptest.NewRecorder()
@@ -246,7 +246,7 @@ func TestController_Search(t *testing.T) {
 			{ID: "hotel2", Name: "Hotel Two"},
 		}
 
-		svc.On("Search", mock.Anything, "", 0, 10).Return(mockHotels, len(mockHotels), nil).Once()
+		svc.On("Search", mock.Anything, "", "", 0, 10).Return(mockHotels, len(mockHotels), nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=&offset=0&limit=10", nil)
 		rr := httptest.NewRecorder()
@@ -269,7 +269,7 @@ func TestController_Search(t *testing.T) {
 			{ID: "hotel1", Name: "Hotel & Spa"},
 		}
 
-		svc.On("Search", mock.Anything, "hotel & spa", 0, 10).Return(mockHotels, len(mockHotels), nil).Once()
+		svc.On("Search", mock.Anything, "hotel & spa", "", 0, 10).Return(mockHotels, len(mockHotels), nil).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/search?q=hotel+%26+spa&offset=0&limit=10", nil)
 		rr := httptest.NewRecorder()
@@ -283,6 +283,44 @@ func TestController_Search(t *testing.T) {
 		assert.Equal(t, "Hotel & Spa", got.Data[0].Name)
 
 		svc.AssertExpectations(t)
+	})
+
+	// plan 13 (F13-03): sort whitelisteado llega al service tal cual; el orden
+	// es global (lo aplica Solr), nunca de la página descargada
+	t.Run("valid sort values pass through", func(t *testing.T) {
+		for _, sort := range []string{"relevance", "price_asc", "price_desc", "rating_desc"} {
+			svc := &mockService{}
+			router := setupRouter(svc)
+
+			svc.On("Search", mock.Anything, "spa", sort, 0, 20).Return([]hotelsDomain.Hotel{}, 0, nil).Once()
+
+			req := httptest.NewRequest(http.MethodGet, "/search?q=spa&sort="+sort, nil)
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusOK, rr.Code, "sort=%s", sort)
+			svc.AssertExpectations(t)
+		}
+	})
+
+	t.Run("arbitrary sort -> 400 without touching the service", func(t *testing.T) {
+		svc := &mockService{}
+		router := setupRouter(svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/search?q=spa&sort=price_per_night%20asc", nil)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+
+		var got struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		assert.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
+		assert.Equal(t, "invalid_sort", got.Error.Code)
+		svc.AssertNumberOfCalls(t, "Search", 0)
 	})
 }
 

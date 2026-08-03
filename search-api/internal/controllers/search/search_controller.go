@@ -12,7 +12,7 @@ import (
 )
 
 type Service interface {
-	Search(ctx context.Context, query string, offset int, limit int) ([]hotelsDomain.Hotel, int, error)
+	Search(ctx context.Context, query string, sort string, offset int, limit int) ([]hotelsDomain.Hotel, int, error)
 	Backfill(ctx context.Context) (int, error)
 }
 
@@ -52,16 +52,37 @@ func paginationParams(c *gin.Context) (int, int) {
 	return limit, offset
 }
 
+// validSorts es la whitelist de ?sort (plan 13/F13-03): el valor viaja hasta
+// el repositorio, que lo mapea a un sort de Solr — nunca se interpola el input
+// del usuario. Vacío = relevance (score de edismax; match-all queda en orden
+// de índice).
+var validSorts = map[string]bool{
+	"":            true,
+	"relevance":   true,
+	"price_asc":   true,
+	"price_desc":  true,
+	"rating_desc": true,
+}
+
 // Funcion para buscar hoteles en Solr. Responde el envelope estándar (A5) con
 // el total real del índice en meta (RV22: el frontend calculaba las páginas
 // sobre la página actual y la paginación quedaba rota por construcción).
+// Acepta ?sort whitelisteado (plan 13): el orden es global sobre el índice,
+// no sobre la página descargada.
 func (controller Controller) Search(c *gin.Context) {
 	// Saca el query de la URL; limit/offset clampeados (RV15)
 	query := c.Query("q")
 	limit, offset := paginationParams(c)
 
+	sort := c.Query("sort")
+	if !validSorts[sort] {
+		apperr.Abort(c, http.StatusBadRequest, "invalid_sort",
+			"sort must be one of: relevance, price_asc, price_desc, rating_desc", nil)
+		return
+	}
+
 	// Llama a la funcion de busqueda de hoteles del servicio
-	hotels, total, err := controller.service.Search(c.Request.Context(), query, offset, limit)
+	hotels, total, err := controller.service.Search(c.Request.Context(), query, sort, offset, limit)
 	if err != nil {
 		apperr.Abort(c, http.StatusInternalServerError, "internal", "error searching hotels", err)
 		return

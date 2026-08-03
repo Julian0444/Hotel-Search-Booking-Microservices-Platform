@@ -1,31 +1,19 @@
 /**
- * Global Styles
- * Base styling and CSS custom properties
+ * Global Styles (plan 13 fase 4)
+ * Tokens base + reset; los componentes usan el theme de MUI.
  */
 
 :root {
   /* Colors */
-  --color-primary: #1a365d;
-  --color-secondary: #c6a961;
-  --color-background: #f7f5f2;
-  --color-text: #1a1a1a;
-  --color-text-secondary: #5a5a5a;
-  
+  --color-ink: #1a365d;
+  --color-gold: #c6a961;
+  --color-surface: #f7f5f2;
+  --color-text: #22242a;
+  --color-muted: #5a5f6a;
+
   /* Typography */
   --font-heading: 'Cormorant Garamond', Georgia, serif;
-  --font-body: 'Source Sans 3', 'Helvetica Neue', Arial, sans-serif;
-  
-  /* Spacing */
-  --spacing-xs: 0.25rem;
-  --spacing-sm: 0.5rem;
-  --spacing-md: 1rem;
-  --spacing-lg: 1.5rem;
-  --spacing-xl: 2rem;
-  
-  /* Transitions */
-  --transition-fast: 150ms ease;
-  --transition-normal: 250ms ease;
-  --transition-slow: 400ms ease;
+  --font-body: 'Source Sans 3', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
 }
 
 /* Reset */
@@ -39,14 +27,30 @@
 
 /* Base */
 html {
-  scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 body {
   font-family: var(--font-body);
-  background-color: var(--color-background);
+  background-color: var(--color-surface);
   color: var(--color-text);
   line-height: 1.6;
   min-height: 100vh;
@@ -58,17 +62,6 @@ body {
   min-height: 100vh;
 }
 
-/* Links */
-a {
-  color: inherit;
-  text-decoration: none;
-  transition: color var(--transition-fast);
-}
-
-a:hover {
-  color: var(--color-primary);
-}
-
 /* Images */
 img {
   max-width: 100%;
@@ -78,36 +71,17 @@ img {
 
 /* Focus styles */
 :focus-visible {
-  outline: 2px solid var(--color-secondary);
+  outline: 2px solid var(--color-gold);
   outline-offset: 2px;
 }
 
 /* Selection */
 ::selection {
-  background-color: var(--color-secondary);
-  color: var(--color-primary);
+  background-color: var(--color-gold);
+  color: var(--color-ink);
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-background);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-primary);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #2d4a7c;
-}
-
-/* Utility classes */
+/* Utility */
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -118,49 +92,4 @@ img {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
-}
-
-/* Animation keyframes */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Animation utilities */
-.animate-fade-in {
-  animation: fadeIn var(--transition-normal) ease-out;
-}
-
-.animate-slide-up {
-  animation: slideUp var(--transition-normal) ease-out;
-}
-
-.animate-slide-down {
-  animation: slideDown var(--transition-normal) ease-out;
 }

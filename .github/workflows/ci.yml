@@ -67,8 +67,68 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - run: npm run lint
+      # TZ al oeste de UTC: los tests de fechas civiles deben pasar igual que
+      # en UTC (plan 13 — el bug era exactamente ese)
+      - run: TZ=America/Los_Angeles npm run test:coverage
       - run: npm run build
       - run: npm audit --audit-level=high
+
+  # E2E Playwright contra el stack completo (plan 13 fase 10): solo en PRs,
+  # mismo criterio que integration — levanta compose con el profile frontend
+  # (SPA buildeado en :5173 + gateway TLS self-signed) y corre los recorridos.
+  frontend-e2e:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Preparar .env y certs self-signed del gateway
+        run: |
+          cp .env.example .env
+          mkdir -p nginx/certs
+          # nginx.conf exige exactamente cert.pem/key.pem (nginx/certs/README.md)
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+            -keyout nginx/certs/key.pem -out nginx/certs/cert.pem \
+            -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+      - name: Levantar el stack (con SPA buildeado)
+        run: |
+          docker compose --profile frontend up -d --build
+          # Solr tarda ~90s; el resto encadena healthchecks. El grep -v '^$'
+          # descarta servicios SIN healthcheck (memcached, frontend) — sin eso
+          # el loop nunca converge y quema los 300s completos.
+          for i in $(seq 1 60); do
+            unhealthy=$(docker compose ps --format '{{.Health}}' | grep -v '^$' | grep -cv 'healthy' || true)
+            [ "$unhealthy" -eq 0 ] && break
+            sleep 5
+          done
+          docker compose ps
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm run test:e2e
+        working-directory: frontend
+        env:
+          ADMIN_USERNAME: admin
+          ADMIN_PASSWORD: change-me-min-8-chars
+      - name: Reporte de Playwright si falló (html + traces)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Logs del stack si falló
+        if: failure()
+        run: docker compose logs --tail 100
 
   # Supply-chain de imágenes (plan 09, CN4): build multi-stage + Trivy como gate
   # en cada push/PR; push multi-arch a GHCR con tags inmutables solo en main

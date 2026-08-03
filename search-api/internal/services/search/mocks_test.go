@@ -37,8 +37,8 @@ func (m *solrMock) Delete(ctx context.Context, id string) error {
 	return args.Error(0)
 }
 
-func (m *solrMock) Search(ctx context.Context, query string, limit int, offset int) ([]hotelsDAO.Hotel, int, error) {
-	args := m.Called(ctx, query, limit, offset)
+func (m *solrMock) Search(ctx context.Context, query string, sort string, limit int, offset int) ([]hotelsDAO.Hotel, int, error) {
+	args := m.Called(ctx, query, sort, limit, offset)
 	if args.Get(0) == nil {
 		return nil, 0, args.Error(2)
 	}

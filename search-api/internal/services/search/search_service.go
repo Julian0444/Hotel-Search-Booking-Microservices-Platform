@@ -21,8 +21,9 @@ type Repository interface {
 	Update(ctx context.Context, hotel hotelsDAO.Hotel) error
 	Delete(ctx context.Context, id string) error
 	// Search devuelve la página y el total de matches (numFound) para el
-	// meta del envelope (A5/RV22)
-	Search(ctx context.Context, query string, limit int, offset int) ([]hotelsDAO.Hotel, int, error)
+	// meta del envelope (A5/RV22). sort ya viene whitelisteado del controller;
+	// el repo lo mapea a un sort de Solr (plan 13).
+	Search(ctx context.Context, query string, sort string, limit int, offset int) ([]hotelsDAO.Hotel, int, error)
 }
 
 // Funcion de la API de hoteles
@@ -45,9 +46,9 @@ func NewService(repository Repository, hotelsAPI ExternalRepository) Service {
 }
 
 // Funcion para buscar hoteles en Solr
-func (service Service) Search(ctx context.Context, query string, offset int, limit int) ([]hotelsDomain.Hotel, int, error) {
+func (service Service) Search(ctx context.Context, query string, sort string, offset int, limit int) ([]hotelsDomain.Hotel, int, error) {
 	// Llama al metodo Search del repositorio
-	hotelsDAOList, total, err := service.repository.Search(ctx, query, limit, offset)
+	hotelsDAOList, total, err := service.repository.Search(ctx, query, sort, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("error searching hotels: %w", err)
 	}

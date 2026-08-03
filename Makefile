@@ -3,7 +3,7 @@
 GO_PACKAGES = ./users-api/... ./hotels-api/... ./search-api/... ./platform-contracts/...
 GO_MODULES  = users-api hotels-api search-api platform-contracts
 
-.PHONY: build test test-integration lint fmt up down seed
+.PHONY: build test test-integration lint fmt up up-frontend down seed frontend-check e2e
 
 build:
 	go build $(GO_PACKAGES)
@@ -26,8 +26,21 @@ fmt:
 up:
 	docker compose up -d --build
 
+up-frontend:
+	docker compose --profile frontend up -d --build
+
 down:
 	docker compose down -v
+
+# Frontend (plan 13): lint + unit/component con coverage + build de producción
+frontend-check:
+	cd frontend && npm run check
+
+# E2E Playwright contra el stack real (plan 13 fase 10). Requiere los certs
+# TLS locales (nginx/certs/README.md) y npx playwright install chromium.
+# Las credenciales admin las leen los specs del .env de la raíz.
+e2e: up-frontend
+	cd frontend && npm run test:e2e
 
 seed:
 	docker compose run --rm migrate

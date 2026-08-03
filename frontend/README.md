@@ -133,10 +133,15 @@ The frontend connects to the API Gateway (nginx) which routes to microservices:
 ## 📝 Available Scripts
 
 ```bash
-npm run dev      # Development server
-npm run build    # Production build
-npm run preview  # Preview production build
-npm run lint     # Run linter
+npm run dev            # Development server
+npm run build          # Production build
+npm run preview        # Preview production build
+npm run lint           # Run linter
+npm run test           # Vitest in watch mode
+npm run test:run       # Unit/component suite (Testing Library + MSW)
+npm run test:coverage  # Suite with coverage thresholds
+npm run test:e2e       # Playwright E2E (needs the Docker stack with --profile frontend)
+npm run check          # lint + coverage + build (CI gate)
 ```
 
 ## 🏗️ Architecture Decisions

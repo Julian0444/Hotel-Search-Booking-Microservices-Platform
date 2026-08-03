@@ -187,30 +187,54 @@ func escapeSolrQuery(input string) string {
 	return escaped.String()
 }
 
+// sortClause mapea el sort whitelisteado del controller a un sort de Solr
+// (plan 13). El input del usuario jamás se interpola: solo estos literales
+// llegan al parámetro sort. `id asc` desempata para que la paginación sea
+// estable entre requests (price/rating repetidos reordenarían libre).
+// Desconocido/relevance → sin cláusula (score de edismax).
+func sortClause(sort string) string {
+	switch sort {
+	case "price_asc":
+		return "price_per_night asc, id asc"
+	case "price_desc":
+		return "price_per_night desc, id asc"
+	case "rating_desc":
+		return "rating desc, id asc"
+	default:
+		return ""
+	}
+}
+
 // buildSearchQuery arma el request JSON de búsqueda (E2): edismax sobre
 // name/description con el input del usuario como parámetro dereferenciado
 // ($qq) — nunca interpolado en la query — y limit/offset reales (rows/start:
 // antes la paginación se ignoraba). Query vacía = match-all (antes: 500 de
-// sintaxis).
-func buildSearchQuery(query string, limit int, offset int) *solr.Query {
+// sintaxis). sort global sobre el índice (plan 13), ver sortClause.
+func buildSearchQuery(query string, sort string, limit int, offset int) *solr.Query {
 	trimmed := strings.TrimSpace(query)
+	var solrQuery *solr.Query
 	if trimmed == "" {
-		return solr.NewQuery("*:*").Limit(limit).Offset(offset)
+		solrQuery = solr.NewQuery("*:*").Limit(limit).Offset(offset)
+	} else {
+		solrQuery = solr.NewQuery("{!edismax qf='name description' v=$qq}").
+			Params(solr.M{"qq": escapeSolrQuery(trimmed)}).
+			Limit(limit).
+			Offset(offset)
 	}
-	return solr.NewQuery("{!edismax qf='name description' v=$qq}").
-		Params(solr.M{"qq": escapeSolrQuery(trimmed)}).
-		Limit(limit).
-		Offset(offset)
+	if clause := sortClause(sort); clause != "" {
+		solrQuery = solrQuery.Sort(clause)
+	}
+	return solrQuery
 }
 
 // Funcion para buscar hoteles en Solr. Devuelve además el total de matches
 // (numFound) para el meta del envelope (A5/RV22): la página sola no alcanza
 // para que el cliente calcule cuántas páginas hay.
-func (searchEngine Solr) Search(ctx context.Context, query string, limit int, offset int) ([]hotels.Hotel, int, error) {
+func (searchEngine Solr) Search(ctx context.Context, query string, sort string, limit int, offset int) ([]hotels.Hotel, int, error) {
 	// Ejecuta la query en Solr (construcción segura E2, deadline R2)
 	ctx, cancel := solrOpCtx(ctx)
 	defer cancel()
-	resp, err := searchEngine.Client.Query(ctx, searchEngine.Collection, buildSearchQuery(query, limit, offset))
+	resp, err := searchEngine.Client.Query(ctx, searchEngine.Collection, buildSearchQuery(query, sort, limit, offset))
 	if err != nil {
 		return nil, 0, fmt.Errorf("error executing search query: %w", err)
 	}

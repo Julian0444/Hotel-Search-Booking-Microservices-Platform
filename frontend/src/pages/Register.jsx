@@ -1,10 +1,11 @@
 /**
- * Register Page
- * New user registration form
+ * Register Page (plan 13 fase 2): siempre crea cuentas de cliente (los
+ * admins se siembran server-side). Autocomplete de password nuevo, errores
+ * con aria-live y foco al primer campo inválido.
  */
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import {
   Box,
   Container,
@@ -18,127 +19,82 @@ import {
   Divider,
   CircularProgress,
 } from '@mui/material';
-import {
-  Visibility,
-  VisibilityOff,
-  Person as PersonIcon,
-  Lock as LockIcon,
-  Hotel as HotelIcon,
-} from '@mui/icons-material';
+import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useForm } from 'react-hook-form';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 import { ROUTES, VALIDATION } from '../constants';
+import BrandMark from '../components/common/BrandMark';
+import RouteMeta from '../components/common/RouteMeta';
 
 const Register = () => {
   const navigate = useNavigate();
-  const { register: registerUser, loading, error, setError } = useAuth();
+  const { register: registerUser, isSubmitting } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [formError, setFormError] = useState(null);
 
   const {
     register,
     handleSubmit,
     watch,
     formState: { errors },
+    setFocus,
   } = useForm();
 
   const password = watch('password');
 
-  // Public registration always creates customer accounts;
-  // admins are provisioned server-side (seed).
   const onSubmit = async (data) => {
-    const result = await registerUser(data.username, data.password);
+    setFormError(null);
+    const result = await registerUser(data.username.trim(), data.password);
     if (result.success) {
       navigate(ROUTES.HOME);
+    } else {
+      setFormError(result.error);
+      setFocus('username');
     }
   };
 
+  const onInvalid = (fieldErrors) => {
+    const first = Object.keys(fieldErrors)[0];
+    if (first) setFocus(first);
+  };
+
   return (
-    <Box
-      sx={{
-        minHeight: '100vh',
-        display: 'flex',
-        position: 'relative',
-        '&::before': {
-          content: '""',
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundImage: 'url(https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?w=1920)',
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-          filter: 'brightness(0.35)',
-          zIndex: 0,
-        },
-      }}
-    >
+    <Box sx={{ minHeight: '100vh', display: 'flex', bgcolor: 'primary.main' }}>
+      <RouteMeta title="Create account" description="Create a StayLux account to reserve stays." />
       <Container
         maxWidth="sm"
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          py: 4,
-          position: 'relative',
-          zIndex: 1,
-        }}
+        sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: 4 }}
       >
         <Paper
-          elevation={24}
-          sx={{
-            width: '100%',
-            p: { xs: 3, sm: 5 },
-            borderRadius: 3,
-            bgcolor: 'rgba(255,255,255,0.97)',
-          }}
+          elevation={6}
+          component="main"
+          id="main-content"
+          sx={{ width: '100%', p: { xs: 3, sm: 5 }, borderRadius: 3 }}
         >
-          {/* Logo */}
           <Box sx={{ textAlign: 'center', mb: 4 }}>
-            <Box
-              component={Link}
-              to={ROUTES.HOME}
-              sx={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                textDecoration: 'none',
-                color: 'inherit',
-              }}
-            >
-              <HotelIcon sx={{ fontSize: 40, color: 'secondary.main', mr: 1 }} />
-              <Typography variant="h4" sx={{ fontWeight: 700, color: 'primary.main' }}>
-                StayLux
-              </Typography>
-            </Box>
+            <BrandMark />
           </Box>
 
-          <Typography variant="h4" sx={{ textAlign: 'center', fontWeight: 600, mb: 1 }}>
-            Create Account
+          <Typography variant="h4" component="h1" sx={{ textAlign: 'center', fontWeight: 600, mb: 1 }}>
+            Create your account
           </Typography>
-          <Typography
-            variant="body1"
-            color="text.secondary"
-            sx={{ textAlign: 'center', mb: 4 }}
-          >
-            Join StayLux and discover unique experiences
+          <Typography variant="body1" color="text.secondary" sx={{ textAlign: 'center', mb: 4 }}>
+            Search, reserve and manage your stays
           </Typography>
 
-          {error && (
-            <Alert
-              severity="error"
-              onClose={() => setError(null)}
-              sx={{ mb: 3 }}
-            >
-              {error}
-            </Alert>
-          )}
+          <Box aria-live="polite">
+            {formError && (
+              <Alert severity="error" onClose={() => setFormError(null)} sx={{ mb: 3 }}>
+                {formError}
+              </Alert>
+            )}
+          </Box>
 
-          <form onSubmit={handleSubmit(onSubmit)}>
+          <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate>
             <TextField
               fullWidth
               label="Username"
-              placeholder="Choose a username"
+              autoComplete="username"
               {...register('username', {
                 required: 'Username is required',
                 minLength: {
@@ -152,13 +108,6 @@ const Register = () => {
               })}
               error={!!errors.username}
               helperText={errors.username?.message}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <PersonIcon color="action" />
-                  </InputAdornment>
-                ),
-              }}
               sx={{ mb: 3 }}
             />
 
@@ -166,7 +115,7 @@ const Register = () => {
               fullWidth
               type={showPassword ? 'text' : 'password'}
               label="Password"
-              placeholder="Create a secure password"
+              autoComplete="new-password"
               {...register('password', {
                 required: 'Password is required',
                 minLength: {
@@ -177,14 +126,10 @@ const Register = () => {
               error={!!errors.password}
               helperText={errors.password?.message}
               InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <LockIcon color="action" />
-                  </InputAdornment>
-                ),
                 endAdornment: (
                   <InputAdornment position="end">
                     <IconButton
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
                       onClick={() => setShowPassword(!showPassword)}
                       edge="end"
                     >
@@ -198,34 +143,16 @@ const Register = () => {
 
             <TextField
               fullWidth
-              type={showConfirmPassword ? 'text' : 'password'}
-              label="Confirm Password"
-              placeholder="Repeat your password"
+              type="password"
+              label="Confirm password"
+              autoComplete="new-password"
               {...register('confirmPassword', {
                 required: 'Please confirm your password',
-                validate: (value) =>
-                  value === password || 'Passwords do not match',
+                validate: (value) => value === password || 'Passwords do not match',
               })}
               error={!!errors.confirmPassword}
               helperText={errors.confirmPassword?.message}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <LockIcon color="action" />
-                  </InputAdornment>
-                ),
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      edge="end"
-                    >
-                      {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-              sx={{ mb: 3 }}
+              sx={{ mb: 4 }}
             />
 
             <Button
@@ -233,13 +160,13 @@ const Register = () => {
               fullWidth
               variant="contained"
               size="large"
-              disabled={loading}
+              disabled={isSubmitting}
               sx={{ py: 1.5, mb: 3 }}
             >
-              {loading ? (
-                <CircularProgress size={24} color="inherit" />
+              {isSubmitting ? (
+                <CircularProgress size={24} color="inherit" aria-label="Creating account" />
               ) : (
-                'Create Account'
+                'Create account'
               )}
             </Button>
           </form>
@@ -250,15 +177,8 @@ const Register = () => {
             </Typography>
           </Divider>
 
-          <Button
-            component={Link}
-            to={ROUTES.LOGIN}
-            fullWidth
-            variant="outlined"
-            size="large"
-            sx={{ borderWidth: 2 }}
-          >
-            Sign In
+          <Button component={Link} to={ROUTES.LOGIN} fullWidth variant="outlined" size="large">
+            Sign in
           </Button>
         </Paper>
       </Container>

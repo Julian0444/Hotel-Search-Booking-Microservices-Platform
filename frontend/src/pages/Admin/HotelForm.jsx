@@ -1,253 +1,223 @@
 /**
- * Hotel Form Page
- * Create or edit hotel form for administrators
+ * Hotel Form (plan 13 fase 7, F13-08): contrato estricto del plan 07/11 —
+ * "HH:mm", price numérico, available_rooms entero, URLs http(s) —, amenities
+ * de catálogo + opción libre controlada, summary de errores con focus al
+ * primero, cambios sucios protegidos y navegación SIN setTimeout.
  */
 
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate, Link } from 'react-router';
 import {
+  Alert,
+  AlertTitle,
+  Autocomplete,
   Box,
-  Container,
-  Typography,
+  Button,
   Card,
   CardContent,
-  TextField,
-  Button,
-  Grid,
-  Alert,
-  CircularProgress,
   Chip,
-  IconButton,
+  CircularProgress,
+  Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Grid,
   InputAdornment,
-  Snackbar,
+  TextField,
+  Typography,
 } from '@mui/material';
-import {
-  Save as SaveIcon,
-  ArrowBack as ArrowBackIcon,
-  Add as AddIcon,
-  Close as CloseIcon,
-  Hotel as HotelIcon,
-} from '@mui/icons-material';
-import { useForm } from 'react-hook-form';
-import { hotelsService, adminService } from '../../services';
-import { useAuth } from '../../context/AuthContext';
-import { ROUTES, DEFAULT_TIMES, VALIDATION } from '../../constants';
+import { Save as SaveIcon, ArrowBack as ArrowBackIcon } from '@mui/icons-material';
+import { useForm, Controller } from 'react-hook-form';
+import { useHotel } from '../../hooks/queries';
+import { useSaveHotel } from '../../hooks/mutations';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
+import HotelImageFields from '../../components/admin/HotelImageFields';
+import { AppLoader, ErrorState, RouteMeta } from '../../components/common';
+import { isTimeOfDay, isOptionalEmail } from '../../utils/validators';
+import { amenityLabel } from '../../utils/helpers';
+import { ROUTES, DEFAULT_TIMES, VALIDATION, AMENITY_CATALOG } from '../../constants';
+
+const emptyValues = {
+  name: '',
+  description: '',
+  address: '',
+  city: '',
+  state: '',
+  country: '',
+  phone: '',
+  email: '',
+  price_per_night: '',
+  rating: '',
+  available_rooms: '',
+  check_in_time: DEFAULT_TIMES.CHECK_IN,
+  check_out_time: DEFAULT_TIMES.CHECK_OUT,
+  amenities: [],
+  images: [],
+};
+
+const hotelToValues = (hotel) => ({
+  ...emptyValues,
+  ...Object.fromEntries(
+    Object.entries({
+      name: hotel.name,
+      description: hotel.description,
+      address: hotel.address,
+      city: hotel.city,
+      state: hotel.state,
+      country: hotel.country,
+      phone: hotel.phone,
+      email: hotel.email,
+      price_per_night: hotel.price_per_night,
+      rating: hotel.rating,
+      available_rooms: hotel.available_rooms,
+      check_in_time: hotel.check_in_time || DEFAULT_TIMES.CHECK_IN,
+      check_out_time: hotel.check_out_time || DEFAULT_TIMES.CHECK_OUT,
+      amenities: hotel.amenities ?? [],
+      images: hotel.images ?? [],
+    }).map(([key, value]) => [key, value ?? '']),
+  ),
+});
 
 const HotelForm = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { isAdmin, isAuthenticated } = useAuth();
   const isEditing = !!id;
+  const [saved, setSaved] = useState(null); // {id} tras crear/editar
 
-  const [loading, setLoading] = useState(false);
-  const [fetchLoading, setFetchLoading] = useState(isEditing);
-  const [error, setError] = useState(null);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
-  const [amenityInput, setAmenityInput] = useState('');
-  const [imageInput, setImageInput] = useState('');
+  const hotelQuery = useHotel(id, { enabled: isEditing });
+  const saveMutation = useSaveHotel();
 
   const {
     register,
+    control,
     handleSubmit,
-    setValue,
-    watch,
     reset,
-    formState: { errors },
-  } = useForm({
-    defaultValues: {
-      name: '',
-      description: '',
-      address: '',
-      city: '',
-      state: '',
-      country: '',
-      phone: '',
-      email: '',
-      price_per_night: '',
-      rating: '',
-      available_rooms: '',
-      check_in_time: DEFAULT_TIMES.CHECK_IN,
-      check_out_time: DEFAULT_TIMES.CHECK_OUT,
-      amenities: [],
-      images: [],
-    },
-  });
+    setFocus,
+    formState: { errors, isDirty },
+  } = useForm({ defaultValues: emptyValues, mode: 'onTouched' });
 
-  const amenities = watch('amenities');
-  const images = watch('images');
+  const unsaved = useUnsavedChanges(isDirty && !saved);
 
+  // Editar: hidratar el form cuando llega el hotel
   useEffect(() => {
-    if (!isAuthenticated || !isAdmin) {
-      navigate(ROUTES.LOGIN);
-      return;
+    if (isEditing && hotelQuery.data) {
+      reset(hotelToValues(hotelQuery.data));
     }
-
-    if (isEditing) {
-      fetchHotel();
-    }
-  }, [isAuthenticated, isAdmin, id, navigate]);
-
-  const fetchHotel = async () => {
-    try {
-      setFetchLoading(true);
-      const hotel = await hotelsService.getById(id);
-      reset({
-        name: hotel.name || '',
-        description: hotel.description || '',
-        address: hotel.address || '',
-        city: hotel.city || '',
-        state: hotel.state || '',
-        country: hotel.country || '',
-        phone: hotel.phone || '',
-        email: hotel.email || '',
-        price_per_night: hotel.price_per_night || hotel.pricePerNight || '',
-        rating: hotel.rating || '',
-        available_rooms: hotel.available_rooms || hotel.availableRooms || '',
-        check_in_time: hotel.check_in_time || hotel.checkInTime || DEFAULT_TIMES.CHECK_IN,
-        check_out_time: hotel.check_out_time || hotel.checkOutTime || DEFAULT_TIMES.CHECK_OUT,
-        amenities: hotel.amenities || [],
-        images: hotel.images || [],
-      });
-    } catch (err) {
-      console.error('Error fetching hotel:', err);
-      setError('Could not load hotel information');
-    } finally {
-      setFetchLoading(false);
-    }
-  };
+  }, [isEditing, hotelQuery.data, reset]);
 
   const onSubmit = async (data) => {
+    const payload = {
+      name: data.name.trim(),
+      description: data.description.trim(),
+      address: data.address.trim(),
+      city: data.city.trim(),
+      state: data.state.trim(),
+      country: data.country.trim(),
+      phone: data.phone.trim(),
+      email: data.email.trim(),
+      price_per_night: Number(data.price_per_night),
+      rating: data.rating === '' ? 0 : Number(data.rating),
+      available_rooms: Number(data.available_rooms),
+      check_in_time: data.check_in_time,
+      check_out_time: data.check_out_time,
+      amenities: data.amenities,
+      images: data.images,
+    };
+
     try {
-      setLoading(true);
-      setError(null);
-
-      const hotelData = {
-        name: data.name,
-        description: data.description,
-        address: data.address,
-        city: data.city,
-        state: data.state,
-        country: data.country,
-        phone: data.phone,
-        email: data.email,
-        price_per_night: parseFloat(data.price_per_night) || 0,
-        rating: parseFloat(data.rating) || 0,
-        available_rooms: parseInt(data.available_rooms) || 0,
-        check_in_time: data.check_in_time,
-        check_out_time: data.check_out_time,
-        amenities: data.amenities,
-        images: data.images,
-      };
-
-      if (isEditing) {
-        await adminService.updateHotel(id, hotelData);
-        setSnackbar({ open: true, message: 'Hotel updated successfully', severity: 'success' });
-      } else {
-        await adminService.createHotel(hotelData);
-        setSnackbar({ open: true, message: 'Hotel created successfully', severity: 'success' });
-      }
-
-      setTimeout(() => navigate(ROUTES.ADMIN), 1500);
-    } catch (err) {
-      console.error('Error saving hotel:', err);
-      setError(err.response?.data?.error?.message || 'Error saving hotel');
-    } finally {
-      setLoading(false);
+      const result = await saveMutation.mutateAsync({ hotelId: id, data: payload });
+      reset(data); // limpia isDirty: no pedir confirmación al salir
+      setSaved({ id: isEditing ? id : result.id });
+    } catch {
+      // saveMutation.error se muestra en el summary
     }
   };
 
-  const handleAddAmenity = () => {
-    if (amenityInput.trim() && !amenities.includes(amenityInput.trim())) {
-      setValue('amenities', [...amenities, amenityInput.trim()]);
-      setAmenityInput('');
-    }
+  const onInvalid = (fieldErrors) => {
+    const first = Object.keys(fieldErrors)[0];
+    if (first) setFocus(first);
   };
 
-  const handleRemoveAmenity = (amenity) => {
-    setValue('amenities', amenities.filter((a) => a !== amenity));
-  };
-
-  const handleAddImage = () => {
-    if (imageInput.trim() && !images.includes(imageInput.trim())) {
-      setValue('images', [...images, imageInput.trim()]);
-      setImageInput('');
-    }
-  };
-
-  const handleRemoveImage = (image) => {
-    setValue('images', images.filter((i) => i !== image));
-  };
-
-  if (!isAuthenticated || !isAdmin) {
-    return null;
+  if (isEditing && hotelQuery.isPending) {
+    return <AppLoader label="Loading hotel" />;
   }
 
-  if (fetchLoading) {
+  if (isEditing && hotelQuery.isError) {
     return (
-      <Container maxWidth="md" sx={{ py: 4 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-          <CircularProgress />
-        </Box>
+      <Container maxWidth="md" sx={{ py: 6 }}>
+        <ErrorState error={hotelQuery.error} title="We could not load this hotel" onRetry={hotelQuery.refetch} />
       </Container>
     );
   }
 
+  const errorEntries = Object.entries(errors);
+
   return (
     <Box sx={{ bgcolor: 'background.default', minHeight: '100vh' }}>
-      {/* Header */}
+      <RouteMeta
+        title={isEditing ? 'Edit hotel' : 'New hotel'}
+        description="Create or edit a hotel in the StayLux catalog."
+      />
+
       <Box sx={{ bgcolor: 'primary.main', py: 4 }}>
         <Container maxWidth="md">
           <Button
             startIcon={<ArrowBackIcon />}
-            onClick={() => navigate(ROUTES.ADMIN)}
-            sx={{ color: 'white', mb: 2 }}
+            onClick={() => unsaved.confirmLeave(() => navigate(ROUTES.ADMIN))}
+            sx={{ color: 'white', mb: 1 }}
           >
-            Back to Dashboard
+            Back to dashboard
           </Button>
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <HotelIcon sx={{ fontSize: 36, color: 'secondary.main', mr: 2 }} />
-            <Typography variant="h4" sx={{ color: 'white', fontWeight: 600 }}>
-              {isEditing ? 'Edit Hotel' : 'New Hotel'}
-            </Typography>
-          </Box>
+          <Typography variant="h4" component="h1" sx={{ color: 'white', fontWeight: 600 }}>
+            {isEditing ? 'Edit hotel' : 'New hotel'}
+          </Typography>
         </Container>
       </Box>
 
       <Container maxWidth="md" sx={{ py: 4 }}>
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
-            {error}
-          </Alert>
-        )}
+        <Box aria-live="polite">
+          {errorEntries.length > 0 && (
+            <Alert severity="error" sx={{ mb: 3 }}>
+              <AlertTitle>Fix {errorEntries.length} field{errorEntries.length === 1 ? '' : 's'} before saving</AlertTitle>
+              {errorEntries.map(([field, fieldError]) => (
+                <Typography key={field} variant="body2">
+                  • {fieldError.message}
+                </Typography>
+              ))}
+            </Alert>
+          )}
+          {saveMutation.error && (
+            <Alert severity="error" onClose={() => saveMutation.reset()} sx={{ mb: 3 }}>
+              {saveMutation.error.message}
+              {saveMutation.error.traceId && (
+                <Typography variant="caption" sx={{ display: 'block', mt: 0.5, fontFamily: 'monospace' }}>
+                  Reference: {saveMutation.error.traceId}
+                </Typography>
+              )}
+            </Alert>
+          )}
+        </Box>
 
         <Card>
-          <CardContent sx={{ p: 4 }}>
-            <form onSubmit={handleSubmit(onSubmit)}>
-              <Typography variant="h6" sx={{ mb: 3, fontWeight: 600 }}>
-                Basic Information
+          <CardContent sx={{ p: { xs: 2.5, md: 4 } }}>
+            <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate>
+              <Typography variant="h6" component="h2" sx={{ mb: 2.5 }}>
+                Basics
               </Typography>
-
-              <Grid container spacing={3}>
+              <Grid container spacing={2.5}>
                 <Grid size={{ xs: 12 }}>
                   <TextField
                     fullWidth
-                    label="Hotel Name"
-                    {...register('name', { required: 'Name is required' })}
+                    label="Hotel name"
+                    {...register('name', { required: 'Hotel name is required' })}
                     error={!!errors.name}
                     helperText={errors.name?.message}
                   />
                 </Grid>
-
                 <Grid size={{ xs: 12 }}>
-                  <TextField
-                    fullWidth
-                    label="Description"
-                    multiline
-                    rows={4}
-                    {...register('description')}
-                  />
+                  <TextField fullWidth label="Description" multiline rows={4} {...register('description')} />
                 </Grid>
-
                 <Grid size={{ xs: 12 }}>
                   <TextField
                     fullWidth
@@ -257,7 +227,6 @@ const HotelForm = () => {
                     helperText={errors.address?.message}
                   />
                 </Grid>
-
                 <Grid size={{ xs: 12, sm: 4 }}>
                   <TextField
                     fullWidth
@@ -267,15 +236,9 @@ const HotelForm = () => {
                     helperText={errors.city?.message}
                   />
                 </Grid>
-
                 <Grid size={{ xs: 12, sm: 4 }}>
-                  <TextField
-                    fullWidth
-                    label="State/Province"
-                    {...register('state')}
-                  />
+                  <TextField fullWidth label="State / province" {...register('state')} />
                 </Grid>
-
                 <Grid size={{ xs: 12, sm: 4 }}>
                   <TextField
                     fullWidth
@@ -287,51 +250,47 @@ const HotelForm = () => {
                 </Grid>
               </Grid>
 
-              <Typography variant="h6" sx={{ mt: 4, mb: 3, fontWeight: 600 }}>
+              <Typography variant="h6" component="h2" sx={{ mt: 4, mb: 2.5 }}>
                 Contact
               </Typography>
-
-              <Grid container spacing={3}>
+              <Grid container spacing={2.5}>
                 <Grid size={{ xs: 12, sm: 6 }}>
-                  <TextField
-                    fullWidth
-                    label="Phone"
-                    {...register('phone')}
-                  />
+                  <TextField fullWidth label="Phone" {...register('phone')} />
                 </Grid>
-
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <TextField
                     fullWidth
                     label="Email"
                     type="email"
-                    {...register('email')}
+                    {...register('email', {
+                      validate: (value) => isOptionalEmail(value) || 'Enter a valid email address',
+                    })}
+                    error={!!errors.email}
+                    helperText={errors.email?.message}
                   />
                 </Grid>
               </Grid>
 
-              <Typography variant="h6" sx={{ mt: 4, mb: 3, fontWeight: 600 }}>
-                Pricing & Availability
+              <Typography variant="h6" component="h2" sx={{ mt: 4, mb: 2.5 }}>
+                Pricing and availability
               </Typography>
-
-              <Grid container spacing={3}>
+              <Grid container spacing={2.5}>
                 <Grid size={{ xs: 12, sm: 4 }}>
                   <TextField
                     fullWidth
-                    label="Price per Night"
+                    label="Price per night"
                     type="number"
-                    InputProps={{
-                      startAdornment: <InputAdornment position="start">$</InputAdornment>,
-                    }}
+                    inputProps={{ min: 0, step: '0.01' }}
+                    InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
                     {...register('price_per_night', {
-                      required: 'Price is required',
-                      min: { value: 0, message: 'Price must be greater than 0' },
+                      required: 'Price per night is required',
+                      validate: (value) =>
+                        (Number(value) > 0 && Number.isFinite(Number(value))) || 'Price must be greater than 0',
                     })}
                     error={!!errors.price_per_night}
                     helperText={errors.price_per_night?.message}
                   />
                 </Grid>
-
                 <Grid size={{ xs: 12, sm: 4 }}>
                   <TextField
                     fullWidth
@@ -339,158 +298,113 @@ const HotelForm = () => {
                     type="number"
                     inputProps={{ step: 0.1, min: VALIDATION.MIN_RATING, max: VALIDATION.MAX_RATING }}
                     {...register('rating', {
-                      min: { value: VALIDATION.MIN_RATING, message: 'Minimum 0' },
-                      max: { value: VALIDATION.MAX_RATING, message: 'Maximum 5' },
+                      validate: (value) =>
+                        value === '' ||
+                        (Number(value) >= VALIDATION.MIN_RATING && Number(value) <= VALIDATION.MAX_RATING) ||
+                        `Rating must be between ${VALIDATION.MIN_RATING} and ${VALIDATION.MAX_RATING}`,
                     })}
                     error={!!errors.rating}
                     helperText={errors.rating?.message}
                   />
                 </Grid>
-
                 <Grid size={{ xs: 12, sm: 4 }}>
                   <TextField
                     fullWidth
-                    label="Available Rooms"
+                    label="Available rooms"
                     type="number"
-                    inputProps={{ min: 0 }}
+                    inputProps={{ min: 0, step: 1 }}
                     {...register('available_rooms', {
-                      required: 'This field is required',
-                      min: { value: 0, message: 'Minimum 0' },
+                      required: 'Available rooms is required',
+                      validate: (value) =>
+                        (Number.isInteger(Number(value)) && Number(value) >= 0) ||
+                        'Available rooms must be a whole number of 0 or more',
                     })}
                     error={!!errors.available_rooms}
                     helperText={errors.available_rooms?.message}
                   />
                 </Grid>
-
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <TextField
                     fullWidth
-                    label="Check-in Time"
+                    label="Check-in time"
                     type="time"
                     InputLabelProps={{ shrink: true }}
-                    {...register('check_in_time')}
+                    {...register('check_in_time', {
+                      validate: (value) => isTimeOfDay(value) || 'Check-in time must be HH:mm',
+                    })}
+                    error={!!errors.check_in_time}
+                    helperText={errors.check_in_time?.message || '24h format, e.g. 15:00'}
                   />
                 </Grid>
-
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <TextField
                     fullWidth
-                    label="Check-out Time"
+                    label="Check-out time"
                     type="time"
                     InputLabelProps={{ shrink: true }}
-                    {...register('check_out_time')}
+                    {...register('check_out_time', {
+                      validate: (value) => isTimeOfDay(value) || 'Check-out time must be HH:mm',
+                    })}
+                    error={!!errors.check_out_time}
+                    helperText={errors.check_out_time?.message || '24h format, e.g. 11:00'}
                   />
                 </Grid>
               </Grid>
 
-              <Typography variant="h6" sx={{ mt: 4, mb: 3, fontWeight: 600 }}>
+              <Typography variant="h6" component="h2" sx={{ mt: 4, mb: 2.5 }}>
                 Amenities
               </Typography>
-
-              <Box sx={{ mb: 2 }}>
-                <TextField
-                  size="small"
-                  placeholder="Add amenity (e.g., WiFi, Pool, Gym)"
-                  value={amenityInput}
-                  onChange={(e) => setAmenityInput(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddAmenity())}
-                  InputProps={{
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton onClick={handleAddAmenity} size="small">
-                          <AddIcon />
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  }}
-                  sx={{ width: 300 }}
-                />
-              </Box>
-
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-                {amenities.map((amenity, index) => (
-                  <Chip
-                    key={index}
-                    label={amenity}
-                    onDelete={() => handleRemoveAmenity(amenity)}
-                    color="primary"
-                    variant="outlined"
+              <Controller
+                name="amenities"
+                control={control}
+                render={({ field }) => (
+                  <Autocomplete
+                    multiple
+                    freeSolo
+                    options={AMENITY_CATALOG}
+                    getOptionLabel={amenityLabel}
+                    value={field.value}
+                    onChange={(_event, value) =>
+                      field.onChange(
+                        value.map((v) => v.trim().toLowerCase().replace(/\s+/g, '_')).filter(Boolean),
+                      )
+                    }
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip label={amenityLabel(option)} {...getTagProps({ index })} key={option} />
+                      ))
+                    }
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Amenities"
+                        helperText="Pick from the catalog or type a custom one and press Enter"
+                      />
+                    )}
                   />
-                ))}
-              </Box>
+                )}
+              />
 
-              <Typography variant="h6" sx={{ mt: 4, mb: 3, fontWeight: 600 }}>
+              <Typography variant="h6" component="h2" sx={{ mt: 4, mb: 2.5 }}>
                 Images
               </Typography>
-
-              <Box sx={{ mb: 2 }}>
-                <TextField
-                  size="small"
-                  placeholder="Image URL"
-                  value={imageInput}
-                  onChange={(e) => setImageInput(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddImage())}
-                  InputProps={{
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton onClick={handleAddImage} size="small">
-                          <AddIcon />
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  }}
-                  fullWidth
-                />
-              </Box>
-
-              <Grid container spacing={2}>
-                {images.map((image, index) => (
-                  <Grid key={index} size={{ xs: 6, sm: 4, md: 3 }}>
-                    <Box sx={{ position: 'relative' }}>
-                      <Box
-                        component="img"
-                        src={image}
-                        alt={`Image ${index + 1}`}
-                        sx={{
-                          width: '100%',
-                          height: 100,
-                          objectFit: 'cover',
-                          borderRadius: 1,
-                        }}
-                      />
-                      <IconButton
-                        size="small"
-                        onClick={() => handleRemoveImage(image)}
-                        sx={{
-                          position: 'absolute',
-                          top: 4,
-                          right: 4,
-                          bgcolor: 'error.main',
-                          color: 'white',
-                          '&:hover': { bgcolor: 'error.dark' },
-                        }}
-                      >
-                        <CloseIcon fontSize="small" />
-                      </IconButton>
-                    </Box>
-                  </Grid>
-                ))}
-              </Grid>
+              <Controller
+                name="images"
+                control={control}
+                render={({ field }) => <HotelImageFields images={field.value} onChange={field.onChange} />}
+              />
 
               <Box sx={{ mt: 4, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-                <Button
-                  variant="outlined"
-                  onClick={() => navigate(ROUTES.ADMIN)}
-                >
+                <Button variant="outlined" onClick={() => unsaved.confirmLeave(() => navigate(ROUTES.ADMIN))}>
                   Cancel
                 </Button>
                 <Button
                   type="submit"
                   variant="contained"
-                  startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />}
-                  disabled={loading}
+                  startIcon={saveMutation.isPending ? <CircularProgress size={18} color="inherit" /> : <SaveIcon />}
+                  disabled={saveMutation.isPending}
                 >
-                  {isEditing ? 'Save Changes' : 'Create Hotel'}
+                  {isEditing ? 'Save changes' : 'Create hotel'}
                 </Button>
               </Box>
             </form>
@@ -498,16 +412,45 @@ const HotelForm = () => {
         </Card>
       </Container>
 
-      {/* Snackbar */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-      >
-        <Alert severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })}>
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+      {/* Éxito: acciones explícitas, sin temporizadores */}
+      <Dialog open={!!saved} maxWidth="sm" fullWidth aria-labelledby="hotel-saved-title">
+        <DialogTitle id="hotel-saved-title">
+          {isEditing ? 'Changes saved' : 'Hotel created'}
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1">
+            {isEditing
+              ? 'The hotel was updated and the search index will sync shortly.'
+              : 'The hotel is now in the catalog and will appear in search shortly.'}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button component={Link} to={`/hotels/${saved?.id}`} variant="outlined">
+            View hotel
+          </Button>
+          <Button onClick={() => navigate(ROUTES.ADMIN)} variant="contained">
+            Back to dashboard
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Cambios sin guardar */}
+      <Dialog open={unsaved.isConfirming} onClose={unsaved.stay} maxWidth="xs" fullWidth aria-labelledby="unsaved-title">
+        <DialogTitle id="unsaved-title">Discard unsaved changes?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            Your edits to this hotel have not been saved.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={unsaved.stay} variant="outlined">
+            Keep editing
+          </Button>
+          <Button onClick={unsaved.discardAndLeave} color="error" variant="contained">
+            Discard changes
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
