@@ -961,3 +961,7 @@ Se eligió **renombrar/parafrasear** (no acotar el grep): prop interna `pricePer
 ### Primera acción sugerida para la próxima sesión
 
 **Plan 12** (documentación y presentación): README nuevo, capturas (ya están en `frontend/e2e-evidence/` y `frontend/lighthouse/`), GIF/diagrama, OpenAPI, badges. Es el último plan pendiente.
+
+### Post-cierre (mismo día): fix del CI rojo en el primer push
+
+El push del plan 13 dejó **un solo job rojo: `frontend`**, en `test:coverage` (primera vez que ese step corría en CI): los 22 forks workers de vitest morían con `TypeError: webidl.util.markAsUncloneable is not a function` al cargar **jsdom 30 → undici 8**. Causa: **jsdom 30.0.1 declara engines `^22.22.2 || ^24.15.0 || >=26` y undici 8.9 `>=22.19`, pero el job usaba `node-version: 20`** (npm no corta por engines; explota en runtime). Local pasaba por Node v22.23.2. Fix: **Node 22 en los jobs `frontend` y `frontend-e2e`** de ci.yml + **`node:22-alpine` en `frontend/Dockerfile`** por coherencia (el build de vite funcionaba en 20; solo los tests cargan jsdom). Verificado replicando el entorno del CI en Docker (`node:22-bookworm`, `npm ci` limpio, TZ=America/Los_Angeles): **131/131 tests en verde**; la imagen del SPA rebuildeada con 22 sirve OK. El resto del run del push ya estaba verde (4× go, 3× docker; integration/frontend-e2e solo corren en PRs).
