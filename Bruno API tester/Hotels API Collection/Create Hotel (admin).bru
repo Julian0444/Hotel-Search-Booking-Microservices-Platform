@@ -1,0 +1,60 @@
+meta {
+  name: Create Hotel (admin)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/admin/hotels
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+body:json {
+  {
+    "name": "Bruno Demo Hotel",
+    "description": "Hotel creado por la colección Bruno para demostrar el CRUD admin.",
+    "address": "Calle Falsa 123",
+    "city": "Buenos Aires",
+    "state": "CABA",
+    "country": "Argentina",
+    "phone": "+54 11 5555-0100",
+    "email": "demo@brunohotel.test",
+    "price_per_night": 199,
+    "rating": 4.2,
+    "available_rooms": 10,
+    "check_in_time": "15:00",
+    "check_out_time": "11:00",
+    "amenities": ["wifi", "pileta", "gym"],
+    "images": ["https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800"]
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("created_hotel_id", res.body.data.id);
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  Crea un hotel — SOLO admins (cliente → 403 `forbidden`). 201 con `Location`
+  y el id creado. Publica un evento CREATE en la cola `hotels-news`:
+  search-api lo indexa en Solr poco después (eventualmente consistente).
+
+  Validación server-side: check_in_time/check_out_time en "HH:mm"
+  (si no → 400 `invalid_body`).
+
+  La request 16 borra este hotel — la corrida completa no deja residuos.
+}
+
+settings {
+  encodeUrl: true
+}

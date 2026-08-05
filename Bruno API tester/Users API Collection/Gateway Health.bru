@@ -1,0 +1,24 @@
+meta {
+  name: Gateway Health
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{gatewayUrl}}/health
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Health del propio gateway nginx (no versionado, no proxiado).
+  Cada servicio expone además /livez y /readyz fuera de /api/v1.
+}
+
+settings {
+  encodeUrl: true
+}

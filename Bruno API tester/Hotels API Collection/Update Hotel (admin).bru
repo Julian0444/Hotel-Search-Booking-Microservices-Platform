@@ -1,0 +1,40 @@
+meta {
+  name: Update Hotel (admin)
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{baseUrl}}/admin/hotels/{{created_hotel_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+body:json {
+  {
+    "description": "Descripción actualizada vía PUT — semántica merge.",
+    "price_per_night": 249,
+    "rating": 4.7
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Actualiza un hotel — SOLO admins. Semántica merge: solo los campos
+  presentes con valor no-cero se actualizan (los omitidos conservan su valor;
+  no se puede "vaciar" un campo por acá). Devuelve la representación
+  actualizada y publica un evento UPDATE en `hotels-news`.
+
+  Hotel inexistente → 404 `hotel_not_found`.
+}
+
+settings {
+  encodeUrl: true
+}

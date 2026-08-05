@@ -1,22 +1,23 @@
 meta {
   name: Get Hotel by ID
   type: http
-  seq: 2
+  seq: 5
 }
 
 get {
-  url: http://localhost/hotels/{{hotel_id}}
+  url: {{baseUrl}}/hotels/{{hotel_id}}
   body: none
   auth: none
 }
 
-docs {
-  Obtiene un hotel específico por su ID.
-  Cambia el hotel_id en la URL según necesites.
+assert {
+  res.status: eq 200
 }
 
-vars:pre-request {
-  hotel_id: 
+docs {
+  Detalle público de un hotel. Un id inexistente (o hex inválido) → 404
+  `hotel_not_found`. `check_in_time`/`check_out_time` son horas del día
+  "HH:mm"; `price_per_night` es el precio de catálogo en USD.
 }
 
 settings {

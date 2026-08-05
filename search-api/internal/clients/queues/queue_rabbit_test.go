@@ -9,7 +9,7 @@ import (
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils"
 
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // fakeAcker registra los acks/nacks para testear la política de E1 sin broker.

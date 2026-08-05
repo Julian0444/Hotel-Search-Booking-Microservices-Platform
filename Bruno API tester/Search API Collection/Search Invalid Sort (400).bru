@@ -1,0 +1,27 @@
+meta {
+  name: Search Invalid Sort (400)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/search?q=&sort=name_asc
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 400
+  res.body.error.code: eq invalid_sort
+}
+
+docs {
+  Demostración del contrato de errores: un sort fuera de la whitelist
+  devuelve 400 con el envelope estable
+  `{"error": {"code": "invalid_sort", "message", "trace_id"}}`.
+  Los 400 NO se cachean (solo los 200).
+}
+
+settings {
+  encodeUrl: true
+}

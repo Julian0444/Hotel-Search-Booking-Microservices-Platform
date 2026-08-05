@@ -1,0 +1,29 @@
+meta {
+  name: Delete User (self)
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/users/{{user_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  Owner-or-admin: acá el usuario fresco de la corrida borra su propia cuenta
+  (cleanup — la colección no deja residuos). 204 sin body; borrar un usuario
+  inexistente → 404 `user_not_found`.
+}
+
+settings {
+  encodeUrl: true
+}

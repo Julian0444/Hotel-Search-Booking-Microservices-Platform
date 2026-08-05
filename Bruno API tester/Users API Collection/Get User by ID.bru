@@ -1,11 +1,11 @@
 meta {
   name: Get User by ID
   type: http
-  seq: 5
+  seq: 4
 }
 
 get {
-  url: http://localhost/users/{{user_id}}
+  url: {{baseUrl}}/users/{{user_id}}
   body: none
   auth: bearer
 }
@@ -14,13 +14,17 @@ auth:bearer {
   token: {{token}}
 }
 
-vars:pre-request {
-  user_id: 1
+assert {
+  res.status: eq 200
 }
 
 docs {
-  Obtiene un usuario por su ID.
-  Requiere autenticación.
+  Owner-or-admin: un usuario solo puede leer su propia cuenta; los admins,
+  cualquiera. `id` es SIEMPRE string en la respuesta (la PK numérica es
+  interna).
+
+  - Otro usuario → 403 `forbidden`.
+  - Inexistente → 404 `user_not_found`.
 }
 
 settings {

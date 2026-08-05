@@ -7,7 +7,6 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/karlseguin/ccache v2.0.3+incompatible
-	github.com/streadway/amqp v1.1.0
 	github.com/stretchr/testify v1.11.1
 	go.mongodb.org/mongo-driver v1.17.7
 )
@@ -100,6 +99,7 @@ require (
 
 require (
 	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/platform-contracts v0.0.0
+	github.com/rabbitmq/amqp091-go v1.13.0
 	github.com/testcontainers/testcontainers-go v0.43.0
 )
 

@@ -1,0 +1,21 @@
+docs {
+  # Search API — búsqueda full-text (read model CQRS-lite)
+
+  Búsqueda sobre el índice Solr `hotels`, sincronizado por eventos de
+  `hotels-news` (thin event + lookup a hotels-api) — contra el gateway nginx
+  (`{{baseUrl}}` = https://localhost/api/v1).
+
+  Cómo usarla:
+  - Seleccionar el environment **local**.
+  - TLS self-signed → desactivar la verificación SSL en Bruno o usar
+    `--insecure` en CLI.
+  - `admin_password` trae el placeholder de `.env.example`: ajustarlo al
+    ADMIN_PASSWORD de tu `.env` (en CLI: `--env-var admin_password=...`).
+  - El gateway CACHEA los 200 de GET /search por 5 minutos, keyed por URI
+    completa (header `X-Cache-Status`: MISS|HIT|...). Coherente con un índice
+    eventualmente consistente — para ver datos frescos, variar la query.
+  - Solo `POST /reindex` requiere token (admin).
+
+  CLI (desde esta carpeta):
+  `npx -y @usebruno/cli run --env local --insecure --env-var admin_password=...`
+}

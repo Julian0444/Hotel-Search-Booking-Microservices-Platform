@@ -1,0 +1,37 @@
+meta {
+  name: Check Availability
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/hotels/availability
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "hotel_ids": ["{{hotel_id}}"],
+    "check_in": "2027-03-01",
+    "check_out": "2027-03-05"
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Check público en batch contra el inventario por noche (los mismos
+  contadores que usa el claim de reserva). `data` es un mapa hotel_id → bool:
+  true si TODAS las noches de [check_in, check_out) tienen cupo. Ids
+  desconocidos reportan false (conservador).
+
+  Fechas en formato YYYY-MM-DD; check_out debe ser posterior a check_in
+  (si no → 400 `invalid_body`).
+}
+
+settings {
+  encodeUrl: true
+}

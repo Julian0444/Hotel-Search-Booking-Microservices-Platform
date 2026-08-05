@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-### Backend (Docker Compose — 10 containers)
+### Backend (Docker Compose — 12 containers: 11 long-running + one-shot migrate)
 
 ```bash
 cp .env.example .env          # required: compose uses ${VAR:?} and fails without it
@@ -37,7 +37,7 @@ npm run build
 
 ## Architecture
 
-Three independent Go microservices + React SPA, orchestrated by `docker-compose.yml` with nginx (`nginx.conf`) as the API gateway on port 80 — routing, rate limiting, CORS, and load balancing of 3 users-api replicas (`least_conn`). All client traffic goes through the gateway; see the endpoint table in README.md.
+Three independent Go microservices + React SPA, orchestrated by `docker-compose.yml` with nginx (`nginx.conf`) as the API gateway on port 443 (TLS; port 80 only redirects) — routing, rate limiting, and load balancing of 3 users-api replicas (`least_conn`). All client traffic goes through the gateway; see the endpoint table in README.md.
 
 - **users-api** (Go, port 8082 ×3): registration/login, issues JWTs. Read-through cache: L1 ccache (in-process) → L2 Memcached → MySQL (GORM).
 - **hotels-api** (Go, port 8081): hotel CRUD + reservations. Cache-aside ccache → MongoDB. Publishes `CREATE`/`UPDATE`/`DELETE` events to the RabbitMQ `hotels-news` queue.
@@ -47,7 +47,7 @@ Each Go service has the same layered layout, wired in `cmd/main.go`: `internal/c
 
 ### Auth flow (spans services)
 
-`users-api/internal/tokenizers/tokenizers_jwt.go` mints HS256 JWTs with claims `user_id`, `username`, `tipo` (role: `cliente` | `administrador`), `iss: "users-api"`, `aud: ["users-api", "hotels-api"]`. Both users-api and hotels-api have an `internal/middlewares/auth.go` that validates the shared `JWT_SECRET` and each service's own audience, with role guards (`AdminOnly`, `LoggedUserOnly`). Public registration always creates `cliente`; the first admin is seeded idempotently at users-api startup from `ADMIN_USERNAME`/`ADMIN_PASSWORD`.
+`users-api/internal/tokenizers/tokenizers_jwt.go` mints HS256 JWTs with claims `user_id`, `username`, `tipo` (role: `cliente` | `administrador`), `iss: "users-api"`, `aud: ["users-api", "hotels-api", "search-api"]`. The three services have an `internal/middlewares/auth.go` that validates the shared `JWT_SECRET` and each service's own audience, with role guards (`AdminOnly`, `LoggedUserOnly`). Public registration always creates `cliente`; the first admin is seeded idempotently at users-api startup from `ADMIN_USERNAME`/`ADMIN_PASSWORD`.
 
 ### Test conventions
 

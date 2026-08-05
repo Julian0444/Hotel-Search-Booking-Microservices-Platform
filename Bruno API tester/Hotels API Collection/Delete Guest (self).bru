@@ -1,0 +1,29 @@
+meta {
+  name: Delete Guest (self)
+  type: http
+  seq: 18
+}
+
+delete {
+  url: {{baseUrl}}/users/{{guest_user_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{guest_token}}
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  Cleanup final: el huésped fresco de la corrida borra su propia cuenta
+  (owner-or-admin en users-api). Sus reservas canceladas quedan en Mongo
+  como historial auditable.
+}
+
+settings {
+  encodeUrl: true
+}

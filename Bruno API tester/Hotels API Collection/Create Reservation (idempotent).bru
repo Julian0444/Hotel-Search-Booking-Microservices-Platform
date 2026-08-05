@@ -1,0 +1,61 @@
+meta {
+  name: Create Reservation (idempotent)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/reservations
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{guest_token}}
+}
+
+headers {
+  Idempotency-Key: {{idem_key}}
+}
+
+body:json {
+  {
+    "hotel_id": "{{created_hotel_id}}",
+    "check_in": "2027-03-01",
+    "check_out": "2027-03-04",
+    "num_rooms": 1,
+    "num_guests": 2
+  }
+}
+
+script:pre-request {
+  bru.setVar("idem_key", "bruno-" + Date.now());
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("reservation_id", res.body.data.id);
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  Crea una reserva autenticada con `Idempotency-Key` (opt-in; alcance
+  key+usuario). El claim de inventario es atómico por noche: sin cupo →
+  409 `no_availability`, sin carreras de overbooking.
+
+  - Fechas civiles YYYY-MM-DD; check_in no puede estar en el pasado y
+    check_out debe ser posterior (→ 400 `invalid_reservation`).
+  - num_rooms/num_guests omitidos o 0 → default 1.
+  - hotel_name, total_price (centavos: round(price×100) × noches × rooms)
+    y currency (USD) se derivan del hotel en el servidor, nunca del body.
+  - user_id en el body es opcional y debe coincidir con el token (→ 403).
+  - 201 con `Location` apuntando a la reserva creada.
+}
+
+settings {
+  encodeUrl: true
+}

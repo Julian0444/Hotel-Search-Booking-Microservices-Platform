@@ -1,47 +1,64 @@
 # 🏨 Hotel Search & Booking Microservices Platform
 
-A full-stack hotel search and booking platform built with a microservices architecture. Three independent Go APIs communicate through an Nginx API Gateway and RabbitMQ, backed by a React SPA frontend.
+Production-style hotel search & booking: three Go microservices (database-per-service) behind an nginx API gateway, kept in sync through RabbitMQ, with a React SPA on top.
+
+[![CI](https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/actions/workflows/ci.yml)
+![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+![Demo — login, search, booking, confirmation, history](docs/demo.gif)
+
+*More screenshots (search, hotel detail, reservations, admin) in [`docs/screenshots/`](docs/screenshots/).*
+
+---
+
+## 🎯 What this project demonstrates
+
+- **Microservices done with intent** — three Go services with bounded domains and their own stores (MySQL, MongoDB, Solr), a shared contracts module so the event producer and consumer can never drift, and one nginx gateway doing TLS, `least_conn` load balancing over 3 users-api replicas, rate limiting, a search response cache and stable JSON error envelopes with `trace_id`.
+- **Event-driven search (CQRS-lite)** — hotel writes publish `CREATE`/`UPDATE`/`DELETE` events to RabbitMQ; search-api consumes them (manual ack → retry → dead-letter queue), rebuilds its Solr index from the source of truth on startup and on `POST /reindex`.
+- **No overbooking, by construction** — reservations claim per-night inventory with an atomic `findOneAndUpdate` upsert over a unique index (with compensation on partial failure), so two clients racing for the last room cannot both win; bookings support opt-in **`Idempotency-Key`** retry safety.
+- **Distributed auth** — users-api issues HS256 JWTs (`iss`/`aud` per service); every service validates its own audience with role guards (`cliente`/`administrador`) and owner-or-admin resource rules.
+- **Multi-level caching** — users: in-process L1 → shared Memcached L2 → MySQL read-through; hotels: cache-aside with denormalized lists; gateway: 5-minute search cache keyed by URI.
+- **Operability** — structured JSON logs with request IDs propagated end-to-end, `/livez` + `/readyz` health model, graceful shutdown, a circuit breaker on the search→hotels HTTP path, and Kubernetes manifests with an HPA as an alternative runtime.
+- **Tested at every level** — Go unit/controller tests with `-race` and real JWTs, frontend Vitest+MSW suite, Playwright E2E against the real stack, self-verifying API collections, CI with `govulncheck` and Trivy image scanning.
 
 ---
 
 ## 🏗️ Architecture
 
+```mermaid
+flowchart TB
+    SPA["React 19 SPA<br/>:5173"]
+    subgraph GATEWAY["nginx API gateway — :443 TLS (80 → 301)"]
+        NG["routing · least_conn LB · rate limiting<br/>search cache · JSON error envelopes · security headers"]
+    end
+    subgraph USERS["users-api (Go)"]
+        U1[":8082 ×3 replicas"]
+    end
+    subgraph HOTELS["hotels-api (Go)"]
+        H1[":8081"]
+    end
+    subgraph SEARCH["search-api (Go)"]
+        S1[":8082"]
+    end
+    MYSQL[("MySQL 8<br/>users")]
+    MEMC[("Memcached<br/>shared L2")]
+    MONGO[("MongoDB 6<br/>hotels · reservations<br/>inventory · idempotency")]
+    SOLR[("Solr 9<br/>hotels core")]
+    RABBIT[["RabbitMQ 3<br/>hotels-news (+ DLQ)"]]
+
+    SPA -->|"HTTPS /api/v1"| NG
+    NG --> U1 & H1 & S1
+    U1 --> MYSQL
+    U1 --> MEMC
+    H1 --> MONGO
+    S1 --> SOLR
+    H1 -.->|"publishes CREATE/UPDATE/DELETE"| RABBIT
+    RABBIT -.->|"consumes (manual ack)"| S1
+    S1 -->|"GET /hotels/:id (circuit breaker)"| H1
 ```
-                              ┌──────────────────────────┐
-                              │   Frontend (React 19)    │
-                              │     Vite + MUI v7        │
-                              │      Port 5173           │
-                              └────────────┬─────────────┘
-                                           │
-                              ┌────────────▼─────────────┐
-                              │   Nginx API Gateway      │
-                              │ 443 TLS (80→301) │ 8090  │
-                              │  (routing, rate limiting, │
-                              │   load balancing, CORS)   │
-                              └──┬─────────┼──────────┬──┘
-                                 │         │          │
-              ┌──────────────────▼──┐  ┌───▼────────┐ │  ┌───────────────────┐
-              │     Users API       │  │ Hotels API │ │  │    Search API      │
-              │  (Load Balanced x3) │  │  Port 8081 │ │  │    Port 8082       │
-              │     Port 8082       │  └─────┬──────┘ │  └──────┬────────────┘
-              └──┬──────┬──────┬────┘        │        │         │
-                 │      │      │             │        │         │
-           ┌─────▼┐ ┌───▼─┐ ┌─▼─────┐       │        │         │
-           │ API-1│ │API-2│ │ API-3 │       │        │         │
-           └──────┘ └─────┘ └───────┘       │        │         │
-                 │                           │        │         │
-          ┌──────▼───────┐           ┌───────▼──┐     │   ┌─────▼──────┐
-          │    MySQL 8   │           │ MongoDB 6│     │   │  Solr 9    │
-          │  Port 3307   │           │ Port 27017│    │   │ Port 8983  │
-          └──────────────┘           └──────────┘     │   └────────────┘
-                 │                        │           │         │
-          ┌──────▼───────┐               │      ┌────▼─────────▼────┐
-          │  Memcached   │               └──────┤    RabbitMQ 3     │
-          │ Port 11211   │                      │  Port 5672/15672  │
-          └──────────────┘                      └───────────────────┘
-                                                  Hotels API publishes
-                                                  Search API consumes
-```
+
+The full write-up — service boundaries, the atomic inventory design, the event pipeline, caching, auth, resilience and the trade-off table — lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
@@ -49,116 +66,20 @@ A full-stack hotel search and booking platform built with a microservices archit
 
 | Category        | Technology                                                     |
 |-----------------|----------------------------------------------------------------|
-| **Backend**     | Go 1.22/1.23 · Gin · GORM · mongo-driver · solr-go · amqp     |
-| **Frontend**    | React 19 · Vite 7 · MUI v7 · React Router 6 · Axios · react-hook-form |
+| **Backend**     | Go 1.25 · Gin · GORM · mongo-driver · solr-go · amqp091-go     |
+| **Frontend**    | React 19 · Vite 7 · MUI v7 · react-router 8 · TanStack Query 5 · Axios · react-hook-form |
 | **Databases**   | MySQL 8 · MongoDB 6 · Apache Solr 9                           |
 | **Cache**       | Memcached 1.6 (distributed L2) · ccache (in-process L1)       |
 | **Messaging**   | RabbitMQ 3 (AMQP)                                             |
-| **Infra**       | Docker · Docker Compose · Nginx (API Gateway + Load Balancer)  |
-| **Auth**        | JWT (shared secret across services) · bcrypt                   |
-| **Testing**     | Go testing · httptest · testify · mock repositories            |
+| **Infra**       | Docker · Docker Compose · Nginx (API Gateway + Load Balancer) · Kubernetes (kind) |
+| **Auth**        | JWT HS256 (`iss`/`aud` per service) · bcrypt                   |
+| **Testing**     | Go testing · httptest · testify · Vitest · MSW · Playwright · Bruno |
 
 ---
 
-## 📁 Project Structure
+## 🚀 Quickstart
 
-```
-├── docker-compose.yml          # Full orchestration (10 services)
-├── nginx.conf                  # API Gateway configuration
-│
-├── users-api/                  # User management & authentication
-│   ├── cmd/main.go             # Entrypoint
-│   ├── internal/
-│   │   ├── config/             # Env vars configuration
-│   │   ├── controllers/users/  # HTTP handlers (Gin)
-│   │   ├── services/users/     # Business logic (bcrypt, JWT)
-│   │   ├── repositories/users/ # MySQL + Cache L1 + Memcached L2
-│   │   ├── dao/users/          # Data access objects
-│   │   ├── domain/users/       # Domain models
-│   │   ├── tokenizers/         # JWT token generation
-│   │   └── utils/              # CORS middleware
-│   └── Dockerfile              # Multi-stage build
-│
-├── hotels-api/                 # Hotel & reservation management
-│   ├── cmd/main.go
-│   ├── internal/
-│   │   ├── config/             # Env vars configuration
-│   │   ├── controllers/
-│   │   │   ├── hotels/         # Hotel & reservation handlers
-│   │   │   └── microservices/  # Admin panel: read-only platform status (/readyz probes)
-│   │   ├── services/           # Business logic + cache-aside
-│   │   ├── repositories/hotels/# MongoDB + ccache
-│   │   ├── clients/queues/     # RabbitMQ producer
-│   │   ├── middlewares/        # JWT auth + role-based access
-│   │   ├── dao/hotels/         # Data access objects
-│   │   └── domain/hotels/      # Domain models
-│   └── dockerfile
-│
-├── search-api/                 # Full-text hotel search
-│   ├── cmd/main.go
-│   ├── internal/
-│   │   ├── config/             # Env vars configuration
-│   │   ├── controllers/search/ # Search handler
-│   │   ├── services/search/    # Search logic + event handling
-│   │   ├── repositories/hotels/# Solr + Hotels API HTTP client
-│   │   ├── clients/queues/     # RabbitMQ consumer
-│   │   ├── dao/hotels/         # Data access objects
-│   │   ├── domain/hotels/      # Domain models
-│   │   └── utils/              # CORS middleware
-│   └── Dockerfile
-│
-└── frontend/                   # React SPA
-    └── src/
-        ├── components/         # Layout, HotelCard, SearchBar
-        ├── pages/              # Home, Search, Login, Register,
-        │                       # HotelDetail, MyReservations, Admin
-        ├── services/           # Axios API clients
-        ├── context/            # AuthContext (JWT state)
-        ├── hooks/              # useAuth
-        ├── constants/          # Routes, config, amenities
-        ├── theme/              # MUI custom theme
-        └── utils/              # Helpers & validators
-```
-
----
-
-## ⚙️ Microservices
-
-### Users API
-Handles user registration, authentication, and JWT token generation. Runs **3 load-balanced instances** behind Nginx (`least_conn` algorithm).
-
-- **Stack:** Go 1.23 · Gin · GORM · MySQL 8 · Memcached · ccache
-- **Cache strategy:** Three-tier read-through — L1 (in-process ccache) → L2 (Memcached) → MySQL, with backfill on cache miss
-- **Auth:** Generates JWT tokens with `user_id`, `username`, and `tipo` (role) claims; passwords hashed with bcrypt
-- **Roles:** `cliente` (default) and `administrador`
-
-### Hotels API
-Manages hotel CRUD operations and the reservation system. Publishes hotel lifecycle events to RabbitMQ.
-
-- **Stack:** Go 1.23 · Gin · MongoDB 6 · ccache · RabbitMQ
-- **Cache strategy:** Cache-aside pattern with LRU eviction (ccache, 30s TTL)
-- **Events:** Publishes `CREATE`, `UPDATE`, `DELETE` events for hotels to the `hotels-news` queue
-- **Auth:** Validates JWT tokens from Users API (shared secret); role-based middleware (`AdminOnly`, `LoggedUserOnly`)
-- **Concurrency:** Availability checks run in parallel using goroutines (one per hotel)
-
-### Search API
-Provides full-text hotel search powered by Apache Solr. Consumes RabbitMQ events to keep the search index synchronized.
-
-- **Stack:** Go 1.22 · Gin · solr-go · RabbitMQ
-- **Event-driven sync:** Listens to `hotels-news` queue — on hotel create/update/delete events, updates the Solr index accordingly
-- **Hotels API client:** Fetches hotel details via HTTP when processing events
-
----
-
-## 📋 Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/) & Docker Compose
-- [Node.js](https://nodejs.org/) v18+ and npm (for the frontend)
-- ~4 GB RAM available for Docker services
-
----
-
-## 🚀 Installation & Setup
+Prerequisites: [Docker](https://docs.docker.com/get-docker/) & Docker Compose, [Node.js](https://nodejs.org/) v22+ (frontend only), ~4 GB RAM for the containers.
 
 ### 1. Clone the repository
 
@@ -181,41 +102,45 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 ```
 
-### 3. Start backend services
+### 3. Start the backend
 
 ```bash
 docker compose up -d --build
+docker compose ps          # wait until everything is healthy (Solr takes ~90s)
 ```
 
-The first admin account is created automatically at startup from `ADMIN_USERNAME` / `ADMIN_PASSWORD` in your `.env` — public registration always creates customer accounts.
+This starts **12 containers**: nginx, MySQL, Memcached, MongoDB, RabbitMQ, Solr, users-api ×3, hotels-api, search-api, plus a one-shot `migrate` container that runs the MySQL migrations (schema + demo seed) and exits. The hotel catalog and the Solr index seed themselves on first boot.
 
-This starts **10 containers**: Nginx, MySQL, Memcached, MongoDB, RabbitMQ, Solr, Users API (x3), Hotels API, and Search API (plus a one-shot `migrate` container that runs the MySQL migrations and exits).
+### 4. Log in with the demo credentials
 
-The built SPA can optionally run in Docker too, behind the `frontend` profile (for local development you'd normally use `npm run dev` instead):
+| Role | Username | Password |
+|------|----------|----------|
+| Customer | `demo` | `DemoCliente123` (seeded by the migrations) |
+| Admin | `ADMIN_USERNAME` from your `.env` | `ADMIN_PASSWORD` from your `.env` (seeded idempotently at users-api startup; public registration only ever creates customers) |
 
-```bash
-docker compose --profile frontend up -d   # adds staylux-frontend on http://localhost:5173
-```
-
-Wait for all services to be healthy:
-
-```bash
-docker compose ps
-```
-
-### 4. Start the frontend
+### 5. Start the frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev                # http://localhost:5173 (proxies /api/* to the gateway)
 ```
 
-The frontend runs at `http://localhost:5173` and proxies API requests through Vite to the Nginx gateway.
+Or run the built SPA in Docker instead: `docker compose --profile frontend up -d` (adds `staylux-frontend` on http://localhost:5173).
 
 ### Alternative: Kubernetes (kind)
 
-The same platform can run on Kubernetes: Deployments with real readiness/liveness probes, a Service replacing the static nginx upstream (scaling = `kubectl scale`, no YAML duplication), an HPA, and graceful rolling deploys. Dev-only StatefulSets keep the demo self-contained — in production the datastores would be managed services. See [`k8s/README.md`](k8s/README.md) for the quickstart and the honest dev-vs-prod notes.
+The same platform runs on Kubernetes: Deployments with real readiness/liveness probes, a Service replacing the static nginx upstream (scaling = `kubectl scale`, no YAML duplication), an HPA, and graceful rolling deploys. Dev-only StatefulSets keep the demo self-contained — in production the datastores would be managed services. See [`k8s/README.md`](k8s/README.md).
+
+### Local URLs
+
+| Service            | URL                            |
+|--------------------|--------------------------------|
+| Frontend           | http://localhost:5173           |
+| API Gateway        | https://localhost (self-signed cert; port 80 redirects here) |
+| Gateway Monitoring | http://localhost:8090/status (loopback only) |
+| RabbitMQ Dashboard | http://localhost:15672 (root/root) |
+| Solr Admin UI      | http://localhost:8983/solr      |
 
 ---
 
@@ -226,7 +151,7 @@ answers a `301` redirect to HTTPS. Locally the certificate is self-signed, so
 use `curl -k` and accept the one-time browser warning; in production you'd
 swap in a real certificate (e.g. Let's Encrypt) — the config doesn't change.
 
-The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change to any contract ships as `/api/v2` alongside `v1`). Success responses use a single envelope — `{"data": ...}` for single resources, `{"data": [...], "meta": {"total", "limit", "offset"}}` for lists — and every error (services and gateway alike) has the shape `{"error": {"code", "message", "trace_id"}}` with stable machine-readable codes. Health endpoints are not versioned.
+The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change to any contract ships as `/api/v2` alongside `v1`). Success responses use a single envelope — `{"data": ...}` for single resources, `{"data": [...], "meta": {...}}` for lists — and every error (services and gateway alike) has the shape `{"error": {"code", "message", "trace_id"}}` with stable machine-readable codes. Health endpoints are not versioned.
 
 | Method   | Endpoint                                      | Service    | Auth     | Description                     |
 |----------|-----------------------------------------------|------------|----------|---------------------------------|
@@ -239,11 +164,12 @@ The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change
 | `GET`    | `/api/v1/hotels/:id`                          | Hotels API | —        | Get hotel details               |
 | `GET`    | `/api/v1/hotels/:id/reservations`             | Hotels API | Admin    | List hotel reservations (PII: guests' `user_id`) |
 | `POST`   | `/api/v1/hotels/availability`                 | Hotels API | —        | Check availability (multi)      |
-| `POST`   | `/api/v1/reservations`                        | Hotels API | JWT      | Create reservation (201 + `Location`; supports `Idempotency-Key`) |
-| `GET`    | `/api/v1/reservations/:id`                    | Hotels API | JWT      | Get reservation (owner/admin)   |
-| `DELETE` | `/api/v1/reservations/:id`                    | Hotels API | JWT      | Cancel reservation (204)        |
-| `GET`    | `/api/v1/users/:id/reservations`              | Hotels API | JWT      | User's reservations             |
-| `GET`    | `/api/v1/search?q=...`                        | Search API | —        | Full-text hotel search          |
+| `POST`   | `/api/v1/reservations`                        | Hotels API | Logged user | Create reservation (201 + `Location`; supports `Idempotency-Key`) |
+| `GET`    | `/api/v1/reservations/:id`                    | Hotels API | Owner/Admin | Get reservation              |
+| `DELETE` | `/api/v1/reservations/:id`                    | Hotels API | Owner    | Cancel reservation (204, idempotent; admins cannot cancel others') |
+| `GET`    | `/api/v1/users/:id/reservations`              | Hotels API | Owner/Admin | User's reservation history   |
+| `GET`    | `/api/v1/users/:id/hotels/:hotel_id/reservations` | Hotels API | Owner/Admin | User's reservations in one hotel |
+| `GET`    | `/api/v1/search?q=&sort=`                     | Search API | —        | Full-text search (`sort`: `relevance`/`price_asc`/`price_desc`/`rating_desc`) |
 | `POST`   | `/api/v1/reindex`                             | Search API | Admin    | Rebuild the Solr index from Hotels API |
 | `POST`   | `/api/v1/admin/hotels`                        | Hotels API | Admin    | Create hotel (201 + `Location`) |
 | `PUT`    | `/api/v1/admin/hotels/:id`                    | Hotels API | Admin    | Update hotel (returns updated representation) |
@@ -251,34 +177,13 @@ The API is versioned under a `/api/v1` prefix (URI versioning: a breaking change
 | `GET`    | `/api/v1/admin/microservices`                 | Hotels API | Admin    | Platform status (read-only, real `/readyz` probes) |
 | `GET`    | `/health`                                     | Gateway    | —        | Gateway health check            |
 
+**Full request/response contract:** OpenAPI 3.0 specs per service in [`docs/openapi/`](docs/openapi/) — [`users.yaml`](docs/openapi/users.yaml) · [`hotels.yaml`](docs/openapi/hotels.yaml) · [`search.yaml`](docs/openapi/search.yaml) (validated with `npx @redocly/cli lint docs/openapi/*.yaml`). Ready-to-run [Bruno](https://www.usebruno.com/) collections live in [`Bruno API tester/`](Bruno%20API%20tester/), with per-request assertions covering the whole table.
+
 > Each Go service also exposes internal (not routed through the gateway) health endpoints: `/livez` (process liveness, `/health` is an alias) and `/readyz` (pings its own dependencies — e.g. Mongo+RabbitMQ for Hotels API — and returns `503` with a per-check status map if any is down). Docker Compose healthchecks hit `/readyz`, and nginx only starts once every upstream is healthy.
 
 ---
 
-## ✨ Key Features
-
-- **Load Balancing** — Nginx distributes Users API traffic across 3 instances using `least_conn` with automatic failover (`max_fails=3`, `fail_timeout=30s`)
-- **Multi-Level Caching** — Users API: L1 (ccache) → L2 (Memcached) → MySQL. Hotels API: ccache (LRU) → MongoDB
-- **Event-Driven Architecture** — Hotels API publishes CRUD events to RabbitMQ; Search API consumes them (manual ack, one retry, then a `hotels-news-dlq` dead-letter queue) to keep the Solr index in sync, and rebuilds the index on startup / `POST /reindex` by paging `GET /hotels`
-- **Shared JWT Authentication** — Users API issues tokens; Hotels API and Search API validate them with the same secret and their own audience; role-based access control (`cliente` / `administrador`)
-- **TLS Termination** — HTTPS on 443 (TLS 1.2/1.3) with HTTP→HTTPS redirect and HSTS; local self-signed cert (recipe in `nginx/certs/README.md`), production-ready for a real certificate
-- **Rate Limiting** — API requests: 10 req/s. Login endpoint: 5 req/min. Connection limit: 20 per IP. Exceeding a limit returns `429` with the standard JSON error envelope (`rate_limited` + `trace_id`)
-- **Search Response Cache** — the gateway caches `GET /api/v1/search` responses for 5 minutes (key includes the query string, `X-Cache-Status: MISS/HIT`, serves stale on upstream errors). Results can be up to 5 minutes old — consistent with the CQRS-lite model, where the Solr index is already eventually consistent
-- **Security Headers** — X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, Strict-Transport-Security — applied to every API route and preflight response (nginx `add_header` inheritance is handled via an included snippet)
-- **CORS Configuration** — Centralized CORS handling at the gateway level with origin whitelist
-- **Gzip Compression** — Enabled for JSON, XML, JavaScript, and CSS responses
-- **Monitoring** — Nginx status and JSON config endpoint on port 8090, bound to `127.0.0.1` only
-- **Protected Frontend Routes** — React ProtectedRoute component with role-based access
-
-### Known trade-offs (demo scope)
-
-- **Stale cache window on user deletion** — with 3 users-api replicas and an in-process L1 cache, deleting a user only invalidates the replica that served the DELETE: for up to `CACHE_DURATION` (30s) the deleted user can still log in through another replica and obtain a fresh 24h JWT, and stateless JWTs mean already-issued tokens are never revoked. Accepted for this demo; production mitigations: pub/sub cache invalidation, a token denylist, or short-lived tokens + refresh tokens.
-
----
-
 ## 🧪 Testing
-
-Each microservice includes unit tests for both the service and controller layers, using mock repositories.
 
 ```bash
 # All Go modules (race detector included)
@@ -301,29 +206,42 @@ npx playwright install chromium   # first time only
 make e2e                          # or: docker compose --profile frontend up -d --build && cd frontend && npm run test:e2e
 ```
 
+The Bruno collections double as API smoke tests — every request asserts its expected status (including the idempotent-replay and invalid-sort contract checks):
+
+```bash
+cd "Bruno API tester/Users API Collection"    # same for Hotels / Search
+npx -y @usebruno/cli run --env local --insecure --env-var admin_password=<your ADMIN_PASSWORD>
+```
+
 **Test strategy:**
 - **Controller tests:** Gin + `httptest`, real JWT tokens in headers, covers 401/403/400/200 scenarios
 - **Service tests:** Mock repositories (main + cache + queue), validates cache-aside behavior and business logic
 - **Frontend unit/component:** MSW mocks the `/api/v1` contract (envelopes, errors with `trace_id`); axe runs on every main route
 - **Frontend E2E:** Playwright drives the built SPA against the real gateway — anonymous search, customer booking/cancellation, admin CRUD with search sync, service-degradation states, and 320/390 px viewport checks
+- **CI:** lint + unit tests (`-race`) + builds per Go module, frontend gate (lint/coverage/build/audit), `govulncheck`, Docker image builds with Trivy scanning; integration and E2E jobs on PRs
 
 ---
 
-## 🔗 Access URLs (Local Development)
+## 🧠 Architecture decisions & trade-offs
 
-| Service            | URL                            |
-|--------------------|--------------------------------|
-| Frontend           | http://localhost:5173           |
-| API Gateway        | https://localhost (self-signed cert; port 80 redirects here) |
-| Gateway Monitoring | http://localhost:8090/status (loopback only) |
-| Nginx Status       | http://localhost:8090/nginx_status (loopback only) |
-| RabbitMQ Dashboard | http://localhost:15672 (root/root) |
-| Solr Admin UI      | http://localhost:8983/solr      |
-| MongoDB            | localhost:27017                 |
-| MySQL              | localhost:3307                  |
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) documents the reasoning behind the design: why the inventory claim needs no transactions (and what the compensation path does), why search sync uses thin events + lookup instead of fat events, the exact caching semantics of each tier, the auth model, and a table of **deliberate demo-scope trade-offs with their production answers**.
+
+## 🚢 How I'd take this to production
+
+The demo runs on one machine by design. The path to production, in order of impact:
+
+1. **Secrets & TLS** — move `.env` to a secrets manager (the env contract is already 12-factor); swap the self-signed cert for a real one (config already split — only the files change).
+2. **Managed datastores** — RDS/Cloud SQL for MySQL, Atlas with a replica set for MongoDB (the claim/compensation logic carries over unchanged), managed Solr/OpenSearch.
+3. **Event reliability** — replace publish-after-write with a transactional outbox (or CDC); today a self-healing publisher + rebuildable index bound the damage of a lost event.
+4. **Token lifecycle** — short-lived access tokens + refresh tokens (or a gateway denylist); today JWTs live 24 h and are never revoked.
+5. **Cache invalidation across replicas** — pub/sub invalidation for the per-replica L1 (today: a documented ≤30 s stale window on user deletion).
+6. **Observability** — Prometheus/Grafana metrics and OpenTelemetry traces; the `trace_id` plumbing and structured logs are already in place.
+7. **Delivery** — the CI already builds and scans multi-arch images (GHCR + Trivy); add CD with progressive rollout on the existing k8s manifests (probes, HPA and graceful draining are already wired).
 
 ---
 
 ## 👤 Contact
 
-**Developer:** Julian Irusta Roure
+**Julian Irusta Roure** — [GitHub](https://github.com/Julian0444)
+
+Licensed under the [MIT License](LICENSE).

@@ -1,0 +1,25 @@
+meta {
+  name: Search All (price asc)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/search?q=&sort=price_asc&limit=50&offset=0
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Catálogo completo ordenado por precio ascendente. `sort` es una whitelist
+  (relevance | price_asc | price_desc | rating_desc) y ordena GLOBALMENTE
+  sobre el índice con `id` como desempate — la paginación es estable.
+}
+
+settings {
+  encodeUrl: true
+}

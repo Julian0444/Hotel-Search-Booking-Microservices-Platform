@@ -1,0 +1,49 @@
+meta {
+  name: Register User
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/users
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "{{new_username}}",
+    "password": "{{new_password}}"
+  }
+}
+
+script:pre-request {
+  bru.setVar("new_username", "bruno_" + Date.now());
+  bru.setVar("new_password", "BrunoDemo123");
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("user_id", res.body.data.id);
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  Registro público: SIEMPRE crea un "cliente" (un campo "tipo" en el body se
+  acepta y se ignora; los admins se siembran por env al arrancar users-api).
+
+  - Password: 8-72 caracteres → 400 `invalid_body` si no cumple.
+  - Username ya tomado → 409 `username_taken`.
+  - 201 con header `Location` apuntando al recurso creado.
+
+  El pre-request genera un username único por corrida; el post-response
+  guarda el id para el resto de la colección.
+}
+
+settings {
+  encodeUrl: true
+}

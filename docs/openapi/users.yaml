@@ -1,0 +1,320 @@
+openapi: 3.0.3
+info:
+  title: Users API
+  version: 1.0.0
+  description: |
+    Identity, authentication and JWT issuing.
+
+    User registration, authentication and account management for the hotel
+    platform. Runs as **3 load-balanced replicas** behind the nginx gateway
+    (`least_conn`).
+
+    Conventions (platform-wide):
+    - Success responses use `{"data": ...}`; lists add `"meta": {"total", "limit", "offset"}`.
+    - Errors always have the shape `{"error": {"code", "message", "trace_id"}}` with stable codes.
+    - The canonical `user_id` is a **string** in every response (the numeric PK is internal).
+    - An `Accept` header that cannot take `application/json` yields `406 not_acceptable`.
+    - The gateway adds rate limiting: 10 req/s general, **5 req/min on `/login`**; exceeding
+      a limit returns `429` with the same error envelope.
+
+    Issued JWTs are HS256 with claims `user_id`, `username`, `tipo`
+    (`cliente` | `administrador`), `iss: users-api` and
+    `aud: [users-api, hotels-api, search-api]`. Unversioned health endpoints
+    (`/livez`, `/readyz`) live outside `/api/v1`.
+  license:
+    name: MIT
+    url: https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/blob/main/LICENSE
+  contact:
+    name: Julian Irusta Roure
+    url: https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform
+servers:
+  - url: https://localhost/api/v1
+    description: nginx API gateway (local, self-signed TLS — use `curl -k`)
+tags:
+  - name: auth
+    description: Registration and login
+  - name: users
+    description: Account management
+security:
+  - bearerAuth: []
+paths:
+  /users:
+    post:
+      operationId: registerUser
+      tags: [auth]
+      summary: Register a new user
+      description: |
+        Public registration. **Always creates a `cliente` account** — a `tipo`
+        field in the body is accepted and ignored (admins are seeded from the
+        environment at startup, never created through the API).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created. `Location` points at the new resource.
+          headers:
+            Location:
+              schema: { type: string, example: /api/v1/users/3 }
+              description: Path of the created user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [id]
+                    properties:
+                      id: { type: string, example: '3' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Username already exists (`username_taken`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List users (admin only)
+      description: Paginated list of all accounts. Requires the `administrador` role.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Page of users with the list envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+                  meta: { $ref: '#/components/schemas/ListMeta' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: User id (numeric string).
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Get a user by id (owner or admin)
+      description: A user can read only their own account; admins can read any.
+      responses:
+        '200':
+          description: The user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      summary: Delete a user (owner or admin)
+      description: |
+        A user can delete only their own account; admins can delete any.
+        Returns `204` with no body on success; deleting a missing user is `404`.
+      responses:
+        '204':
+          description: Deleted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Authenticate and obtain a JWT
+      description: |
+        Returns a signed HS256 JWT valid for all three services (each one
+        validates its own audience). The gateway rate-limits this endpoint to
+        **5 requests/min per IP** as brute-force mitigation.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/LoginResponse' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Invalid credentials (`invalid_credentials`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by `POST /login`.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size (default 20, clamped to 100; invalid values fall back to the default).
+      schema: { type: integer, default: 20, maximum: 100 }
+    Offset:
+      name: offset
+      in: query
+      description: Items to skip (default 0; negative/invalid values fall back to 0).
+      schema: { type: integer, default: 0 }
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 50, example: demo }
+        password: { type: string, minLength: 8, maxLength: 72, format: password }
+        tipo:
+          type: string
+          description: Accepted but **ignored** — public registration always creates `cliente`.
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, example: demo }
+        password: { type: string, format: password, example: DemoCliente123 }
+    LoginResponse:
+      type: object
+      required: [user_id, username, token, tipo]
+      properties:
+        user_id: { type: string, example: '1' }
+        username: { type: string, example: demo }
+        token:
+          type: string
+          description: HS256 JWT (claims `user_id`, `username`, `tipo`, `iss`, `aud`, `iat`, `exp`, `nbf`).
+        tipo: { type: string, enum: [cliente, administrador] }
+    User:
+      type: object
+      required: [id, username, tipo]
+      properties:
+        id: { type: string, example: '1' }
+        username: { type: string, example: demo }
+        tipo: { type: string, enum: [cliente, administrador] }
+    ListMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total: { type: integer, description: Total items in the collection, example: 2 }
+        limit: { type: integer, example: 20 }
+        offset: { type: integer, example: 0 }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, trace_id]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable code. This service emits:
+                `invalid_body`, `invalid_id`, `invalid_credentials`,
+                `unauthorized`, `forbidden`, `user_not_found`,
+                `username_taken`, `not_acceptable`, `timeout`, `internal` —
+                plus `rate_limited`, `not_found` and `upstream_unavailable`
+                generated by the gateway.
+            message: { type: string }
+            trace_id:
+              type: string
+              description: Request id propagated end-to-end (`X-Request-ID`); correlate with the structured logs.
+  responses:
+    BadRequest:
+      description: Malformed body or id (`invalid_body`, `invalid_id`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Unauthorized:
+      description: Missing/invalid bearer token (`unauthorized`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Forbidden:
+      description: Authenticated but not allowed (`forbidden`) — wrong role or not the resource owner.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    NotFound:
+      description: User does not exist (`user_not_found`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    RateLimited:
+      description: Gateway rate limit exceeded (`rate_limited`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Internal:
+      description: >
+        Unexpected failure (`internal`) or request deadline exceeded
+        (`timeout`, HTTP 503). Details go to the structured logs only,
+        correlated by `trace_id`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }

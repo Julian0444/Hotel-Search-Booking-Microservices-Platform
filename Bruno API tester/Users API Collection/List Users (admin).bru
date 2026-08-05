@@ -1,0 +1,29 @@
+meta {
+  name: List Users (admin)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/users?limit=20&offset=0
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Listado paginado de cuentas — SOLO admins (un cliente recibe 403).
+  Envelope de listas: `{"data": [...], "meta": {"total", "limit", "offset"}}`.
+  limit default 20, tope 100; valores inválidos caen al default.
+}
+
+settings {
+  encodeUrl: true
+}

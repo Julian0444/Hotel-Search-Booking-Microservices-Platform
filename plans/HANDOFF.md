@@ -965,3 +965,163 @@ Se eligió **renombrar/parafrasear** (no acotar el grep): prop interna `pricePer
 ### Post-cierre (mismo día): fix del CI rojo en el primer push
 
 El push del plan 13 dejó **un solo job rojo: `frontend`**, en `test:coverage` (primera vez que ese step corría en CI): los 22 forks workers de vitest morían con `TypeError: webidl.util.markAsUncloneable is not a function` al cargar **jsdom 30 → undici 8**. Causa: **jsdom 30.0.1 declara engines `^22.22.2 || ^24.15.0 || >=26` y undici 8.9 `>=22.19`, pero el job usaba `node-version: 20`** (npm no corta por engines; explota en runtime). Local pasaba por Node v22.23.2. Fix: **Node 22 en los jobs `frontend` y `frontend-e2e`** de ci.yml + **`node:22-alpine` en `frontend/Dockerfile`** por coherencia (el build de vite funcionaba en 20; solo los tests cargan jsdom). Verificado replicando el entorno del CI en Docker (`node:22-bookworm`, `npm ci` limpio, TZ=America/Los_Angeles): **131/131 tests en verde**; la imagen del SPA rebuildeada con 22 sirve OK. El resto del run del push ya estaba verde (4× go, 3× docker; integration/frontend-e2e solo corren en PRs).
+
+**El fix quedó commiteado y pusheado por el usuario y el CI corrió TODO VERDE** (los jobs de push: 4× go, frontend con lint+coverage+build+audit, 3× docker). El plan 13 está cerrado de punta a punta; `integration` y `frontend-e2e` se estrenan en el primer PR. Siguiente: **plan 12** (último pendiente).
+
+---
+
+## Sesión — 2026-08-03 (4) — Plan 12 EN PROGRESO (checkpoint 1: P4 + amqp091 + activos + ARCHITECTURE)
+
+> **EL PLAN 12 NO ESTÁ TERMINADO** — checkpoint deliberado a pedido del usuario; el checkbox en `plans/README.md` queda **SIN marcar** a propósito. Cerrado en esta sesión: P4 (scaffolding IA borrado), la mitad amqp de P8 (streadway → amqp091-go), los activos visuales (capturas + GIF en `docs/`) y **`docs/ARCHITECTURE.md` completo**. El pendiente arranca por **OpenAPI** (users.yaml ya escrita y lintada; faltan hotels y search) y **Bruno**.
+
+### Relevamiento previo (hecho y verificado — no re-derivar)
+
+- **Endpoints reales** confirmados contra los 3 `cmd/main.go` + `nginx.conf` + spot-checks en vivo. La tabla del README actual **OMITE** `GET /api/v1/users/:user_id/hotels/:hotel_id/reservations` (existe en gateway y hotels-api, ownership owner-or-admin en el handler) — agregarla al reescribir el README.
+- **Cuentas para P6**: compose define **12 services** (11 long-running + `migrate` one-shot) + `frontend` bajo profile = 13. "10 containers" vive en `README.md:66,192` y **también en CLAUDE.md** (el grep del Verificar barre `*.md` de la raíz).
+- **Stack table del README stale**: dice Go 1.22/1.23 y React Router 6 — real: go.work `1.25.0`, `react-router` 8.3, y falta TanStack Query 5.
+- **num_rooms/num_guests son REQUERIDOS ≥ 1** (400 `invalid_reservation` si faltan) — el "default 1" que documentaba la colección Bruno vieja es **falso**. check_in no puede estar en el pasado (día normalizado UTC). Total derivado: `round(price_per_night*100) × noches × rooms`, moneda `USD`.
+- **Claims JWT reales**: `aud = [users-api, hotels-api, search-api]` (el README/ARCHITECTURE viejos decían 2 audiencias). Leeway 30s, HMAC-pinned.
+- Producer RabbitMQ: 5 intentos, backoff inicial 1s, factor 2, tope 30s; 3 reintentos por publish. Breaker search→hotels: 30s abierto. DLQ: 1er fallo requeue, 2º (Redelivered) → `hotels-news-dlq`; unmarshal inválido → DLQ directo.
+
+### Hecho y verificado
+
+1. **P4**: borrados `hotels-api/PLAN.md` y `RULES.md`; copias en **`~/Desktop/hotel-platform-notes/`** (fuera del repo).
+2. **P8 (parte amqp)**: `streadway/amqp` → **`rabbitmq/amqp091-go` v1.13.0** en hotels-api y search-api (import aliaseado `amqp "github.com/rabbitmq/amqp091-go"` en 3 archivos; `go get` + `go mod tidy` en ambos módulos). Drop-in real: cero cambios de código. Verificado: `gofmt -l` limpio, `make build` OK, `make test` (-race) **21 paquetes ok, 0 FAIL**. `go.work.sum` no cambió. Las menciones a streadway en docs se van cuando se retiren esos docs (pendiente).
+3. **Activos visuales en `docs/`** (~5.8 MB total): 6 capturas 1440×900 en `docs/screenshots/` (`home` full-page, `search`, `hotel-detail` con fechas+total como cliente, `my-reservations` con confirmada+cancelada, `admin-dashboard`, `admin-services` con el health real 3/3 via /readyz) + **`docs/demo.gif`** (13.7s, 3.0 MB, 960px, 10fps) del flujo login→buscar→reservar→confirmación→historial. Grabado con Playwright contra el **SPA buildeado** (:5173) + gateway TLS real y convertido con ffmpeg-static (palettegen/paletteuse). **NO se reusaron los e2e-evidence del plan 13**: su `booking.png` tiene cajas magenta (masking de fechas del spec) y todas mostraban el hotel de prueba "Hotel Plan Once".
+4. **`docs/ARCHITECTURE.md` COMPLETO** en inglés (~330 líneas): diagrama mermaid de topología + secuencia CREATE→RabbitMQ→Solr, contrato `/api/v1` (envelopes, códigos estables, fechas civiles, dinero en centavos, user_id string), **D1 con la mecánica exacta** (claim por noche vía findOneAndUpdate upsert sobre índice único {hotel_id,date}, retry sin upsert ante la carrera del duplicate-key, compensación conservadora con WithoutCancel + reintentos), idempotencia (key,user) con replay, CQRS-lite (thin event + lookup, DLQ, backfill+reindex, publisher self-healing), las 3 cachés, auth iss/aud, gateway completo, resiliencia (breaker/graceful/timeouts/readyz), migraciones/seeds, concurrencia, CI/supply-chain (Trivy, GHCR multi-arch), k8s, frontend (192 kB gzip, Lighthouse 94/100/100/100), estrategia de testing y **tabla de trade-offs con camino a producción**. Es el reemplazo de `ProyectoBackend.md` — **el archivo viejo AÚN NO se borró** (pendiente, junto con el resto de docs a retirar).
+5. **OpenAPI parcial**: `docs/openapi/users.yaml` escrita y validada — `npx @redocly/cli lint` → **0 errores** (1 warning benigno `no-server-example.com` por `https://localhost`: deliberado, la plataforma es demo local).
+
+### Mutaciones al stack vivo (importa para capturas/E2E futuros)
+
+- **"Hotel Plan Once" ELIMINADO** vía `DELETE /api/v1/admin/hotels/:id` (204) — Solr sincronizado por el evento real (verificado con query cache-busting: 5 hoteles en catálogo e índice). El debris del plan 11 ya no existe; los specs E2E eran robustos a él, nada que tocar.
+- El usuario **demo ahora tiene 3 reservas**: Refugio del Lago confirmada (+45/+49, $720), Posada del Vino cancelada, Palermo Soho Suites confirmada (+30/+33, $420 — la creó la grabación del GIF).
+- Stack quedó **ARRIBA (12/12)**. Los scripts de captura/GIF fueron temporales en el scratchpad de la sesión (técnica: sesión inyectada por localStorage con JWTs reales, misma que los e2e helpers; regenerables en ~10 min).
+
+### Archivos de esta sesión (para el commit manual del checkpoint)
+
+- **Nuevos**: `docs/ARCHITECTURE.md`, `docs/demo.gif`, `docs/openapi/users.yaml`, `docs/screenshots/{home,search,hotel-detail,my-reservations,admin-dashboard,admin-services}.png`.
+- **Modificados**: `hotels-api/go.mod`, `hotels-api/go.sum`, `hotels-api/internal/clients/queues/queue_rabbit.go`, `search-api/go.mod`, `search-api/go.sum`, `search-api/internal/clients/queues/queue_rabbit.go`, `search-api/internal/clients/queues/queue_rabbit_test.go`, `plans/HANDOFF.md` (esta sección).
+- **Borrados**: `hotels-api/PLAN.md`, `hotels-api/RULES.md`.
+- El `.gitignore` raíz no excluye `docs/` ni imágenes: todo lo nuevo entra al commit tal cual.
+
+### Pruebas ejecutadas en el checkpoint
+
+- `gofmt -l` limpio · `make build` OK · `make test` (-race) 21 paquetes ok, 0 FAIL (post-migración amqp091).
+- `npx @redocly/cli lint docs/openapi/users.yaml` → válida (0 errores).
+- Spot-checks en vivo del contrato usados como fuente de ejemplos: login, `/hotels` y `/search` con `meta.total`, availability, envelopes 404/406 del gateway, delete admin + sync Solr.
+- **OJO — los greps del Verificar del plan 12 todavía NO dan 0** (esperado a esta altura): `10 containers|streadway` siguen en `README.md`, `CLAUDE.md` y `ProyectoBackend.md`; `Add your repo URL|Last Updated` sigue en `README_HOTELS.md`. Se van a 0 al reescribir el README y retirar los docs viejos.
+
+### Trabajo pendiente (orden sugerido para la próxima sesión)
+
+1. **OpenAPI**: `docs/openapi/hotels.yaml` y `search.yaml` con `users.yaml` como plantilla de estilo (envelopes, códigos por endpoint ya relevados, header `Idempotency-Key`/`Idempotency-Replayed`, `meta` SIN `total` en las listas de reservas por hotel/usuario, availability como map string→bool, sort whitelist `relevance|price_asc|price_desc|rating_desc` con 400 `invalid_sort`) + `npx @redocly/cli lint docs/openapi/*.yaml`.
+2. **Bruno**: rehacer las 3 colecciones contra `https://localhost/api/v1` con auth bearer (sin scale/restart/logs; con availability, reservas idempotentes, reindex, `admin/microservices` read-only; recordar num_rooms/num_guests requeridos). Probar cada request contra el stack.
+3. **README nuevo** (orden §4.1): badges (CI de `ci.yml`, Go 1.25, MIT) → `docs/demo.gif` → qué demuestra → mermaid → stack real (react-router 8, TanStack Query) → quickstart con certs + credenciales demo (`demo/DemoCliente123` + admin del `.env`) → tabla endpoints CON la ruta user+hotel faltante → link OpenAPI → testing → link ARCHITECTURE → "cómo lo llevaría a producción". El anchor que ARCHITECTURE.md ya usa hacia el README es `#-api-endpoints-gateway--https-port-443` — conservar ese heading o actualizar el link.
+4. **Retirar docs viejos** (copias a `~/Desktop/hotel-platform-notes/` antes de borrar): `LOAD_BALANCER.md`, `users-api/users.md`, `hotels-api/README_HOTELS.md`, `ProyectoBackend.md` + fix "10 containers" en `CLAUDE.md`.
+5. **Notas de entrevista §4.4** fuera del repo (misma carpeta de notas).
+6. **Verificar completo** del plan: quickstart en frío (copia del working tree a un dir temporal compartible con Docker; `docker compose stop` del stack actual — stop y NO down, para no cambiar IPs — levantar la copia con volúmenes frescos, recorrer login→buscar→reservar→admin, `down -v` de la copia y `start` del original), matriz endpoints con/sin token vs la tabla, greps a 0, imágenes renderizando en GitHub tras el push. Después: checkbox del plan 12 en `plans/README.md` y HANDOFF de cierre.
+
+### Bloqueos y advertencias
+
+- **Sin bloqueos.** El `login_limit` consumió ~4 tokens en esta sesión (curls + login del GIF); si la próxima sesión arranca con varios logins seguidos puede tocar la espera de ~26s (los helpers E2E la absorben).
+- Siguen vigentes: RV10, nginx cachea IPs de upstreams al recrear contenedores (`docker compose restart nginx`), memcached sin healthcheck.
+
+### Primera acción sugerida para la próxima sesión
+
+Retomar con **"sigamos el plan 12 desde OpenAPI"** → releer esta sección; `docs/openapi/users.yaml` es la plantilla de estilo y el relevamiento de códigos/shapes por endpoint ya está volcado acá y en ARCHITECTURE.md.
+
+---
+
+## Sesión — 2026-08-03 (5) — Plan 12 EN PROGRESO (checkpoint 2: OpenAPI completa + Bruno rehecho y probado)
+
+> **EL PLAN 12 SIGUE SIN TERMINAR** — checkpoint deliberado a pedido del usuario; el checkbox en `plans/README.md` queda **SIN marcar** a propósito. Cerrado en esta sesión: `docs/openapi/hotels.yaml` y `search.yaml` (las 3 specs lintean juntas con Redocly) y las **3 colecciones Bruno rehechas y probadas en verde contra el stack**. El pendiente arranca por el **README nuevo** (paso 3 del checkpoint anterior).
+
+### CORRECCIÓN al relevamiento del checkpoint anterior (verificado en vivo)
+
+- **`num_rooms`/`num_guests` NO son requeridos**: omitidos o en 0 → **default 1** (el service los defaultea antes de validar; el controller solo rechaza negativos). Probado contra el stack: POST sin ambos campos → **201** y la reserva sale con `num_rooms:1, num_guests:1`. La colección Bruno vieja ("opcionales, default 1") tenía razón; el checkpoint (4) decía lo contrario y estaba **mal**. Las specs y colecciones nuevas documentan el default.
+- Otros comportamientos confirmados en vivo o en código para las specs: **doble-cancel → 204 idempotente** (sin doble liberación de inventario); availability con id desconocido → `false` (conservador; check fallido = no disponible); **PUT de hotel = semántica merge** (solo campos no-cero se actualizan — no se puede vaciar un campo); cancel es **solo del dueño** (un admin NO puede cancelar reservas ajenas); la reserva por-hotel (`/hotels/:id/reservations`) y las listas de reservas llevan `meta` **sin `total`**; hotels-api no emite `timeout` (solo users-api lo tiene, 503).
+
+### OpenAPI — hecho y verificado
+
+- **`docs/openapi/hotels.yaml`** (~650 líneas): los 13 endpoints reales de hotels-api (catálogo público con `meta.total`, availability como mapa string→bool, reservas con `Idempotency-Key`/`Idempotency-Replayed` y sus 400/403/404/409 exactos (`invalid_reservation`, `no_availability`, `request_in_flight`), historial owner-or-admin, `/admin/hotels` CRUD con eventos a `hotels-news`, `/admin/microservices` read-only con el shape real de ServiceStatus/InstanceStatus). Ejemplos tomados de respuestas reales del stack (Hotel Sierras de Córdoba, total 19000 centavos).
+- **`docs/openapi/search.yaml`** (~230 líneas): `GET /search` (edismax sobre name/description, sort whitelist con 400 `invalid_sort`, `meta.total` real, header `X-Cache-Status` + caché del gateway 5 min por URI documentada) y `POST /reindex` admin con `{data:{indexed}}`.
+- **Validación conjunta**: `npx -y @redocly/cli lint docs/openapi/*.yaml` → **"Your API descriptions are valid", 0 errores**, 3 warnings benignos (`no-server-example.com`, uno por archivo — deliberado, la plataforma es demo en localhost; ya documentado en el checkpoint 1 para users.yaml).
+
+### Bruno — 3 colecciones rehechas desde cero y probadas contra el stack
+
+- **Borradas las 23 requests viejas** (`http://localhost` sin `/api/v1`, token hardcodeado vencido, y los endpoints mock scale/restart/logs que ya no existen). Recuperables del historial git; copia temporal en el scratchpad de la sesión.
+- **Estructura nueva por colección**: `collection.bru` con docs (TLS self-signed → SSL verification off o `--insecure`; rate limit de login; cómo correr por CLI), `environments/local.bru` (`baseUrl=https://localhost/api/v1`, `admin_username`, `admin_password` con el **placeholder de `.env.example`** — el real se pasa por `--env-var admin_password=...` o editando el env; NO se commitea el secreto), requests con **asserts de status** y **scripts encadenados** (`bru.setVar`: el login guarda el token, List Hotels captura el primer id, el create captura el id creado).
+- **Users (7 requests)**: gateway health → registra usuario fresco único por corrida → login → get propio → login admin → list users admin → **self-delete** (cero residuos en MySQL).
+- **Hotels (18 requests)**: login admin → registra+loguea huésped fresco → catálogo público → availability → admin crea "Bruno Demo Hotel" → PUT merge → **reserva con `Idempotency-Key` + REPLAY** (test: header `Idempotency-Replayed: true` y mismo id) → get reserva → historial (user / user+hotel / hotel admin-only) → cancel (204) → admin borra el hotel → panel microservicios → huésped se borra. Corrida completa **no deja residuos en el catálogo ni en MySQL**.
+- **Search (5 requests)**: q=palermo → catálogo entero con `sort=price_asc` → **`sort=name_asc` → assert 400 `invalid_sort`** (demo del contrato de errores) → login admin → reindex.
+- **Resultado de las corridas** (`npx -y @usebruno/cli run --env local --insecure --env-var admin_password=...`): **Users 7/7 PASS · Hotels 18/18 PASS (+1 test del replay) · Search 5/5 PASS (6/6 asserts)**. Espaciar corridas consecutivas ~30 s por el `login_limit` (5/min burst 3; el CLI no tiene preflight, cada login = 1 token).
+
+### Mutaciones al stack vivo
+
+- Usuarios efímeros creados y **auto-borrados** (probe + bruno_guest/bruno_*). "Bruno Demo Hotel" creado y **borrado** (evento DELETE procesado). **Reindex corrido post-delete**: catálogo e índice verificados en **5 hoteles seed** con query cache-busting. Debris solo en Mongo: 2 reservas `cancelled` de usuarios ya borrados (historial auditable, mismo perfil que el debris E2E — inofensivo).
+- `login_limit`: esta sesión consumió ~6 logins espaciados; el bucket se recupera a razón de 1 token/12 s.
+- Algunas URIs de `/search` quedaron cacheadas 5 min en nginx (expiran solas).
+
+### Archivos de esta sesión (para el commit manual del checkpoint)
+
+- **Nuevos**: `docs/openapi/hotels.yaml`, `docs/openapi/search.yaml`; en `Bruno API tester/`: `{Users,Hotels,Search} API Collection/collection.bru`, `.../environments/local.bru`, y las 30 requests nuevas (7 Users + 18 Hotels + 5 Search).
+- **Borrados**: las 23 `.bru` viejas de las 3 colecciones.
+- **Modificados**: `Hotels API Collection/bruno.json` (espacio final en el name), `plans/HANDOFF.md` (esta sección).
+- Nada de lo nuevo cae en `.gitignore` (verificado con `git check-ignore`).
+
+### Trabajo pendiente (mismo orden del checkpoint anterior, desde el paso 3)
+
+1. **README nuevo** (orden §4.1 del plan): badges → `docs/demo.gif` → qué demuestra → mermaid → stack real (react-router 8, TanStack Query) → quickstart con certs + credenciales demo → tabla endpoints CON la ruta user+hotel → **link a las 3 specs OpenAPI** → testing (agregar cómo correr Bruno por CLI) → link ARCHITECTURE → producción. Conservar el anchor `#-api-endpoints-gateway--https-port-443` que ARCHITECTURE.md ya linkea (o actualizar el link).
+2. **Retirar docs viejos** (copias a `~/Desktop/hotel-platform-notes/`): `LOAD_BALANCER.md`, `users-api/users.md`, `hotels-api/README_HOTELS.md`, `ProyectoBackend.md` + fix "10 containers" en `CLAUDE.md`.
+3. **Notas de entrevista §4.4** fuera del repo.
+4. **Verificar completo** del plan (quickstart en frío, matriz endpoints, greps a 0, imágenes en GitHub) → checkbox del plan 12 + HANDOFF de cierre.
+
+### Bloqueos y advertencias
+
+- **Sin bloqueos.** Advertencias:
+  - El `admin_password` de los environments Bruno es el placeholder de `.env.example` a propósito — quien clone debe ajustarlo a su `.env` (documentado en el `collection.bru` de cada colección).
+  - Los greps del Verificar del plan 12 **siguen sin dar 0** (esperado): `10 containers|streadway` en `README.md`/`CLAUDE.md`/`ProyectoBackend.md`; `Add your repo URL|Last Updated` en `README_HOTELS.md`. Se van a 0 con los pasos 1-2 pendientes.
+  - Siguen vigentes: RV10, nginx cachea IPs de upstreams al recrear contenedores (`docker compose restart nginx`), memcached sin healthcheck.
+
+### Primera acción sugerida para la próxima sesión
+
+Retomar con **"sigamos el plan 12 desde el README"** → releer esta sección y el §4.1 del plan. Toda la evidencia (capturas, GIF, Lighthouse, OpenAPI, Bruno en verde) ya existe; el README solo la enlaza.
+
+---
+
+## Sesión — 2026-08-03 (5, continuación) — Plan 12 CERRADO (README + retiro de docs + Verificar completo)
+
+> **EL PLAN 12 ESTÁ TERMINADO** — y con él **los 13 planes de la serie**. El checkbox del plan 12 en `plans/README.md` quedó **marcado**. Esta continuación (misma sesión que el checkpoint 2) ejecutó el README nuevo, el retiro documental, las notas de entrevista y el bloque Verificar entero, incluido el quickstart en frío contra un stack con volúmenes vírgenes.
+
+### README nuevo (orden exacto §4.1)
+
+Reescrito de punta a punta: título + una línea + **badges** (CI de `ci.yml`, Go 1.25, MIT) → **`docs/demo.gif`** + link a screenshots → **"What this project demonstrates"** (7 bullets: microservicios con intención, CQRS-lite, no-overbooking atómico + Idempotency-Key, auth distribuida iss/aud, caché multinivel, operabilidad, testing) → **mermaid** (mismo diagrama de ARCHITECTURE) → **stack real** (Go 1.25, amqp091-go, react-router 8, TanStack Query 5, Bruno) → **quickstart verificado** (certs + `.env` + `12 containers` + credenciales `demo/DemoCliente123` y admin del `.env` + URLs locales + alternativa k8s) → **tabla de endpoints** con la ruta user+hotel que faltaba y auth afinada por fila (DELETE reserva = **Owner**, no admin; `sort` documentado en search) → **link a las 3 specs OpenAPI + colecciones Bruno** → testing (+ cómo correr Bruno por CLI) → link ARCHITECTURE → **"How I'd take this to production"** (7 puntos ordenados por impacto). Se eliminaron las secciones redundantes con ARCHITECTURE (estructura de carpetas, per-service, key features). **El heading `## 🌐 API Endpoints (Gateway — HTTPS, Port 443)` se conservó idéntico** — el anchor que linkea ARCHITECTURE.md sigue funcionando.
+
+### Retiro documental + fixes fácticos
+
+- **Movidos a `~/Desktop/hotel-platform-notes/`** (fuera del repo): `LOAD_BALANCER.md`, `ProyectoBackend.md`, `hotels-api/README_HOTELS.md`, `users-api/users.md` (renombrado `users-api-users.md`). Ningún doc vigente los referenciaba (verificado con grep).
+- **`CLAUDE.md`**: "10 containers" → "12 containers (11 long-running + one-shot migrate)"; gateway "port 80" → "443 (TLS; 80 redirects)"; `aud` con las **3** audiencias.
+- **`AGENTS.md` (hallazgo)**: era una copia STALE de un CLAUDE.md de julio (pre-go.work, decía "no root Makefile", 10 containers) adaptada a Codex → **regenerado espejando el CLAUDE.md actual** con header genérico "AI coding agents" y nota de mantenerlos en sync.
+- **Notas de entrevista §4.4** → `~/Desktop/hotel-platform-notes/interview-prep.md` (overbooking/TOCTOU, caídas de Solr/Rabbit, 2 niveles de caché, auth entre servicios, consistencia fuerte vs eventual + extras), con referencias a archivos del repo.
+
+### Bloque Verificar — TODO verde
+
+1. **Quickstart en frío**: copia del working tree (rsync sin `.git`/node_modules/certs/artefactos) a un dir temporal → `docker compose down` del original (volúmenes INTACTOS) → en la copia, SOLO los pasos del README (`cp .env.example .env` tal cual + openssl + `up -d --build`) → **11/11 healthy en ~30 s**, migraciones+seed demo automáticos, backfill de Solr solo. Nada no documentado hizo falta.
+2. **Recorrido + matriz endpoints con/sin token: 44/44 ok** (script en el scratchpad): registro público, logins (demo del README y admin con el password de `.env.example`), catálogo/search seedeados (total 5), reserva 201 → owner/admin/ajeno (200/200/403) → historial (owner 200, ajeno 403, sin token 401) → cancel por admin **403** (solo owner) → cancel owner 204; RBAC completo de users-api; CRUD admin de hoteles 401/403/201/200/204; panel microservicios **3/3 healthy**; reindex 401/403/200; self-delete 204. Cada fila coincide con la tabla del README.
+3. Copia `down -v` y **directorio temporal borrado**; original levantado de nuevo: **12/12 healthy, índice y catálogo en 5, demo conserva sus 3 reservas**. (El down/up recreó todo junto: nginx arrancó después de los upstreams → sin el gotcha de IPs stale.)
+4. **OpenAPI**: `npx -y @redocly/cli lint docs/openapi/*.yaml` → 0 errores (corrido en el checkpoint 2 de esta misma sesión).
+5. **Greps**: `Add your repo URL|Last Updated|10 containers|streadway` → **0 hits en `*.md` y `docs/`** fuera de `plantofinish.md` (la auditoría inmutable que CITA los hallazgos — mismo criterio benigno documentado en checkpoints previos). `git ls-files | grep -iE "PLAN.md|RULES.md"` todavía lista `hotels-api/PLAN.md`/`RULES.md` porque las **deleciones están sin commitear** — llega a 0 con el commit manual.
+6. **Pendiente post-push** (único item no verificable local): imágenes y GIF renderizando en GitHub web.
+
+### Archivos de esta continuación (se suman a los del checkpoint 2 para el commit manual)
+
+- **Modificados**: `README.md` (reescrito), `CLAUDE.md` (3 fixes), `AGENTS.md` (regenerado), `plans/README.md` (**checkbox 12 marcado**), `plans/HANDOFF.md`.
+- **Borrados**: `LOAD_BALANCER.md`, `ProyectoBackend.md`, `hotels-api/README_HOTELS.md`, `users-api/users.md` (copias en `~/Desktop/hotel-platform-notes/`).
+- **Stack**: quedó ARRIBA (12/12 con frontend) con sus datos de siempre. El rate-limit de login se reseteó con el recreate de nginx.
+
+### Estado final
+
+**Los 13 planes están cerrados.** Queda fuera de plan: commit + push manual de todo lo pendiente (checkpoint 2 + esta continuación, ~40 paths) y la verificación visual de imágenes en GitHub tras el push. El CI de push debería quedar verde (nada de esta sesión toca código Go/frontend; `integration` y `frontend-e2e` corren solo en PRs).
+
+### Primera acción sugerida para la próxima sesión
+
+Si el push ya está hecho: revisar en GitHub que README (badges, GIF, mermaid, links a `docs/openapi/` y `Bruno API tester/`) y ARCHITECTURE rendericen bien, y dar por cerrado el proyecto. Si algo renderiza mal, es ajuste cosmético de markdown.
