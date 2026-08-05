@@ -1125,3 +1125,9 @@ Reescrito de punta a punta: título + una línea + **badges** (CI de `ci.yml`, G
 ### Primera acción sugerida para la próxima sesión
 
 Si el push ya está hecho: revisar en GitHub que README (badges, GIF, mermaid, links a `docs/openapi/` y `Bruno API tester/`) y ARCHITECTURE rendericen bien, y dar por cerrado el proyecto. Si algo renderiza mal, es ajuste cosmético de markdown.
+
+### Post-cierre (2026-08-04): flaky del job `frontend` en el push del plan 12
+
+El push del cierre (`bd68d94`, run #15) dejó **un solo job rojo: `frontend`**, en `test:coverage`: `App.test.jsx:58` — `findByRole('heading', {name: /^search stays$/i})` no encontró el h1 de Search. **No es regresión**: el commit toca **0 archivos de frontend** (verificado con `git show --stat`) y el mismo test corrió verde en el push del plan 13 y 2 veces local. Es **timing bajo un runner cargado**: el `findBy` espera la resolución del chunk lazy de Search (import() + evaluación del grafo MUI de la página) con el **timeout default de 1 s** de Testing Library, y ese run muestra un runner lentísimo (`import 59.10s`, `environment 22.57s`, suite 52s vs ~12s local).
+
+**Fix (hardening, mismo criterio que los helpers E2E)**: en `App.test.jsx`, constante `CHUNK_TIMEOUT = { timeout: 10_000 }` aplicada a los 3 `findBy*` que dependen de resolver un chunk lazy (NotFound tras `gate.release()`, Home en el primer render, Search tras navegar) y al `waitFor` del foco del RouteAnnouncer. Cero costo cuando pasa (findBy resuelve apenas aparece el elemento); solo alarga la espera cuando el runner viene arrastrándose. Verificado: `TZ=America/Los_Angeles npm run test:coverage` → **131/131, 22 archivos**, y `npm run lint` 0 errores. Queda para el commit manual: `frontend/src/App.test.jsx` + esta sección.
