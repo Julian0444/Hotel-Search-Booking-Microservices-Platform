@@ -1,0 +1,33 @@
+meta {
+  name: Microservices Status (admin)
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/admin/microservices
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Panel de plataforma READ-ONLY y REAL — SOLO admins: sondea el GET /readyz
+  de cada instancia de cada servicio en paralelo (timeout 2 s por probe) y
+  reporta estado medido (up|degraded|down) + latencia. users-api aparece con
+  sus 3 réplicas (`load_balanced: true`).
+
+  No hay acciones de scale/restart/logs: un panel de solo estado no simula
+  operaciones de escritura.
+}
+
+settings {
+  encodeUrl: true
+}

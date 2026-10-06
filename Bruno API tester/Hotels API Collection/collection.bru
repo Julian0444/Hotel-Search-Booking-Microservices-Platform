@@ -1,0 +1,28 @@
+docs {
+  # Hotels API — catálogo y reservas
+
+  CRUD de hoteles (writes solo admin), reservas e inventario transaccionales
+  en Mongo replica set e idempotencia opt-in, availability y panel
+  read-only de microservicios — contra el gateway nginx
+  (`{{baseUrl}}` = https://localhost/api/v1).
+
+  Cómo usarla:
+  - Seleccionar el environment **local**.
+  - TLS self-signed → desactivar la verificación SSL en Bruno o usar
+    `--insecure` en CLI.
+  - `admin_password` trae el placeholder de `.env.example`: ajustarlo al
+    ADMIN_PASSWORD de tu `.env` (en CLI: `--env-var admin_password=...`).
+  - Correr la colección EN ORDEN (Run Collection). El flujo completo:
+    login admin → registra un huésped fresco → catálogo público →
+    availability → el admin crea y edita un hotel propio → el huésped
+    reserva en él (con replay idempotente) → historial → cancela →
+    verifica 409 al borrar ese hotel con historial → crea y borra otro hotel
+    sin reservas → panel de microservicios → el huésped borra su cuenta.
+    El hotel reservado y su reserva cancelada permanecen por la política de
+    historial; sólo se borra el hotel descartable.
+  - `/login` está rate-limiteado a 30 req/min por IP (burst 10): correr esta
+    colección en ráfagas puede dar 429. OPTIONS no consume ese presupuesto.
+
+  CLI (desde esta carpeta):
+  `npx -y @usebruno/cli run --env local --insecure --env-var admin_password=...`
+}

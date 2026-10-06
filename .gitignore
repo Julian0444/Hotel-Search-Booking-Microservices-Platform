@@ -1,0 +1,20 @@
+# Secrets — never commit real credentials
+.env
+
+# TLS local (plan 10) — generarlos según nginx/certs/README.md
+nginx/certs/*.pem
+
+# Go
+coverage.out
+*.test
+*.exe
+
+# Node
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+.claude/
+.agents/
+AGENTS.md

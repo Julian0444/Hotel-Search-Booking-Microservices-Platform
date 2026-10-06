@@ -1,0 +1,246 @@
+openapi: 3.0.3
+info:
+  title: Search API
+  version: 1.0.0
+  description: |
+    Hotel search — the read model of a CQRS-lite pipeline.
+
+    Consumes `CREATE`/`UPDATE`/`DELETE` events from the RabbitMQ `hotels-news`
+    queue (thin event + lookup: it fetches the full hotel from hotels-api over
+    HTTP) and keeps the Solr `hotels` core in sync. The index is **derived and
+    eventually consistent**: startup, periodic and manual `POST /reindex`
+    reconciliation all add/update current hotels and remove orphaned documents.
+    This deployment has one search-api writer. Valid events retain manual ack
+    and retry with bounded delays after transient failures; invalid events
+    go to DLQ. RabbitMQ failure does not remove working search from readiness.
+
+    Conventions (platform-wide):
+    - Success responses use `{"data": ...}`; lists add `"meta": {"total", "limit", "offset"}`
+      — `total` is the real index total, not the page size.
+    - Errors always have the shape `{"error": {"code", "message", "trace_id"}}` with stable codes.
+    - An `Accept` header that cannot take `application/json` yields `406 not_acceptable`.
+    - The gateway adds rate limiting (10 req/s per IP, burst 30 on `/search`).
+      It does not cache search responses. Exceeding a limit returns `429`
+      with the error envelope.
+
+    Auth: only `POST /reindex` requires a JWT (users-api issues it; this
+    service validates the `search-api` audience and the `administrador` role).
+    Unversioned health endpoints (`/livez`, `/readyz`) live outside `/api/v1`.
+  license:
+    name: MIT
+    url: https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/blob/main/LICENSE
+  contact:
+    name: Julian Irusta Roure
+    url: https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform
+servers:
+  - url: https://localhost/api/v1
+    description: nginx API gateway (local, self-signed TLS — use `curl -k`)
+tags:
+  - name: search
+    description: Public full-text search over the Solr index
+  - name: admin
+    description: Index administration (administrators only)
+security:
+  - bearerAuth: []
+paths:
+  /search:
+    get:
+      operationId: searchHotels
+      tags: [search]
+      summary: Search hotels
+      description: |
+        Full-text search over `name`, `description`, `city` and `country`
+        with equivalent upper/lower case and accent folding (`Córdoba`,
+        `cordoba`, `CORDOBA`). Stored text keeps its original spelling.
+        Solr edismax escapes and parameterizes input: the user
+        input is passed as a dereferenced parameter, never interpolated into
+        the query). An empty/absent `q` matches the whole catalog.
+
+        `sort` orders **globally over the index**, not over the returned page,
+        with `id` as tie-breaker for price/rating sorts. Anything outside the
+        whitelist is `400 invalid_sort`. The gateway does not cache search
+        responses: the same URI reflects Solr convergence without a cache bypass.
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: Search terms (empty or absent = match all).
+          example: palermo
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [relevance, price_asc, price_desc, rating_desc]
+            default: relevance
+          description: >
+            Whitelisted sort. `relevance` (default) uses the edismax score;
+            the others map to `price_per_night`/`rating` with `id` tie-breaker.
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Page of matching hotels; `meta.total` is the real number of matches in the index.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Hotel' }
+                  meta: { $ref: '#/components/schemas/ListMeta' }
+        '400':
+          description: '`sort` outside the whitelist (`invalid_sort`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /reindex:
+    post:
+      operationId: reindexHotels
+      tags: [admin]
+      summary: Reconcile the index with hotels-api (admin only)
+      description: |
+        Enumerates the union of Mongo catalogue IDs (keyset pages) and Solr
+        IDs (cursor), fetches each current hotel, upserts existing hotels and
+        deletes orphans. It never empties the core. A single search-api instance
+        serializes reconciliation and event processing; queued events read fresh
+        state after reconciliation. This is eventual consistency, not a shared
+        Mongo/Solr snapshot: concurrent changes with a lost event may require
+        the next periodic pass (one minute after success; five seconds after failure).
+        `200` confirms this pass finished. The response `indexed` counts existing
+        hotels; logs additionally report `checked`, including orphan IDs.
+        Solr soft-commit visibility is normally within one second.
+        Updating an existing schema first requires the documented maintenance
+        script; editing the config mount alone does not alter an existing core.
+      responses:
+        '200':
+          description: Reconciliation pass completed; orphan deletions included.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [indexed]
+                    properties:
+                      indexed:
+                        type: integer
+                        description: Number of hotels indexed.
+                        example: 5
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by users-api `POST /login`; this service validates the `search-api` audience.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size (default 20, clamped to 100; invalid values fall back to the default).
+      schema: { type: integer, default: 20, maximum: 100 }
+    Offset:
+      name: offset
+      in: query
+      description: Items to skip (default 0; negative/invalid values fall back to 0).
+      schema: { type: integer, default: 0 }
+  schemas:
+    Hotel:
+      type: object
+      description: Same wire shape as the hotels-api catalog — the index stores the full document.
+      required: [id, name, description, address, city, state, country, phone,
+                 email, price_per_night, rating, available_rooms,
+                 check_in_time, check_out_time, amenities, images]
+      properties:
+        id: { type: string, example: 6a701f4c93687483413f118c }
+        name: { type: string, example: Hotel Sierras de Córdoba }
+        description: { type: string, example: 'Hotel boutique frente a las sierras, con desayuno regional y pileta climatizada.' }
+        address: { type: string, example: Av. San Martín 1200 }
+        city: { type: string, example: Córdoba }
+        state: { type: string, example: Córdoba }
+        country: { type: string, example: Argentina }
+        phone: { type: string, example: +54 351 555-0101 }
+        email: { type: string, example: reservas@sierrascba.demo }
+        price_per_night: { type: number, format: double, example: 95 }
+        rating: { type: number, format: double, example: 4.5 }
+        available_rooms: { type: integer, example: 12 }
+        check_in_time: { type: string, description: 'Time of day `"HH:mm"`.', example: '14:00' }
+        check_out_time: { type: string, description: 'Time of day `"HH:mm"`.', example: '10:00' }
+        amenities:
+          type: array
+          nullable: true
+          items: { type: string }
+          example: [wifi, pileta, desayuno]
+        images:
+          type: array
+          nullable: true
+          items: { type: string }
+          description: Image URLs. May be empty — clients render a local fallback.
+    ListMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total: { type: integer, description: Total matches in the index, example: 5 }
+        limit: { type: integer, example: 20 }
+        offset: { type: integer, example: 0 }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, trace_id]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable code. This service emits:
+                `invalid_sort`, `unauthorized`, `forbidden`, `not_acceptable`,
+                `internal` — plus `rate_limited`, `not_found` and
+                `upstream_unavailable` generated by the gateway.
+            message: { type: string }
+            trace_id:
+              type: string
+              description: Request id propagated end-to-end (`X-Request-ID`); correlate with the structured logs.
+  responses:
+    Unauthorized:
+      description: Missing/invalid bearer token (`unauthorized`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Forbidden:
+      description: Authenticated but not an administrator (`forbidden`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    RateLimited:
+      description: Gateway rate limit exceeded (`rate_limited`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Internal:
+      description: >
+        Unexpected failure (`internal`). Details go to the structured logs
+        only, correlated by `trace_id`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }

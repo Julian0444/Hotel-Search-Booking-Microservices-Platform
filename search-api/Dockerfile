@@ -1,22 +1,46 @@
-# Use the Go image with Alpine for building and running the application
-FROM golang:1.22-alpine
+# Multi-stage / no-root (I2). Build context = raíz del repo (ver
+# docker-compose.yml): el replace de go.mod necesita ./platform-contracts
+# dentro del contexto.
+#
+# Bases pineadas por digest del MANIFEST-LIST (CN4), no de una arquitectura
+# suelta — un digest por-arch rompe el build multi-arch del CI.
+# Refrescar con: docker buildx imagetools inspect <imagen:tag>
+#
+# --platform=$BUILDPLATFORM: el builder corre nativo en el host y CROSS-compila
+# a $TARGETOS/$TARGETARCH — sin emular el toolchain de Go bajo QEMU.
+FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine3.24@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS builder
 
-# Install netcat for health checks
-RUN apk add --no-cache netcat-openbsd
+WORKDIR /src
 
-# Set the working directory inside the container
+# Módulo de contratos compartido (resuelto vía replace ../platform-contracts)
+COPY platform-contracts/ ./platform-contracts/
+
+# Dependencias primero para cache de Docker
+COPY search-api/go.mod search-api/go.sum ./search-api/
+WORKDIR /src/search-api
+RUN go mod download
+
+# Copiar código y compilar
+COPY search-api/ .
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -ldflags="-s -w" -o /out/search-api ./cmd/main.go
+
+# Production stage
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+
+RUN apk --no-cache add ca-certificates tzdata
+
 WORKDIR /app
 
-# Copy go.mod and go.sum and download dependencies
-COPY go.mod go.sum ./
-RUN go mod tidy
+# Copiar binario del stage anterior
+COPY --from=builder /out/search-api .
 
-# Copy the rest of the code and build the application
-COPY . .
-RUN go build -o app ./cmd/main.go
+# Usuario no-root con UID FIJO y USER numérico: el runAsNonRoot de k8s no
+# puede verificar un user por nombre (CreateContainerConfigError)
+RUN adduser -D -g '' -u 10001 appuser
+USER 10001:10001
 
-# Expose the port on which the app will run
 EXPOSE 8082
 
-# Command to run the binary
-CMD ["./app"]
+CMD ["./search-api"]

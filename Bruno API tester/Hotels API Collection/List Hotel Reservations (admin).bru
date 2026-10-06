@@ -1,0 +1,28 @@
+meta {
+  name: List Hotel Reservations (admin)
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/hotels/{{created_hotel_id}}/reservations?limit=20&offset=0
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  TODAS las reservas de un hotel, con el `user_id` de cada huésped (PII) —
+  por eso es SOLO admins (cliente → 403 `forbidden`). `meta` sin `total`.
+}
+
+settings {
+  encodeUrl: true
+}

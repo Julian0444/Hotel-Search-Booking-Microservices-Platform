@@ -1,0 +1,17 @@
+cd hotels-api && go test -race -count=1 -tags=integration ./internal/repositories/...
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/repositories/hotels	23.069s
+bash search-api/scripts/test-integration.sh
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/cmd	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/apperr	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/clients/queues	2.469s
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/config	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/controllers/health	1.540s
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/controllers/search	1.837s
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/integrationtest	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/middlewares	2.131s
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/repositories/hotels	2.798s
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/services/search	2.917s
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/clients/queues	2.386s

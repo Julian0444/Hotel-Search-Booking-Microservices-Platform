@@ -1,0 +1,45 @@
+
+> hotel-booking-frontend@1.0.0 test:e2e
+> playwright test
+
+
+Running 32 tests using 1 worker
+
+(node:49206) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 [chromium-desktop] › e2e/accessibility.spec.js:36:3 › axe: 0 violaciones serious/critical en las rutas principales › Home (929ms)
+  ✓   2 [chromium-desktop] › e2e/accessibility.spec.js:43:3 › axe: 0 violaciones serious/critical en las rutas principales › Search con resultados (1.5s)
+  ✓   3 [chromium-desktop] › e2e/accessibility.spec.js:49:3 › axe: 0 violaciones serious/critical en las rutas principales › Hotel detail (859ms)
+  ✓   4 [chromium-desktop] › e2e/accessibility.spec.js:56:3 › axe: 0 violaciones serious/critical en las rutas principales › Login (679ms)
+  ✓   5 [chromium-desktop] › e2e/accessibility.spec.js:62:3 › axe: 0 violaciones serious/critical en las rutas principales › My reservations (cliente) (713ms)
+  ✓   6 [chromium-desktop] › e2e/accessibility.spec.js:70:3 › axe: 0 violaciones serious/critical en las rutas principales › Admin dashboard (1.4s)
+  ✓   7 [chromium-desktop] › e2e/accessibility.spec.js:81:3 › viewports 320/390: sin overflow horizontal @desktop-only › todas las rutas caben en el viewport (10.1s)
+  ✓   8 [chromium-desktop] › e2e/accessibility.spec.js:128:3 › degradación: estado útil, retry y trace_id @desktop-only › search-api caído: envelope 502 del gateway, no pantalla blanca (18.3s)
+  ✓   9 [chromium-desktop] › e2e/accessibility.spec.js:155:3 › degradación: estado útil, retry y trace_id @desktop-only › hotels-api caído: detail degrada con retry y se recupera (19.1s)
+  ✓  10 [chromium-desktop] › e2e/accessibility.spec.js:182:3 › evidencia visual para el plan 12 (superficies estables) › screenshots de Home, Search, Detail, Booking y Dashboard (4.0s)
+  ✓  11 [chromium-desktop] › e2e/admin.spec.js:38:3 › admin: panel real y CRUD con sync de búsqueda @desktop-only › tabs independientes, self-delete bloqueado y health read-only (625ms)
+  ✓  12 [chromium-desktop] › e2e/admin.spec.js:68:3 › admin: panel real y CRUD con sync de búsqueda @desktop-only › crear hotel → aparece en search → editar → borrar (12.2s)
+  ✓  13 [chromium-desktop] › e2e/anonymous-search.spec.js:23:3 › anonymous: search, sort y login con retorno › recorrido completo (4.5s)
+  ✓  14 [chromium-desktop] › e2e/broker-outage.spec.js:12:1 › broker caído: CREATE, PUT y DELETE aplicados tienen éxito visible y búsqueda converge @desktop-only (2.4m)
+  ✓  15 [chromium-desktop] › e2e/closeout.spec.js:21:1 › destinos y variantes con/sin tildes desde el buscador (962ms)
+  ✓  16 [chromium-desktop] › e2e/closeout.spec.js:64:1 › registro retorna al hotel con fechas, habitaciones y huéspedes (3.1s)
+  ✓  17 [chromium-desktop] › e2e/closeout.spec.js:91:1 › último cupo, detalle lleno y cancelación actualizan disponibilidad @desktop-only (2.0s)
+  ✓  18 [chromium-desktop] › e2e/closeout.spec.js:135:1 › formulario sucio protege menú, marca, footer, Cancel y Back @desktop-only (3.6s)
+  ✓  19 [chromium-desktop] › e2e/closeout.spec.js:184:3 › borrar último hotels de última página conserva acceso al resto @desktop-only (1.5s)
+  ✓  20 [chromium-desktop] › e2e/closeout.spec.js:184:3 › borrar último users de última página conserva acceso al resto @desktop-only (1.6s)
+  ✓  21 [chromium-desktop] › e2e/customer-booking.spec.js:22:3 › customer: booking completo y cancelación auditable › recorrido completo (2.4s)
+(node:51141) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  22 [chromium-mobile] › e2e/accessibility.spec.js:36:3 › axe: 0 violaciones serious/critical en las rutas principales › Home (718ms)
+  ✓  23 [chromium-mobile] › e2e/accessibility.spec.js:43:3 › axe: 0 violaciones serious/critical en las rutas principales › Search con resultados (1.5s)
+  ✓  24 [chromium-mobile] › e2e/accessibility.spec.js:49:3 › axe: 0 violaciones serious/critical en las rutas principales › Hotel detail (1.5s)
+  ✓  25 [chromium-mobile] › e2e/accessibility.spec.js:56:3 › axe: 0 violaciones serious/critical en las rutas principales › Login (737ms)
+  ✓  26 [chromium-mobile] › e2e/accessibility.spec.js:62:3 › axe: 0 violaciones serious/critical en las rutas principales › My reservations (cliente) (750ms)
+  ✓  27 [chromium-mobile] › e2e/accessibility.spec.js:70:3 › axe: 0 violaciones serious/critical en las rutas principales › Admin dashboard (1.4s)
+  ✓  28 [chromium-mobile] › e2e/accessibility.spec.js:182:3 › evidencia visual para el plan 12 (superficies estables) › screenshots de Home, Search, Detail, Booking y Dashboard (5.3s)
+  ✓  29 [chromium-mobile] › e2e/anonymous-search.spec.js:23:3 › anonymous: search, sort y login con retorno › recorrido completo (28.8s)
+  ✓  30 [chromium-mobile] › e2e/closeout.spec.js:21:1 › destinos y variantes con/sin tildes desde el buscador (1.0s)
+  ✓  31 [chromium-mobile] › e2e/closeout.spec.js:64:1 › registro retorna al hotel con fechas, habitaciones y huéspedes (3.3s)
+  ✓  32 [chromium-mobile] › e2e/customer-booking.spec.js:22:3 › customer: booking completo y cancelación auditable › recorrido completo (2.7s)
+
+  32 passed (4.7m)

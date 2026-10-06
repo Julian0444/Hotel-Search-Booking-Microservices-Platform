@@ -1,0 +1,42 @@
+meta {
+  name: Login (new user)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "{{new_username}}",
+    "password": "{{new_password}}"
+  }
+}
+
+script:post-response {
+  if (res.status === 200) {
+    bru.setVar("token", res.body.data.token);
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Devuelve un JWT HS256 válido para los tres servicios (claims `user_id`,
+  `username`, `tipo`, `iss: users-api`, `aud` con las tres audiencias).
+
+  - Credenciales inválidas → 401 `invalid_credentials`.
+  - Rate limit del gateway: 30 req/min por IP (burst 10) → 429 `rate_limited`.
+
+  El post-response guarda el token para las requests autenticadas.
+}
+
+settings {
+  encodeUrl: true
+}

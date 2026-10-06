@@ -2,17 +2,18 @@ package search
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strconv"
 
-	hotelsDomain "search-api/internal/domain/hotels"
+	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/apperr"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Service interface {
-	Search(ctx context.Context, query string, offset int, limit int) ([]hotelsDomain.Hotel, error)
+	Search(ctx context.Context, query string, sort string, offset int, limit int) ([]hotelsDomain.Hotel, int, error)
+	Backfill(ctx context.Context) (int, error)
 }
 
 type Controller struct {
@@ -25,39 +26,85 @@ func NewController(service Service) Controller {
 	}
 }
 
+const (
+	defaultPageLimit = 20
+	maxPageLimit     = 100
+)
 
-// Funcion para buscar hoteles en Solr
-func (controller Controller) Search(c *gin.Context) {
-	// Saca el query de la URL
-	query := c.Query("q")
-
-	// Saca el offset de la URL
-	offset, err := strconv.Atoi(c.Query("offset"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("invalid request: %s", err),
-		})
-		return
+// paginationParams parsea ?limit y ?offset con defaults y clamp (RV15), el
+// mismo patrón que hotels-api: ausente/inválido/negativo cae al default en
+// vez de 400, y limit se topea en 100 (post-E2 un rows negativo era 500 y uno
+// gigante un DoS contra Solr).
+func paginationParams(c *gin.Context) (int, int) {
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", strconv.Itoa(defaultPageLimit)))
+	if err != nil || limit < 1 {
+		limit = defaultPageLimit
+	}
+	if limit > maxPageLimit {
+		limit = maxPageLimit
 	}
 
-	// Saca el limit de la URL
-	limit, err := strconv.Atoi(c.Query("limit"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("invalid request: %s", err),
-		})
+	offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
+	return limit, offset
+}
+
+// validSorts es la whitelist de ?sort (plan 13/F13-03): el valor viaja hasta
+// el repositorio, que lo mapea a un sort de Solr — nunca se interpola el input
+// del usuario. Vacío = relevance (score de edismax; match-all queda en orden
+// de índice).
+var validSorts = map[string]bool{
+	"":            true,
+	"relevance":   true,
+	"price_asc":   true,
+	"price_desc":  true,
+	"rating_desc": true,
+}
+
+// Funcion para buscar hoteles en Solr. Responde el envelope estándar (A5) con
+// el total real del índice en meta (RV22: el frontend calculaba las páginas
+// sobre la página actual y la paginación quedaba rota por construcción).
+// Acepta ?sort whitelisteado (plan 13): el orden es global sobre el índice,
+// no sobre la página descargada.
+func (controller Controller) Search(c *gin.Context) {
+	// Saca el query de la URL; limit/offset clampeados (RV15)
+	query := c.Query("q")
+	limit, offset := paginationParams(c)
+
+	sort := c.Query("sort")
+	if !validSorts[sort] {
+		apperr.Abort(c, http.StatusBadRequest, "invalid_sort",
+			"sort must be one of: relevance, price_asc, price_desc, rating_desc", nil)
 		return
 	}
 
 	// Llama a la funcion de busqueda de hoteles del servicio
-	hotels, err := controller.service.Search(c.Request.Context(), query, offset, limit)
+	hotels, total, err := controller.service.Search(c.Request.Context(), query, sort, offset, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("error searching hotels: %s", err.Error()),
-		})
+		apperr.Abort(c, http.StatusInternalServerError, "internal", "error searching hotels", err)
 		return
 	}
 
 	// Devuelve los hoteles encontrados
-	c.JSON(http.StatusOK, hotels)
+	c.JSON(http.StatusOK, gin.H{
+		"data": hotels,
+		"meta": gin.H{"total": total, "limit": limit, "offset": offset},
+	})
+}
+
+// Reindex dispara el backfill completo on-demand (E3). Solo admins: la ruta
+// va detrás del middleware JWT + AdminOnly en cmd/main.go. Es sincrónico a
+// propósito — el catálogo de la demo es chico y el 200 confirma el índice
+// reconstruido.
+func (controller Controller) Reindex(c *gin.Context) {
+	indexed, err := controller.service.Backfill(c.Request.Context())
+	if err != nil {
+		apperr.Abort(c, http.StatusInternalServerError, "internal", "error reindexing hotels", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"indexed": indexed}})
 }

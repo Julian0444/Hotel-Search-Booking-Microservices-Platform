@@ -4,23 +4,39 @@ services:
   # ===========================================
   nginx:
     image: nginx:alpine
-    container_name: api-gateway
     ports:
-      - "80:80"
-      - "8090:8090"  # Monitoring port
+      - "80:80"    # redirect 301 → https (SD4)
+      - "443:443"  # TLS
+      # RV26: monitoreo (stub_status) solo en loopback — antes 0.0.0.0
+      - "127.0.0.1:8090:8090"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      # Los .pem no se commitean: generarlos ANTES del primer up
+      # (nginx/certs/README.md) o nginx no arranca.
+      - ./nginx/certs:/etc/nginx/certs:ro
+    # service_healthy (I5): nginx recién arranca cuando los upstreams pasan su
+    # /readyz — sin esto daba 502 tempranos en el arranque en frío.
     depends_on:
-      - users-api-1
-      - users-api-2
-      - users-api-3
-      - hotels-api
-      - search-api
+      users-api-1:
+        condition: service_healthy
+      users-api-2:
+        condition: service_healthy
+      users-api-3:
+        condition: service_healthy
+      hotels-api:
+        condition: service_healthy
+      search-api:
+        condition: service_healthy
     networks:
       - app-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/nginx-health"]
+      # Contra el server de monitoreo :8090 (HTTP-only): el :80 ahora es un 301
+      # a https y el wget de busybox seguiría el redirect y fallaría por el
+      # cert self-signed. 127.0.0.1 a propósito: nginx escucha solo IPv4 y el
+      # wget de busybox resuelve localhost → ::1 sin fallback.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8090/nginx-health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -30,63 +46,119 @@ services:
   # ===========================================
   mysql:
     image: mysql:8
-    container_name: users-mysql
     ports:
       - "3307:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env (cp .env.example .env)}
       MYSQL_DATABASE: users-api
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
       - app-network
     restart: unless-stopped
+    # CN3 (plan 09): limits se enforcea vía cgroups; reservations es best-effort
+    # fuera de swarm. Mismos órdenes de magnitud que los requests/limits de k8s/.
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+        reservations: { cpus: "0.25", memory: 256M }
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # One-shot: corre las migraciones versionadas de users-api y termina.
+  # Corre en una sola instancia a propósito: migrar desde las 3 réplicas
+  # contiende por el advisory lock de golang-migrate (schema "dirty").
+  migrate:
+    image: migrate/migrate:v4.18.3
+    volumes:
+      - ./users-api/migrations:/migrations:ro
+    command:
+      [
+        "-path", "/migrations",
+        "-database", "mysql://root:${MYSQL_ROOT_PASSWORD:?set in .env (cp .env.example .env)}@tcp(mysql:3306)/users-api",
+        "up",
+      ]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: "no"
+
   memcached:
     image: memcached:1.6-alpine
-    container_name: users-memcached
     ports:
       - "11211:11211"
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+        reservations: { cpus: "0.05", memory: 64M }
 
   mongo:
     image: mongo:6
-    container_name: hotels-mongo
+    entrypoint: ["sh", "/opt/mongo-start.sh"]
     ports:
       - "27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: root
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?set in .env (cp .env.example .env)}
+      MONGO_INITDB_DATABASE: hotels-api
     volumes:
       - mongo_data:/data/db
+      - ./docker/mongo-start.sh:/opt/mongo-start.sh:ro
+      # Seed de hoteles demo + índices: solo corre con un volumen NUEVO.
+      - ./hotels-api/seed/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+        reservations: { cpus: "0.25", memory: 256M }
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # Inicializa rs0 también sobre un volumen standalone existente, sin borrarlo.
+  mongo-init:
+    image: mongo:6
+    environment:
+      MONGO_PASSWORD: ${MONGO_PASSWORD:?set in .env (cp .env.example .env)}
+    volumes:
+      - ./docker/mongo-replica-init.js:/opt/replica-init.js:ro
+    entrypoint: ["mongosh", "--nodb", "--quiet", "/opt/replica-init.js"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks: [app-network]
+    restart: "no"
+
   rabbitmq:
     image: rabbitmq:3-management
-    container_name: hotels-rabbit
+    hostname: rabbitmq
+    volumes:
+      - rabbit_data:/var/lib/rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: root
-      RABBITMQ_DEFAULT_PASS: root
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:?set in .env (cp .env.example .env)}
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 768M }
+        reservations: { cpus: "0.10", memory: 128M }
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -95,7 +167,6 @@ services:
 
   solr:
     image: solr:9
-    container_name: search-solr
     ports:
       - "8983:8983"
     volumes:
@@ -112,6 +183,10 @@ services:
       - solr-precreate
       - hotels
       - /opt/solr-config
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1536M } # CN3: Solr con menos de 1G hace OOM
+        reservations: { cpus: "0.50", memory: 512M }
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8983/solr/hotels/admin/ping || exit 1"]
       interval: 15s
@@ -124,47 +199,62 @@ services:
   # ===========================================
   users-api-1:
     build:
-      context: ./users-api
-      dockerfile: Dockerfile
+      # contexto raíz: el build necesita ../platform-contracts (replace en go.mod)
+      context: .
+      dockerfile: users-api/Dockerfile
     image: users-api:latest
-    container_name: users-api-1
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
       MYSQL_DATABASE: users-api
       MYSQL_USERNAME: root
-      MYSQL_PASSWORD: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env (cp .env.example .env)}
       MEMCACHED_HOST: memcached
       MEMCACHED_PORT: "11211"
-      JWT_SECRET: ThisIsAnExampleJWTKey!
+      JWT_SECRET: ${JWT_SECRET:?set in .env (cp .env.example .env)}
       JWT_DURATION: "24h"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?set in .env (cp .env.example .env)}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set in .env (cp .env.example .env)}
       CACHE_DURATION: "30s"
+      AUTO_MIGRATE: "false"  # migra el service one-shot `migrate`
       PORT: "8082"
       INSTANCE_ID: "users-api-1"
       CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
       mysql:
         condition: service_healthy
-      memcached:
-        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   users-api-2:
     image: users-api:latest
-    container_name: users-api-2
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
       MYSQL_DATABASE: users-api
       MYSQL_USERNAME: root
-      MYSQL_PASSWORD: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env (cp .env.example .env)}
       MEMCACHED_HOST: memcached
       MEMCACHED_PORT: "11211"
-      JWT_SECRET: ThisIsAnExampleJWTKey!
+      JWT_SECRET: ${JWT_SECRET:?set in .env (cp .env.example .env)}
       JWT_DURATION: "24h"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?set in .env (cp .env.example .env)}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set in .env (cp .env.example .env)}
       CACHE_DURATION: "30s"
+      AUTO_MIGRATE: "false"  # migra el service one-shot `migrate`
       PORT: "8082"
       INSTANCE_ID: "users-api-2"
       CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
@@ -173,26 +263,38 @@ services:
         condition: service_started
       mysql:
         condition: service_healthy
-      memcached:
-        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   users-api-3:
     image: users-api:latest
-    container_name: users-api-3
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
       MYSQL_DATABASE: users-api
       MYSQL_USERNAME: root
-      MYSQL_PASSWORD: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env (cp .env.example .env)}
       MEMCACHED_HOST: memcached
       MEMCACHED_PORT: "11211"
-      JWT_SECRET: ThisIsAnExampleJWTKey!
+      JWT_SECRET: ${JWT_SECRET:?set in .env (cp .env.example .env)}
       JWT_DURATION: "24h"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?set in .env (cp .env.example .env)}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set in .env (cp .env.example .env)}
       CACHE_DURATION: "30s"
+      AUTO_MIGRATE: "false"  # migra el service one-shot `migrate`
       PORT: "8082"
       INSTANCE_ID: "users-api-3"
       CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
@@ -201,57 +303,76 @@ services:
         condition: service_started
       mysql:
         condition: service_healthy
-      memcached:
-        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ===========================================
   # HOTELS API
   # ===========================================
   hotels-api:
     build:
-      context: ./hotels-api
-      dockerfile: dockerfile
+      # contexto raíz: el build necesita ../platform-contracts (replace en go.mod)
+      context: .
+      dockerfile: hotels-api/Dockerfile
     image: hotels-api:latest
-    container_name: hotels-api-container
     environment:
+      MONGO_REPLICA_SET: rs0
       MONGO_HOST: mongo
       MONGO_PORT: "27017"
       MONGO_USERNAME: root
-      MONGO_PASSWORD: root
+      MONGO_PASSWORD: ${MONGO_PASSWORD:?set in .env (cp .env.example .env)}
       MONGO_DATABASE: hotels-api
       MONGO_COLLECTION_HOTELS: hotels
       MONGO_COLLECTION_RESERVATIONS: reservations
-      CACHE_MAX_SIZE: "100000"
-      CACHE_ITEMS_TO_PRUNE: "100"
-      CACHE_DURATION: "30s"
+      MONGO_COLLECTION_INVENTORY: reservation_inventory
+      MONGO_COLLECTION_IDEMPOTENCY: idempotency_keys
       RABBIT_HOST: rabbitmq
       RABBIT_PORT: "5672"
       RABBIT_USERNAME: root
-      RABBIT_PASSWORD: root
+      RABBIT_PASSWORD: ${RABBIT_PASSWORD:?set in .env (cp .env.example .env)}
       RABBIT_QUEUE_NAME: hotels-news
-      JWT_SECRET: ThisIsAnExampleJWTKey!
+      JWT_SECRET: ${JWT_SECRET:?set in .env (cp .env.example .env)}
       PORT: "8081"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
-      mongo:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8081/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ===========================================
   # SEARCH API
   # ===========================================
   search-api:
     build:
-      context: ./search-api
-      dockerfile: Dockerfile
+      # contexto raíz: el build necesita ../platform-contracts (replace en go.mod)
+      context: .
+      dockerfile: search-api/Dockerfile
     image: search-api:latest
-    container_name: search-api-container
     environment:
       SOLR_HOST: solr
       SOLR_PORT: "8983"
@@ -259,39 +380,53 @@ services:
       RABBIT_HOST: rabbitmq
       RABBIT_PORT: "5672"
       RABBIT_USERNAME: root
-      RABBIT_PASSWORD: root
+      RABBIT_PASSWORD: ${RABBIT_PASSWORD:?set in .env (cp .env.example .env)}
       RABBIT_QUEUE_NAME: hotels-news
-      HOTELS_API_HOST: hotels-api-container
+      HOTELS_API_HOST: hotels-api
       HOTELS_API_PORT: "8081"
+      JWT_SECRET: ${JWT_SECRET:?set in .env (cp .env.example .env)}  # valida el admin de POST /reindex
       PORT: "8082"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
       solr:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       hotels-api:
         condition: service_started
     networks:
       - app-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+        reservations: { cpus: "0.10", memory: 64M }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # Solr puede tardar en aceptar pings del core aunque su healthcheck ya
+      # haya pasado; margen generoso para el arranque en frío.
+      start_period: 90s
 
   # ===========================================
-  # FRONTEND (Disabled for local development)
+  # FRONTEND (I8): opcional bajo profile — el flujo de desarrollo usual sigue
+  # siendo `npm run dev` (Vite). Para el SPA buildeado en Docker:
+  #   docker compose --profile frontend up -d
+  # Sirve SPA + /api/v1 en http://localhost:5173; proxy interno al gateway TLS.
   # ===========================================
-  # Uncomment to run frontend in Docker:
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   image: staylux-frontend:latest
-  #   container_name: staylux-frontend
-  #   ports:
-  #     - "5173:80"
-  #   depends_on:
-  #     - nginx
-  #   networks:
-  #     - app-network
-  #   restart: unless-stopped
+  frontend:
+    profiles: ["frontend"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: staylux-frontend:latest
+    ports:
+      - "5173:80"
+    depends_on:
+      - nginx
+    networks:
+      - app-network
+    restart: unless-stopped
 
 networks:
   app-network:
@@ -301,3 +436,4 @@ volumes:
   mongo_data:
   mysql_data:
   solr_data:
+  rabbit_data:

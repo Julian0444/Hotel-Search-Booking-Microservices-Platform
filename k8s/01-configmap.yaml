@@ -1,0 +1,58 @@
+# Config no-secreta compartida (CN1). Los tres APIs la consumen vía envFrom;
+# las claves son unión de los env de docker-compose.yml — claves de más son
+# inofensivas (cada servicio lee solo las suyas, ver internal/config/config.go).
+#
+# DNS interno = nombre del Service de k8s (no los hostnames del compose):
+# mysql, memcached, mongo, rabbitmq, solr, hotels-api.
+#
+# PORT va por-Deployment (no acá): es el único nombre compartido con valores
+# distintos (users/search 8082, hotels 8081) y envFrom lo pisaría.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: hotel-platform
+data:
+  # users-api
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: users-api
+  MYSQL_USERNAME: root
+  MEMCACHED_HOST: memcached
+  MEMCACHED_PORT: "11211"
+  JWT_DURATION: 24h
+  AUTO_MIGRATE: "false" # migra el Job one-shot users-migrate (como en compose)
+  CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175
+
+  # hotels-api
+  MONGO_REPLICA_SET: "rs0"
+  MONGO_HOST: mongo
+  MONGO_PORT: "27017"
+  MONGO_USERNAME: root
+  MONGO_DATABASE: hotels-api
+  MONGO_COLLECTION_HOTELS: hotels
+  MONGO_COLLECTION_RESERVATIONS: reservations
+  MONGO_COLLECTION_INVENTORY: reservation_inventory
+  MONGO_COLLECTION_IDEMPOTENCY: idempotency_keys
+  CACHE_MAX_SIZE: "100000"
+  CACHE_ITEMS_TO_PRUNE: "100"
+  # Panel admin de microservicios (C2): acá se prueba el Service de cada API
+  # (una entrada por servicio; el default del código usa los hostnames del
+  # compose y en k8s no resuelve)
+  MICROSERVICES_TARGETS: users-api=http://users-api:8082;hotels-api=http://hotels-api:8081;search-api=http://search-api:8082
+
+  # compartidas users/hotels
+  CACHE_DURATION: 30s
+
+  # RabbitMQ (hotels publica, search consume)
+  RABBIT_HOST: rabbitmq
+  RABBIT_PORT: "5672"
+  RABBIT_USERNAME: root
+  RABBIT_QUEUE_NAME: hotels-news
+
+  # search-api
+  SOLR_HOST: solr
+  SOLR_PORT: "8983"
+  SOLR_COLLECTION: hotels
+  HOTELS_API_HOST: hotels-api
+  HOTELS_API_PORT: "8081"

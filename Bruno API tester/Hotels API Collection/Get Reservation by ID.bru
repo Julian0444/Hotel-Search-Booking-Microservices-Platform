@@ -1,0 +1,32 @@
+meta {
+  name: Get Reservation by ID
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/reservations/{{reservation_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{guest_token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  El recurso al que apunta el `Location` del create. Owner-or-admin: el dueño
+  ve la suya, un admin cualquiera; otro usuario → 403 `forbidden`.
+
+  Shape: fechas civiles YYYY-MM-DD, `total_price` en centavos (int),
+  `currency` USD, `status` confirmed|cancelled, timestamps de auditoría
+  RFC 3339 (`created_at`, `cancelled_at` solo si está cancelada).
+}
+
+settings {
+  encodeUrl: true
+}

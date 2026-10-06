@@ -21,6 +21,9 @@ var (
 	HotelsAPIHost = getEnv("HOTELS_API_HOST", "hotels-api")
 	HotelsAPIPort = getEnv("HOTELS_API_PORT", "8081")
 
+	// JWT - debe coincidir con users-api (protege POST /reindex)
+	JWTSecret = getEnv("JWT_SECRET", "your-secret-key-change-in-production")
+
 	// Server
 	Port = getEnv("PORT", "8082")
 )

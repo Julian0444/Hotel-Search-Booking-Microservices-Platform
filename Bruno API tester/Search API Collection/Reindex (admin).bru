@@ -1,0 +1,35 @@
+meta {
+  name: Reindex (admin)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/reindex
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Reconcilia el índice — SOLO admins. Enumera IDs del catálogo por keyset y
+  del índice por cursor; consulta cada hotel vigente, agrega/actualiza y borra
+  huérfanos sin vaciar el core. Eventos y reconciliación comparten exclusión
+  en una sola instancia; eventos pendientes leen estado actual al continuar.
+  200 con {"data":{"indexed":N}} indica que terminó esta pasada. indexed
+  cuenta hoteles vigentes; los logs checked incluyen también huérfanos.
+  Solr publica por soft-commit (normalmente 1s). Cambios concurrentes cuyo
+  evento se perdió pueden requerir la siguiente pasada periódica (1 minuto
+  después de éxito, 5s después de fallo). No es un snapshot Mongo/Solr.
+}
+
+settings {
+  encodeUrl: true
+}

@@ -3,21 +3,44 @@ package hotels
 import (
 	"context"
 	"fmt"
+	"math"
+	"sort"
 	"time"
 
 	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels"
 
 	"github.com/google/uuid"
 )
 
-// Mock simula un repositorio en memoria para hoteles y reservas (REPOSITORIO PRINCIPAL)
-type Mock struct {
-	hotels   map[string]hotelsDAO.Hotel
-	reservas map[string]hotelsDAO.Reservation
+// countRoomsByNight suma las habitaciones ocupadas por noche para un hotel
+// (checkout excluido, canceladas salteadas) — la misma semántica que el
+// inventario de Mongo (D4).
+func countRoomsByNight(reservas []hotelsDAO.Reservation, hotelID string, from, to time.Time) map[time.Time]int {
+	roomsByDay := make(map[time.Time]int)
+	for _, reservation := range reservas {
+		if reservation.HotelID != hotelID || reservation.Status == hotelsDAO.StatusCancelled {
+			continue
+		}
+		rooms := reservation.NumRooms
+		if rooms < 1 {
+			rooms = 1 // reservas legacy sin num_rooms
+		}
+		resCheckIn := normalizeDate(reservation.CheckIn)
+		resCheckOut := normalizeDate(reservation.CheckOut)
+		if resCheckOut.After(from) && resCheckIn.Before(to) {
+			for date := resCheckIn; date.Before(resCheckOut); date = date.AddDate(0, 0, 1) {
+				if !date.Before(from) && date.Before(to) {
+					roomsByDay[date] += rooms
+				}
+			}
+		}
+	}
+	return roomsByDay
 }
 
-// MockCache simula la cache (siempre devuelve error si no encuentra)
-type MockCache struct {
+// Mock simula un repositorio en memoria para hoteles y reservas (REPOSITORIO PRINCIPAL)
+type Mock struct {
 	hotels   map[string]hotelsDAO.Hotel
 	reservas map[string]hotelsDAO.Reservation
 }
@@ -30,23 +53,52 @@ func NewMock() Mock {
 	}
 }
 
-// Constructor del mock de cache
-func NewMockCache() MockCache {
-	return MockCache{
-		hotels:   make(map[string]hotelsDAO.Hotel),
-		reservas: make(map[string]hotelsDAO.Reservation),
-	}
-}
-
 // ===== MOCK PRINCIPAL (comportamiento normal) =====
 
-// CRUD de hoteles
+// allReservations devuelve las reservas del mock como slice (countRoomsByNight
+// opera sobre slices).
+func (m Mock) allReservations() []hotelsDAO.Reservation {
+	result := make([]hotelsDAO.Reservation, 0, len(m.reservas))
+	for _, r := range m.reservas {
+		result = append(result, r)
+	}
+	return result
+}
+
+// CRUD de hoteles. GetHotelByID devuelve el sentinel tipado como el repo real
+// (RV14) para que los tests de service/controller ejerciten el mapeo a 404.
 func (m Mock) GetHotelByID(ctx context.Context, id string) (hotelsDAO.Hotel, error) {
 	hotel, ok := m.hotels[id]
 	if !ok {
-		return hotelsDAO.Hotel{}, fmt.Errorf("hotel with ID %s not found", id)
+		return hotelsDAO.Hotel{}, fmt.Errorf("hotel with ID %s: %w", id, hotelsDomain.ErrHotelNotFound)
 	}
 	return hotel, nil
+}
+
+// GetHotels pagina como el repo real: orden estable (por ID) + limit/offset.
+func (m Mock) GetHotels(ctx context.Context, limit, offset int64) ([]hotelsDAO.Hotel, error) {
+	ids := make([]string, 0, len(m.hotels))
+	for id := range m.hotels {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	if offset >= int64(len(ids)) {
+		return []hotelsDAO.Hotel{}, nil
+	}
+	end := offset + limit
+	if end > int64(len(ids)) {
+		end = int64(len(ids))
+	}
+	page := make([]hotelsDAO.Hotel, 0, end-offset)
+	for _, id := range ids[offset:end] {
+		page = append(page, m.hotels[id])
+	}
+	return page, nil
+}
+
+func (m Mock) CountHotels(ctx context.Context) (int64, error) {
+	return int64(len(m.hotels)), nil
 }
 
 func (m Mock) Create(ctx context.Context, hotel hotelsDAO.Hotel) (string, error) {
@@ -61,6 +113,11 @@ func (m Mock) Update(ctx context.Context, hotel hotelsDAO.Hotel) error {
 	if !ok {
 		return fmt.Errorf("hotel with ID %s not found", hotel.ID)
 	}
+	for _, rooms := range countRoomsByNight(m.allReservations(), hotel.ID, time.Time{}, time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		if rooms > hotel.AvailableRooms {
+			return hotelsDomain.ErrCapacityConflict
+		}
+	}
 	m.hotels[hotel.ID] = hotel
 	return nil
 }
@@ -70,12 +127,47 @@ func (m Mock) Delete(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("hotel with ID %s not found", id)
 	}
+	for _, r := range m.reservas {
+		if r.HotelID == id {
+			return hotelsDomain.ErrHotelHasReservations
+		}
+	}
 	delete(m.hotels, id)
 	return nil
 }
 
-// CRUD de reservas
+// CRUD de reservas. CreateReservation replica el no-overbooking del repo real
+// (D1): si alguna noche del rango no tiene cupo devuelve ErrNoAvailability.
 func (m Mock) CreateReservation(ctx context.Context, reservation hotelsDAO.Reservation) (string, error) {
+	hotel, ok := m.hotels[reservation.HotelID]
+	if !ok {
+		return "", hotelsDomain.ErrHotelNotFound
+	}
+
+	if reservation.CheckIn.Before(normalizeDate(time.Now().UTC())) {
+		return "", hotelsDomain.ErrInvalidReservation
+	}
+	reservation.Status = hotelsDAO.StatusConfirmed
+	reservation.HotelName = hotel.Name
+	reservation.Currency = "USD"
+	reservation.TotalPrice = int64(math.Round(hotel.PricePerNight*100)) * int64(len(nightsBetween(reservation.CheckIn, reservation.CheckOut))) * int64(reservation.NumRooms)
+	rooms := reservation.NumRooms
+	if rooms < 1 {
+		rooms = 1
+	}
+	if rooms > hotel.AvailableRooms {
+		return "", hotelsDomain.ErrNoAvailability
+	}
+
+	from := normalizeDate(reservation.CheckIn)
+	to := normalizeDate(reservation.CheckOut)
+	roomsByDay := countRoomsByNight(m.allReservations(), reservation.HotelID, from, to)
+	for date := from; date.Before(to); date = date.AddDate(0, 0, 1) {
+		if roomsByDay[date]+rooms > hotel.AvailableRooms {
+			return "", hotelsDomain.ErrNoAvailability
+		}
+	}
+
 	id := uuid.New().String()
 	reservation.ID = id
 	m.reservas[id] = reservation
@@ -90,43 +182,50 @@ func (m Mock) GetReservationByID(ctx context.Context, id string) (hotelsDAO.Rese
 	return reservation, nil
 }
 
-func (m Mock) CancelReservation(ctx context.Context, id string) error {
-	_, ok := m.reservas[id]
+// CancelReservation replica el soft-delete idempotente del repo real (DM1).
+func (m Mock) CancelReservation(ctx context.Context, id string) (hotelsDAO.Reservation, error) {
+	reservation, ok := m.reservas[id]
 	if !ok {
-		return fmt.Errorf("reservation with ID %s not found", id)
+		return hotelsDAO.Reservation{}, fmt.Errorf("reservation with ID %s not found", id)
 	}
-	delete(m.reservas, id)
-	return nil
+	if reservation.Status == hotelsDAO.StatusCancelled {
+		return reservation, nil // idempotente: ya cancelada
+	}
+	now := time.Now().UTC()
+	reservation.Status = hotelsDAO.StatusCancelled
+	reservation.CancelledAt = &now
+	m.reservas[id] = reservation
+	return reservation, nil
 }
 
-func (m Mock) GetReservationsByHotelID(ctx context.Context, hotelID string) ([]hotelsDAO.Reservation, error) {
+func (m Mock) GetReservationsByHotelID(ctx context.Context, hotelID string, limit, offset int64) ([]hotelsDAO.Reservation, error) {
 	var result []hotelsDAO.Reservation
 	for _, r := range m.reservas {
 		if r.HotelID == hotelID {
 			result = append(result, r)
 		}
 	}
-	return result, nil
+	return paginateReservations(result, limit, offset), nil
 }
 
-func (m Mock) GetReservationsByUserAndHotelID(ctx context.Context, hotelID, userID string) ([]hotelsDAO.Reservation, error) {
+func (m Mock) GetReservationsByUserAndHotelID(ctx context.Context, hotelID, userID string, limit, offset int64) ([]hotelsDAO.Reservation, error) {
 	var result []hotelsDAO.Reservation
 	for _, r := range m.reservas {
 		if r.HotelID == hotelID && r.UserID == userID {
 			result = append(result, r)
 		}
 	}
-	return result, nil
+	return paginateReservations(result, limit, offset), nil
 }
 
-func (m Mock) GetReservationsByUserID(ctx context.Context, userID string) ([]hotelsDAO.Reservation, error) {
+func (m Mock) GetReservationsByUserID(ctx context.Context, userID string, limit, offset int64) ([]hotelsDAO.Reservation, error) {
 	var result []hotelsDAO.Reservation
 	for _, r := range m.reservas {
 		if r.UserID == userID {
 			result = append(result, r)
 		}
 	}
-	return result, nil
+	return paginateReservations(result, limit, offset), nil
 }
 
 func (m Mock) GetAvailability(ctx context.Context, hotelIDs []string, checkIn, checkOut string) (map[string]bool, error) {
@@ -141,25 +240,8 @@ func (m Mock) GetAvailability(ctx context.Context, hotelIDs []string, checkIn, c
 	return result, nil
 }
 
-// Elimina todas las reservas de un hotel del mock
-func (m Mock) DeleteReservationsByHotelID(ctx context.Context, hotelID string) error {
-	// Eliminar todas las reservas que pertenezcan al hotel especificado
-	var reservationsToDelete []string
-	for id, reservation := range m.reservas {
-		if reservation.HotelID == hotelID {
-			reservationsToDelete = append(reservationsToDelete, id)
-		}
-	}
-
-	// Eliminar las reservas encontradas
-	for _, id := range reservationsToDelete {
-		delete(m.reservas, id)
-	}
-
-	return nil
-}
-
-// IsHotelAvailable replica la lógica de disponibilidad (excluye checkout).
+// IsHotelAvailable replica la lógica de disponibilidad del repo real:
+// por noche, checkout excluido, canceladas salteadas, contando num_rooms.
 func (m Mock) IsHotelAvailable(ctx context.Context, hotelID, checkIn, checkOut string) (bool, error) {
 	hotel, ok := m.hotels[hotelID]
 	if !ok {
@@ -182,26 +264,9 @@ func (m Mock) IsHotelAvailable(ctx context.Context, hotelID, checkIn, checkOut s
 		return false, fmt.Errorf("check-out date must be after check-in date")
 	}
 
-	reservationsByDay := make(map[time.Time]int)
-	for _, reservation := range m.reservas {
-		if reservation.HotelID != hotelID {
-			continue
-		}
-
-		resCheckIn := normalizeDate(reservation.CheckIn)
-		resCheckOut := normalizeDate(reservation.CheckOut)
-
-		if resCheckOut.After(checkInTime) && resCheckIn.Before(checkOutTime) {
-			for date := resCheckIn; date.Before(resCheckOut); date = date.AddDate(0, 0, 1) {
-				if !date.Before(checkInTime) && date.Before(checkOutTime) {
-					reservationsByDay[date]++
-				}
-			}
-		}
-	}
-
+	roomsByDay := countRoomsByNight(m.allReservations(), hotelID, checkInTime, checkOutTime)
 	for date := checkInTime; date.Before(checkOutTime); date = date.AddDate(0, 0, 1) {
-		if reservationsByDay[date] >= hotel.AvaiableRooms {
+		if roomsByDay[date] >= hotel.AvailableRooms {
 			return false, nil
 		}
 	}
@@ -209,184 +274,24 @@ func (m Mock) IsHotelAvailable(ctx context.Context, hotelID, checkIn, checkOut s
 	return true, nil
 }
 
-// ===== MOCK CACHE (comportamiento como la cache real) =====
-
-// La cache NO crea hoteles, solo los almacena
-func (m MockCache) Create(ctx context.Context, hotel hotelsDAO.Hotel) (string, error) {
-	m.hotels[hotel.ID] = hotel
-	return hotel.ID, nil
-}
-
-// La cache NO crea reservas, solo las almacena
-func (m MockCache) CreateReservation(ctx context.Context, reservation hotelsDAO.Reservation) (string, error) {
-	m.reservas[reservation.ID] = reservation
-
-	return reservation.ID, nil
-}
-
-func (m MockCache) GetReservationByID(ctx context.Context, id string) (hotelsDAO.Reservation, error) {
-	reservation, ok := m.reservas[id]
-	if !ok {
-		return hotelsDAO.Reservation{}, fmt.Errorf("reservation not found with ID %s", id)
+func paginateReservations(rows []hotelsDAO.Reservation, limit, offset int64) []hotelsDAO.Reservation {
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+	if offset >= int64(len(rows)) {
+		return []hotelsDAO.Reservation{}
 	}
-	return reservation, nil
-}
-
-// La cache SIEMPRE devuelve error si no encuentra
-func (m MockCache) GetHotelByID(ctx context.Context, id string) (hotelsDAO.Hotel, error) {
-	hotel, ok := m.hotels[id]
-	if !ok {
-		return hotelsDAO.Hotel{}, fmt.Errorf("not found item with key hotel:%s", id)
+	end := offset + limit
+	if end > int64(len(rows)) {
+		end = int64(len(rows))
 	}
-	return hotel, nil
+	return rows[offset:end]
 }
-
-func (m MockCache) Update(ctx context.Context, hotel hotelsDAO.Hotel) error {
-	_, ok := m.hotels[hotel.ID]
-	if !ok {
-		return fmt.Errorf("hotel with ID %s not found in cache", hotel.ID)
-	}
-	m.hotels[hotel.ID] = hotel
-	return nil
-}
-
-func (m MockCache) Delete(ctx context.Context, id string) error {
-	// La cache real no devuelve error si no existe
-	delete(m.hotels, id)
-	return nil
-}
-
-func (m MockCache) CancelReservation(ctx context.Context, id string) error {
-	if _, ok := m.reservas[id]; !ok {
-		// La cache real no devuelve error si no existe
-		delete(m.reservas, id)
-		return nil
-	}
-
-	delete(m.reservas, id)
-
-	return nil
-}
-
-func (m MockCache) GetReservationsByHotelID(ctx context.Context, hotelID string) ([]hotelsDAO.Reservation, error) {
-	var result []hotelsDAO.Reservation
-	for _, r := range m.reservas {
-		if r.HotelID == hotelID {
-			result = append(result, r)
+func (m Mock) GetHotelsAfter(ctx context.Context, afterID string, limit int64) ([]hotelsDAO.Hotel, error) {
+	rows, _ := m.GetHotels(ctx, int64(len(m.hotels)), 0)
+	result := []hotelsDAO.Hotel{}
+	for _, h := range rows {
+		if h.ID > afterID && int64(len(result)) < limit {
+			result = append(result, h)
 		}
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("not found item with key reservations:hotel:%s", hotelID)
 	}
 	return result, nil
-}
-
-func (m MockCache) GetReservationsByUserAndHotelID(ctx context.Context, hotelID, userID string) ([]hotelsDAO.Reservation, error) {
-	var result []hotelsDAO.Reservation
-	for _, r := range m.reservas {
-		if r.HotelID == hotelID && r.UserID == userID {
-			result = append(result, r)
-		}
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("not found item with key reservations:hotel:%s:user:%s", hotelID, userID)
-	}
-	return result, nil
-}
-
-func (m MockCache) GetReservationsByUserID(ctx context.Context, userID string) ([]hotelsDAO.Reservation, error) {
-	var result []hotelsDAO.Reservation
-	for _, r := range m.reservas {
-		if r.UserID == userID {
-			result = append(result, r)
-		}
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("not found item with key reservations:user:%s", userID)
-	}
-	return result, nil
-}
-
-func (m MockCache) GetAvailability(ctx context.Context, hotelIDs []string, checkIn, checkOut string) (map[string]bool, error) {
-	result := make(map[string]bool)
-	for _, id := range hotelIDs {
-		if _, ok := m.hotels[id]; !ok {
-			return nil, fmt.Errorf("hotel with ID %s not found or expired in cache", id)
-		}
-
-		available, err := m.IsHotelAvailable(ctx, id, checkIn, checkOut)
-		if err != nil {
-			return nil, fmt.Errorf("error checking availability for hotel %s: %w", id, err)
-		}
-		result[id] = available
-	}
-	return result, nil
-}
-
-// IsHotelAvailable replica la lógica de la caché real: excluye el día de checkout y normaliza fechas.
-func (m MockCache) IsHotelAvailable(ctx context.Context, hotelID, checkIn, checkOut string) (bool, error) {
-	hotel, ok := m.hotels[hotelID]
-	if !ok {
-		return false, fmt.Errorf("error getting hotel from cache: not found item with key hotel:%s", hotelID)
-	}
-
-	checkInTime, err := time.Parse("2006-01-02", checkIn)
-	if err != nil {
-		return false, fmt.Errorf("error parsing check-in date: %w", err)
-	}
-	checkOutTime, err := time.Parse("2006-01-02", checkOut)
-	if err != nil {
-		return false, fmt.Errorf("error parsing check-out date: %w", err)
-	}
-
-	checkInTime = normalizeDate(checkInTime)
-	checkOutTime = normalizeDate(checkOutTime)
-
-	if !checkOutTime.After(checkInTime) {
-		return false, fmt.Errorf("check-out date must be after check-in date")
-	}
-
-	reservationsByDay := make(map[time.Time]int)
-	for _, reservation := range m.reservas {
-		if reservation.HotelID != hotelID {
-			continue
-		}
-
-		resCheckIn := normalizeDate(reservation.CheckIn)
-		resCheckOut := normalizeDate(reservation.CheckOut)
-
-		if resCheckOut.After(checkInTime) && resCheckIn.Before(checkOutTime) {
-			for date := resCheckIn; date.Before(resCheckOut); date = date.AddDate(0, 0, 1) {
-				if !date.Before(checkInTime) && date.Before(checkOutTime) {
-					reservationsByDay[date]++
-				}
-			}
-		}
-	}
-
-	for date := checkInTime; date.Before(checkOutTime); date = date.AddDate(0, 0, 1) {
-		if reservationsByDay[date] >= hotel.AvaiableRooms {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-// Elimina todas las reservas de un hotel del mock cache
-func (m MockCache) DeleteReservationsByHotelID(ctx context.Context, hotelID string) error {
-	// Eliminar todas las reservas que pertenezcan al hotel especificado
-	var reservationsToDelete []string
-	for id, reservation := range m.reservas {
-		if reservation.HotelID == hotelID {
-			reservationsToDelete = append(reservationsToDelete, id)
-		}
-	}
-
-	// Eliminar las reservas encontradas
-	for _, id := range reservationsToDelete {
-		delete(m.reservas, id)
-	}
-
-	return nil
 }

@@ -1,0 +1,54 @@
+# Ingress OPCIONAL (CN1, paso 5): espeja el ruteo del gateway nginx.conf.
+# Requiere el controller ingress-nginx instalado (en kind: ver k8s/README.md);
+# sin controller, aplicar este archivo es inerte (no rompe el kubectl apply).
+#
+# Solo replica el RUTEO. El rate-limiting, los security headers y el CORS del
+# gateway viven en nginx.conf (y el TLS llega con el plan 10) — para la demo
+# compose, nginx sigue siendo la referencia.
+#
+# use-regex (gotcha del plan): las 2 sub-rutas /users/... de reservas van a
+# hotels-api, no a users-api. Con regex, ingress-nginx ordena las locations por
+# longitud de path descendente, así que los paths largos ganan sobre los grupos.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hotel-platform
+  namespace: hotel-platform
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # Reservas por usuario → hotels-api (¡no users-api!)
+          - path: /api/v1/users/[^/]+/reservations$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: hotels-api
+                port: { number: 8081 }
+          - path: /api/v1/users/[^/]+/hotels/[^/]+/reservations$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: hotels-api
+                port: { number: 8081 }
+          - path: /api/v1/(users|login)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: users-api
+                port: { number: 8082 }
+          - path: /api/v1/(hotels|reservations|admin)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: hotels-api
+                port: { number: 8081 }
+          - path: /api/v1/(search|reindex)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: search-api
+                port: { number: 8082 }

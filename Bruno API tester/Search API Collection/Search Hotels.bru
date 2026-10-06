@@ -5,22 +5,27 @@ meta {
 }
 
 get {
-  url: http://localhost/search?q={{query}}&offset=0&limit=20
+  url: {{baseUrl}}/search?q={{query}}&limit=20&offset=0
   body: none
   auth: none
 }
 
 vars:pre-request {
-  query: Miami
+  query: palermo
+}
+
+assert {
+  res.status: eq 200
 }
 
 docs {
-  Busca hoteles por ciudad, nombre o descripción.
-  
-  Parámetros:
-  - q: término de búsqueda
-  - offset: paginación (default: 0)
-  - limit: cantidad de resultados (default: 20)
+  Full-text sobre name, description, city y country (Solr edismax; el input viaja como
+  parámetro dereferenciado, nunca interpolado en la query). q vacío/ausente
+  = todo el catálogo.
+
+  Envelope de listas con `meta.total` = total REAL de matches en el índice.
+  limit default 20, tope 100. Sin caché del gateway. Córdoba, cordoba y
+  CORDOBA son equivalentes; el resultado conserva los acentos originales.
 }
 
 settings {

@@ -1,0 +1,28 @@
+meta {
+  name: List My Reservations in Hotel
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/users/{{guest_user_id}}/hotels/{{created_hotel_id}}/reservations?limit=20&offset=0
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{guest_token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  El historial del usuario filtrado a un hotel puntual. Misma regla de
+  ownership (owner-or-admin) y mismo envelope que el historial completo.
+}
+
+settings {
+  encodeUrl: true
+}

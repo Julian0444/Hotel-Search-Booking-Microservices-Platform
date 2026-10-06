@@ -1,6 +1,7 @@
 package users
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -27,13 +28,19 @@ func NewCache(config CacheConfig) Cache {
 	}
 }
 
-func (repository Cache) GetAll() ([]usersDAO.User, error) {
+// Nota: ccache no tiene API con context; estos métodos aceptan ctx y lo
+// ignoran a propósito para cumplir la interfaz Repository.
+func (repository Cache) GetAll(_ context.Context, _, _ int) ([]usersDAO.User, error) {
 	// Since it's not typical to cache all users in one request, you might skip caching here
 	// Alternatively, you can cache a summary list if needed
 	return nil, fmt.Errorf("GetAll not implemented in cache")
 }
 
-func (repository Cache) GetByID(id int64) (usersDAO.User, error) {
+func (repository Cache) CountAll(_ context.Context) (int64, error) {
+	return 0, fmt.Errorf("CountAll not implemented in cache")
+}
+
+func (repository Cache) GetByID(_ context.Context, id int64) (usersDAO.User, error) {
 	// Convert ID to string for cache key
 	idKey := fmt.Sprintf("user:id:%d", id)
 
@@ -52,7 +59,7 @@ func (repository Cache) GetByID(id int64) (usersDAO.User, error) {
 	return usersDAO.User{}, fmt.Errorf("cache miss for user ID %d", id)
 }
 
-func (repository Cache) GetByUsername(username string) (usersDAO.User, error) {
+func (repository Cache) GetByUsername(_ context.Context, username string) (usersDAO.User, error) {
 	// Use username as cache key
 	userKey := fmt.Sprintf("user:username:%s", username)
 
@@ -71,7 +78,7 @@ func (repository Cache) GetByUsername(username string) (usersDAO.User, error) {
 	return usersDAO.User{}, fmt.Errorf("cache miss for username %s", username)
 }
 
-func (repository Cache) Create(user usersDAO.User) (int64, error) {
+func (repository Cache) Create(_ context.Context, user usersDAO.User) (int64, error) {
 	// Cache user by ID and by username after creation
 	idKey := fmt.Sprintf("user:id:%d", user.ID)
 	userKey := fmt.Sprintf("user:username:%s", user.Username)
@@ -84,7 +91,7 @@ func (repository Cache) Create(user usersDAO.User) (int64, error) {
 	return user.ID, nil
 }
 
-func (repository Cache) Update(user usersDAO.User) error {
+func (repository Cache) Update(_ context.Context, user usersDAO.User) error {
 	// Update both the ID and username keys in cache
 	idKey := fmt.Sprintf("user:id:%d", user.ID)
 	userKey := fmt.Sprintf("user:username:%s", user.Username)
@@ -96,20 +103,11 @@ func (repository Cache) Update(user usersDAO.User) error {
 	return nil
 }
 
-func (repository Cache) Delete(id int64) error {
-	// Delete user by ID and username from cache
-	idKey := fmt.Sprintf("user:id:%d", id)
-
-	// Best-effort: no fallar si no existe en cache
-	item := repository.client.Get(idKey)
-	if item != nil && !item.Expired() {
-		if user, ok := item.Value().(usersDAO.User); ok {
-			userKey := fmt.Sprintf("user:username:%s", user.Username)
-			repository.client.Delete(userKey)
-		}
-	}
-
-	repository.client.Delete(idKey)
-
+// Delete borra ambas keys directamente a partir del DAO (RV28): antes el
+// username salía de un Get por id, y si esa entrada ya no estaba la key
+// user:username:* quedaba huérfana.
+func (repository Cache) Delete(_ context.Context, user usersDAO.User) error {
+	repository.client.Delete(fmt.Sprintf("user:id:%d", user.ID))
+	repository.client.Delete(fmt.Sprintf("user:username:%s", user.Username))
 	return nil
 }

@@ -1,0 +1,37 @@
+meta {
+  name: Login (guest)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "{{guest_username}}",
+    "password": "{{guest_password}}"
+  }
+}
+
+script:post-response {
+  if (res.status === 200) {
+    bru.setVar("guest_token", res.body.data.token);
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Login del huésped registrado en la request anterior. El JWT resultante
+  autentica las reservas (audiencia hotels-api, rol cliente).
+}
+
+settings {
+  encodeUrl: true
+}

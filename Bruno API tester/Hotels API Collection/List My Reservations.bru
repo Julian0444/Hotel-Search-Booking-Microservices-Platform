@@ -1,0 +1,31 @@
+meta {
+  name: List My Reservations
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/users/{{guest_user_id}}/reservations?limit=20&offset=0
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{guest_token}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Historial de reservas del usuario, canceladas incluidas. Owner-or-admin:
+  consultar el historial de otro usuario → 403 `forbidden`.
+
+  `meta` acá NO trae `total` (solo limit/offset) — a diferencia de las
+  listas de catálogo.
+}
+
+settings {
+  encodeUrl: true
+}

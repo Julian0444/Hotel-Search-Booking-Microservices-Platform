@@ -1,0 +1,7 @@
+# Plan 09 (CN1) — todos los recursos viven en este namespace.
+# `kubectl apply -f k8s/` aplica los archivos en orden alfabético: por eso los
+# prefijos numéricos (00 namespace → 0x config → 1x datastores → 2x APIs → 3x ingress).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hotel-platform

@@ -1,27 +1,20 @@
 package hotels
 
-import "time"
+import (
+	"errors"
 
-type Hotel struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	Address       string    `json:"address"`
-	City          string    `json:"city"`
-	State         string    `json:"state"`
-	Country       string    `json:"country"`
-	Phone         string    `json:"phone"`
-	Email         string    `json:"email"`
-	PricePerNight float64   `json:"price_per_night"`
-	Rating        float64   `json:"rating"`
-	AvaiableRooms int       `json:"avaiable_rooms"`
-	CheckInTime   time.Time `json:"check_in_time"`
-	CheckOutTime  time.Time `json:"check_out_time"`
-	Amenities     []string  `json:"amenities"`
-	Images        []string  `json:"images"`
-}
+	contracts "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/platform-contracts"
+)
 
-type HotelNew struct {
-	Operation string `json:"operation"`
-	HotelID   string `json:"hotel_id"`
-}
+// Hotel y HotelNew viven en platform-contracts (única fuente de verdad del
+// contrato compartido con search-api); los alias mantienen los call-sites
+// intactos.
+type Hotel = contracts.Hotel
+
+type HotelNew = contracts.HotelNew
+
+// ErrHotelNotFound tipifica "el hotel no existe" (RV14): el controller lo
+// mapea a 404 y cualquier otro error de GetHotelByID queda como 500 — el
+// consumidor (search-api) usa esa distinción para decidir descartar vs
+// reintentar/DLQ un evento.
+var ErrHotelNotFound = errors.New("hotel not found")

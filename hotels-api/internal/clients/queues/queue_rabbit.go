@@ -1,271 +1,221 @@
 package queues
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"net"
+	"net/url"
 	"sync"
 	"time"
 
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels"
-
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const (
-	// Configuración de reintentos
-	maxRetries     = 5
-	initialBackoff = 1 * time.Second
-	maxBackoff     = 30 * time.Second
-	backoffFactor  = 2.0
-)
+const publishTimeout = 2 * time.Second
 
 type RabbitConfig struct {
-	Host      string
-	Port      string
-	Username  string
-	Password  string
-	QueueName string
+	Host, Port, Username, Password, QueueName string
 }
 
-type RabbitQueue struct {
-	config     RabbitConfig
+type rabbitSession struct {
 	connection *amqp.Connection
 	channel    *amqp.Channel
-	queueName  string
-	mu         sync.RWMutex
-	connected  bool
+	socket     net.Conn
+	returns    <-chan amqp.Return
 }
 
-// NewRabbit crea una nueva instancia de RabbitQueue con reconexión automática
+// RabbitQueue tiene un único reconector de fondo. Un request nunca conecta ni
+// duerme un backoff: publica con confirmación en <=2s o informa indisponibilidad.
+// Mongo y RabbitMQ no son atómicos; el caller conserva el éxito de Mongo y la
+// reconciliación periódica recupera el índice cuando esta publicación falla.
+type RabbitQueue struct {
+	config      RabbitConfig
+	mu          sync.RWMutex
+	session     *rabbitSession
+	publishGate chan struct{}
+	cancel      context.CancelFunc
+	done        chan struct{}
+}
+
 func NewRabbit(config RabbitConfig) *RabbitQueue {
-	rq := &RabbitQueue{
-		config:    config,
-		queueName: config.QueueName,
-		connected: false,
-	}
-
-	// Intentar conexión inicial con reintentos
-	if err := rq.connectWithRetry(); err != nil {
-		log.Printf("Warning: Initial RabbitMQ connection failed after %d retries: %v", maxRetries, err)
-		log.Printf("RabbitMQ will attempt to reconnect on next publish")
-	}
-
+	ctx, cancel := context.WithCancel(context.Background())
+	rq := &RabbitQueue{config: config, publishGate: make(chan struct{}, 1), cancel: cancel, done: make(chan struct{})}
+	go rq.reconnect(ctx)
 	return rq
 }
 
-// connectWithRetry intenta conectar a RabbitMQ con backoff exponencial
-func (rq *RabbitQueue) connectWithRetry() error {
-	var lastErr error
-	backoff := initialBackoff
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		log.Printf("RabbitMQ connection attempt %d/%d...", attempt, maxRetries)
-
-		if err := rq.connect(); err != nil {
-			lastErr = err
-			log.Printf("Connection attempt %d failed: %v", attempt, err)
-
-			if attempt < maxRetries {
-				log.Printf("Retrying in %v...", backoff)
-				time.Sleep(backoff)
-
-				// Incrementar backoff exponencialmente
-				backoff = time.Duration(float64(backoff) * backoffFactor)
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
+func (rq *RabbitQueue) reconnect(ctx context.Context) {
+	defer close(rq.done)
+	backoff := time.Second
+	for ctx.Err() == nil {
+		session, err := rq.connect(ctx)
+		if err == nil {
+			connClosed := session.connection.NotifyClose(make(chan *amqp.Error, 1))
+			channelClosed := session.channel.NotifyClose(make(chan *amqp.Error, 1))
+			rq.mu.Lock()
+			rq.session = session
+			rq.mu.Unlock()
+			backoff = time.Second
+			slog.Info("RabbitMQ publisher connected")
+			select {
+			case <-ctx.Done():
+			case <-connClosed:
+			case <-channelClosed:
 			}
-		} else {
-			log.Printf("Successfully connected to RabbitMQ on attempt %d", attempt)
-			return nil
+			rq.mu.Lock()
+			rq.session = nil
+			rq.mu.Unlock()
+			_ = session.socket.Close()
+		} else if ctx.Err() == nil {
+			slog.Warn("RabbitMQ publisher unavailable; background retry", "error", err)
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if backoff < 8*time.Second {
+			backoff *= 2
 		}
 	}
-
-	return fmt.Errorf("failed to connect after %d attempts: %w", maxRetries, lastErr)
 }
 
-// connect establece la conexión a RabbitMQ
-func (rq *RabbitQueue) connect() error {
-	rq.mu.Lock()
-	defer rq.mu.Unlock()
-
-	// Cerrar conexiones existentes si las hay
-	rq.closeUnsafe()
-
-	// Crear la URL de conexión
-	url := fmt.Sprintf("amqp://%s:%s@%s:%s/",
-		rq.config.Username,
-		rq.config.Password,
-		rq.config.Host,
-		rq.config.Port,
-	)
-
-	// Conectar a RabbitMQ
-	conn, err := amqp.Dial(url)
+func (rq *RabbitQueue) connect(ctx context.Context) (*rabbitSession, error) {
+	ctx, cancel := context.WithTimeout(ctx, publishTimeout)
+	defer cancel()
+	session := &rabbitSession{}
+	uri := url.URL{Scheme: "amqp", Host: net.JoinHostPort(rq.config.Host, rq.config.Port), User: url.UserPassword(rq.config.Username, rq.config.Password), Path: "/"}
+	conn, err := amqp.DialConfig(uri.String(), amqp.Config{
+		Heartbeat: 5 * time.Second,
+		Dial: func(network, addr string) (net.Conn, error) {
+			socket, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			session.socket = socket
+			deadline, _ := ctx.Deadline()
+			if err := socket.SetDeadline(deadline); err != nil {
+				_ = socket.Close()
+				return nil, err
+			}
+			return socket, nil
+		},
+	})
 	if err != nil {
-		rq.connected = false
-		return fmt.Errorf("error connecting to RabbitMQ: %w", err)
+		if session.socket != nil {
+			_ = session.socket.Close()
+		}
+		return nil, fmt.Errorf("connect broker: %w", err)
 	}
-
-	// Crear canal
+	session.connection = conn
+	// AMQP clears handshake deadlines; bound channel/topology RPCs too.
+	stop := context.AfterFunc(ctx, func() { _ = session.socket.Close() })
+	defer stop()
 	ch, err := conn.Channel()
 	if err != nil {
-		conn.Close()
-		rq.connected = false
-		return fmt.Errorf("error creating channel: %w", err)
+		_ = session.socket.Close()
+		return nil, err
 	}
-
-	// Declarar la cola
-	_, err = ch.QueueDeclare(
-		rq.config.QueueName, // name
-		true,                // durable
-		false,               // delete when unused
-		false,               // exclusive
-		false,               // no-wait
-		nil,                 // arguments
-	)
+	session.channel = ch
+	session.returns = ch.NotifyReturn(make(chan amqp.Return, 1))
+	if err = declareHotelQueue(ch, rq.config.QueueName); err == nil {
+		err = ch.Confirm(false)
+	}
 	if err != nil {
-		ch.Close()
-		conn.Close()
-		rq.connected = false
-		return fmt.Errorf("error declaring queue: %w", err)
+		_ = session.socket.Close()
+		return nil, err
 	}
-
-	rq.connection = conn
-	rq.channel = ch
-	rq.connected = true
-
-	// Configurar notificación de cierre de conexión
-	go rq.handleConnectionClose()
-
-	return nil
+	if err = ctx.Err(); err != nil {
+		_ = session.socket.Close()
+		return nil, err
+	}
+	return session, nil
 }
 
-// handleConnectionClose maneja el cierre inesperado de la conexión
-func (rq *RabbitQueue) handleConnectionClose() {
-	rq.mu.RLock()
-	if rq.connection == nil {
-		rq.mu.RUnlock()
-		return
+// Espejo de la topología del consumer. Durable + Persistent + confirms y el
+// volumen estable del broker protegen aceptación; no cierran la ventana Mongo.
+func declareHotelQueue(ch *amqp.Channel, name string) error {
+	dlx, dlq := name+"-dlx", name+"-dlq"
+	if err := ch.ExchangeDeclare(dlx, "direct", true, false, false, false, nil); err != nil {
+		return err
 	}
-	closeChan := rq.connection.NotifyClose(make(chan *amqp.Error, 1))
-	rq.mu.RUnlock()
-
-	// Esperar a que se cierre la conexión
-	closeErr := <-closeChan
-	if closeErr != nil {
-		log.Printf("RabbitMQ connection closed unexpectedly: %v", closeErr)
-
-		rq.mu.Lock()
-		rq.connected = false
-		rq.mu.Unlock()
-
-		// Intentar reconectar automáticamente
-		log.Printf("Attempting to reconnect to RabbitMQ...")
-		if err := rq.connectWithRetry(); err != nil {
-			log.Printf("Failed to reconnect to RabbitMQ: %v", err)
-		}
+	if _, err := ch.QueueDeclare(dlq, true, false, false, false, nil); err != nil {
+		return err
 	}
+	if err := ch.QueueBind(dlq, name, dlx, false, nil); err != nil {
+		return err
+	}
+	_, err := ch.QueueDeclare(name, true, false, false, false, amqp.Table{"x-dead-letter-exchange": dlx})
+	return err
 }
 
-// IsConnected verifica si hay una conexión activa
 func (rq *RabbitQueue) IsConnected() bool {
 	rq.mu.RLock()
 	defer rq.mu.RUnlock()
-	return rq.connected && rq.channel != nil
+	return rq.session != nil && !rq.session.connection.IsClosed() && !rq.session.channel.IsClosed()
 }
 
-// ensureConnection asegura que haya una conexión activa, reconectando si es necesario
-func (rq *RabbitQueue) ensureConnection() error {
-	if rq.IsConnected() {
-		return nil
+func (rq *RabbitQueue) Publish(ctx context.Context, event hotelsDomain.HotelNew) error {
+	ctx, cancel := context.WithTimeout(ctx, publishTimeout)
+	defer cancel()
+	// El presupuesto incluye la espera por otro publicador concurrente.
+	select {
+	case rq.publishGate <- struct{}{}:
+		defer func() { <-rq.publishGate }()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-
-	log.Printf("RabbitMQ not connected, attempting to reconnect...")
-	return rq.connectWithRetry()
-}
-
-// Publish publica un mensaje en la cola con reintentos
-func (rq *RabbitQueue) Publish(hotelNew hotelsDomain.HotelNew) error {
-	// Asegurar conexión antes de publicar
-	if err := rq.ensureConnection(); err != nil {
-		return fmt.Errorf("RabbitMQ connection unavailable: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	// Convertir el mensaje a JSON
-	body, err := json.Marshal(hotelNew)
+	rq.mu.RLock()
+	session := rq.session
+	rq.mu.RUnlock()
+	if session == nil {
+		return errors.New("RabbitMQ publisher unavailable")
+	}
+	body, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("error marshaling message: %w", err)
+		return err
 	}
-
-	// Intentar publicar con reintentos
-	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		rq.mu.RLock()
-		channel := rq.channel
-		rq.mu.RUnlock()
-
-		if channel == nil {
-			// Intentar reconectar
-			if err := rq.ensureConnection(); err != nil {
-				lastErr = err
-				continue
-			}
-			rq.mu.RLock()
-			channel = rq.channel
-			rq.mu.RUnlock()
-		}
-
-		// Publicar el mensaje
-		err = channel.Publish(
-			"",           // exchange
-			rq.queueName, // routing key
-			false,        // mandatory
-			false,        // immediate
-			amqp.Publishing{
-				ContentType:  "application/json",
-				DeliveryMode: amqp.Persistent,
-				Body:         body,
-			})
-
-		if err == nil {
-			return nil
-		}
-
-		lastErr = err
-		log.Printf("Publish attempt %d failed: %v", attempt, err)
-
-		// Marcar como desconectado y reintentar
-		rq.mu.Lock()
-		rq.connected = false
-		rq.mu.Unlock()
-
-		if attempt < 3 {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-		}
+	// amqp091-go no cancela el I/O iniciado por PublishWith...Context. Cerrar el
+	// socket al vencer el contexto limita también escrituras bloqueadas, no sólo
+	// la espera del confirm. El reconector lo reemplaza en segundo plano.
+	stop := context.AfterFunc(ctx, func() { _ = session.socket.Close() })
+	defer stop()
+	confirmation, err := session.channel.PublishWithDeferredConfirmWithContext(ctx, "", rq.config.QueueName, true, false, amqp.Publishing{
+		ContentType: "application/json", DeliveryMode: amqp.Persistent, Body: body,
+	})
+	if err != nil {
+		_ = session.socket.Close()
+		return err
 	}
-
-	return fmt.Errorf("error publishing message after retries: %w", lastErr)
+	ack, err := confirmation.WaitContext(ctx)
+	if err != nil {
+		_ = session.socket.Close()
+		return fmt.Errorf("broker acceptance unknown: %w", err)
+	}
+	select {
+	case returned := <-session.returns:
+		return fmt.Errorf("broker could not route publication: %s", returned.ReplyText)
+	default:
+	}
+	if !ack {
+		return errors.New("broker rejected publication")
+	}
+	return nil
 }
 
-// closeUnsafe cierra las conexiones sin bloqueo (debe llamarse con mu bloqueado)
-func (rq *RabbitQueue) closeUnsafe() {
-	if rq.channel != nil {
-		rq.channel.Close()
-		rq.channel = nil
-	}
-	if rq.connection != nil {
-		rq.connection.Close()
-		rq.connection = nil
-	}
-	rq.connected = false
-}
-
-// Close cierra las conexiones de forma segura
 func (rq *RabbitQueue) Close() {
-	rq.mu.Lock()
-	defer rq.mu.Unlock()
-	rq.closeUnsafe()
-	log.Printf("RabbitMQ connection closed")
+	if rq.cancel == nil {
+		return
+	}
+	rq.cancel()
+	<-rq.done
 }

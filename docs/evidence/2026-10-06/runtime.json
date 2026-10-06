@@ -1,0 +1,86 @@
+[
+  {
+    "Service": "frontend",
+    "State": "running",
+    "Health": "",
+    "ExitCode": 0
+  },
+  {
+    "Service": "hotels-api",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  },
+  {
+    "Service": "memcached",
+    "State": "running",
+    "Health": "",
+    "ExitCode": 0
+  },
+  {
+    "Service": "migrate",
+    "State": "exited",
+    "Health": "",
+    "ExitCode": 0
+  },
+  {
+    "Service": "mongo",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  },
+  {
+    "Service": "mongo-init",
+    "State": "exited",
+    "Health": "",
+    "ExitCode": 0
+  },
+  {
+    "Service": "mysql",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  },
+  {
+    "Service": "nginx",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  },
+  {
+    "Service": "rabbitmq",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  },
+  {
+    "Service": "search-api",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  },
+  {
+    "Service": "solr",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  },
+  {
+    "Service": "users-api-1",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  },
+  {
+    "Service": "users-api-2",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  },
+  {
+    "Service": "users-api-3",
+    "State": "running",
+    "Health": "healthy",
+    "ExitCode": 0
+  }
+]

@@ -1,0 +1,16 @@
+# golangci-lint v2 — config compartida por los 4 módulos (se corre por módulo;
+# el CLI encuentra este archivo subiendo desde cada working directory).
+version: "2"
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

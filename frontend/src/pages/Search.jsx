@@ -1,238 +1,167 @@
 /**
- * Search Page
- * Hotel search results with filtering and pagination
+ * Search Page (plan 13 fase 3, RV22/F13-03).
+ * La URL (q/page/sort) es la única fuente de verdad; el count y las páginas
+ * salen de meta.total (índice completo); el sort lo aplica Solr globalmente.
+ * keepPreviousData mantiene el grid al paginar; skeleton solo en la primera
+ * carga; empty, error y retry son estados distintos.
  */
 
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useEffect } from 'react';
 import {
   Box,
-  Container,
-  Typography,
-  Grid,
-  Card,
-  CardContent,
-  Skeleton,
-  Alert,
-  Pagination,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Chip,
+  Container,
+  Fade,
+  FormControl,
+  Grid,
+  InputLabel,
+  LinearProgress,
+  MenuItem,
+  Pagination,
+  Select,
+  Skeleton,
+  Typography,
 } from '@mui/material';
-import { Hotel as HotelIcon } from '@mui/icons-material';
-import { SearchBar, HotelCard } from '../components/Hotels';
-import { hotelsService } from '../services';
-import { PAGINATION, SORT_OPTIONS } from '../constants';
+import { HotelOutlined as HotelIcon } from '@mui/icons-material';
+import { SearchBar, HotelCard, HotelGridSkeleton } from '../components/Hotels';
+import { EmptyState, ErrorState, RouteMeta } from '../components/common';
+import { useHotelSearch } from '../hooks/queries';
+import { useHotelSearchParams } from '../hooks/useHotelSearchParams';
+import { SORT_OPTIONS } from '../constants';
 
 const Search = () => {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const initialQuery = searchParams.get('q') || '';
+  const { q, page, sort, limit, offset, setQuery, setPage, setSort } = useHotelSearchParams();
 
-  const [hotels, setHotels] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [sortBy, setSortBy] = useState(SORT_OPTIONS.RELEVANCE);
-  const [query, setQuery] = useState(initialQuery);
+  const { data, isPending, isFetching, isPlaceholderData, isError, error, refetch } = useHotelSearch({
+    q,
+    offset,
+    limit,
+    sort,
+  });
 
+  const total = data?.total ?? 0;
+  const hotels = data?.items ?? [];
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  // Si el total bajó (hotel borrado, query cambiada por URL editada) y la
+  // página quedó fuera de rango, corregir la URL en vez de mostrar vacío
   useEffect(() => {
-    const fetchHotels = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const offset = (page - 1) * PAGINATION.DEFAULT_PAGE_SIZE;
-        const response = await hotelsService.search(query, offset, PAGINATION.DEFAULT_PAGE_SIZE);
+    if (data && !isPlaceholderData && page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [data, isPlaceholderData, page, totalPages, setPage]);
 
-        let hotelList = response || [];
-
-        // Sort based on selected criteria
-        if (sortBy === SORT_OPTIONS.PRICE_LOW) {
-          hotelList.sort((a, b) => (a.price_per_night || a.pricePerNight || 0) - (b.price_per_night || b.pricePerNight || 0));
-        } else if (sortBy === SORT_OPTIONS.PRICE_HIGH) {
-          hotelList.sort((a, b) => (b.price_per_night || b.pricePerNight || 0) - (a.price_per_night || a.pricePerNight || 0));
-        } else if (sortBy === SORT_OPTIONS.RATING) {
-          hotelList.sort((a, b) => (b.rating || 0) - (a.rating || 0));
-        }
-
-        setHotels(hotelList);
-        setTotalPages(Math.max(1, Math.ceil(hotelList.length / PAGINATION.DEFAULT_PAGE_SIZE)));
-      } catch (err) {
-        console.error('Error searching hotels:', err);
-        setError('Could not load hotels. Please try again later.');
-        setHotels([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchHotels();
-  }, [query, page, sortBy]);
-
-  const handleSearch = (newQuery) => {
-    setQuery(newQuery);
-    setPage(1);
-    setSearchParams(newQuery ? { q: newQuery } : {});
-  };
-
-  const handlePageChange = (event, value) => {
+  const handlePageChange = (_event, value) => {
     setPage(value);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0 });
   };
 
   return (
     <Box sx={{ bgcolor: 'background.default', minHeight: '100vh' }}>
+      <RouteMeta
+        title={q ? `“${q}” stays` : 'Search stays'}
+        description="Find hotels by city, country or name."
+      />
+
       {/* Header */}
-      <Box
-        sx={{
-          bgcolor: 'primary.main',
-          py: 6,
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-      >
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            opacity: 0.1,
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-          }}
-        />
-        <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 4 }}>
-            <HotelIcon sx={{ fontSize: 40, color: 'secondary.main', mr: 2 }} />
-            <Box>
-              <Typography variant="h3" sx={{ color: 'white', fontWeight: 600 }}>
-                Search Hotels
-              </Typography>
-              <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                Find your perfect accommodation
-              </Typography>
-            </Box>
-          </Box>
-          <SearchBar onSearch={handleSearch} initialQuery={query} />
+      <Box sx={{ bgcolor: 'primary.main', py: { xs: 4, md: 6 } }}>
+        <Container maxWidth="lg">
+          <Typography variant="h3" component="h1" sx={{ color: 'white', fontWeight: 600, mb: 0.5 }}>
+            Search stays
+          </Typography>
+          <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.75)', mb: 3 }}>
+            Find your next stay by city, country or hotel name
+          </Typography>
+          <SearchBar onSearch={setQuery} initialQuery={q} />
         </Container>
       </Box>
 
       {/* Results */}
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        {/* Filters and count */}
+      <Container maxWidth="lg" component="section" sx={{ py: 4 }}>
         <Box
           sx={{
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            mb: 4,
+            mb: 3,
             flexWrap: 'wrap',
             gap: 2,
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Typography variant="body1" color="text.secondary">
-              {loading ? (
-                <Skeleton width={150} />
-              ) : (
-                <>
-                  <strong>{hotels.length}</strong> hotels found
-                  {query && (
-                    <>
-                      {' '}for "{query}"
-                      <Chip
-                        label={query}
-                        size="small"
-                        onDelete={() => handleSearch('')}
-                        sx={{ ml: 1 }}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-            </Typography>
-          </Box>
+          <Typography variant="body1" color="text.secondary" aria-live="polite">
+            {isPending ? (
+              <Skeleton width={140} />
+            ) : (
+              <>
+                <strong>{total}</strong> stay{total === 1 ? '' : 's'}
+                {q && (
+                  <>
+                    {' '}for “{q}”
+                    <Chip label={q} size="small" onDelete={() => setQuery('')} sx={{ ml: 1 }} />
+                  </>
+                )}
+              </>
+            )}
+          </Typography>
 
-          <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel>Sort by</InputLabel>
+          <FormControl size="small" sx={{ minWidth: 190 }}>
+            <InputLabel id="sort-label">Sort by</InputLabel>
             <Select
-              value={sortBy}
+              labelId="sort-label"
+              value={sort}
               label="Sort by"
-              onChange={(e) => setSortBy(e.target.value)}
+              onChange={(event) => setSort(event.target.value)}
             >
-              <MenuItem value={SORT_OPTIONS.RELEVANCE}>Relevance</MenuItem>
-              <MenuItem value={SORT_OPTIONS.PRICE_LOW}>Price: Low to High</MenuItem>
-              <MenuItem value={SORT_OPTIONS.PRICE_HIGH}>Price: High to Low</MenuItem>
-              <MenuItem value={SORT_OPTIONS.RATING}>Top Rated</MenuItem>
+              {SORT_OPTIONS.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {option.label}
+                </MenuItem>
+              ))}
             </Select>
           </FormControl>
         </Box>
 
-        {/* Error message */}
-        {error && (
-          <Alert severity="error" sx={{ mb: 4 }}>
-            {error}
-          </Alert>
-        )}
+        {/* Indicador sutil al re-buscar con el grid anterior visible */}
+        <Fade in={isFetching && !isPending} unmountOnExit>
+          <LinearProgress aria-label="Updating results" sx={{ mb: 2, borderRadius: 1 }} />
+        </Fade>
 
-        {/* Hotel grid */}
-        <Grid container spacing={3}>
-          {loading
-            ? Array.from({ length: 8 }).map((_, index) => (
-                <Grid key={index} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-                  <Card>
-                    <Skeleton variant="rectangular" height={200} />
-                    <CardContent>
-                      <Skeleton variant="text" height={28} width="80%" />
-                      <Skeleton variant="text" height={20} width="60%" />
-                      <Skeleton variant="text" height={18} width="40%" />
-                      <Skeleton variant="text" height={50} />
-                    </CardContent>
-                  </Card>
-                </Grid>
-              ))
-            : hotels.map((hotel) => (
-                <Grid key={hotel.id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-                  <HotelCard hotel={hotel} />
+        {isError ? (
+          <ErrorState error={error} title="Search is unavailable" onRetry={refetch} />
+        ) : isPending ? (
+          <HotelGridSkeleton count={6} />
+        ) : hotels.length === 0 ? (
+          <EmptyState
+            icon={<HotelIcon />}
+            title="No stays match that search"
+            description="Try a different city, country, or hotel name."
+            actionLabel={q ? 'Clear search' : undefined}
+            onAction={q ? () => setQuery('') : undefined}
+          />
+        ) : (
+          <>
+            <Grid container spacing={3}>
+              {hotels.map((hotel) => (
+                <Grid key={hotel.id} size={{ xs: 12, sm: 6, md: 4 }}>
+                  <HotelCard hotel={hotel} headingComponent="h2" />
                 </Grid>
               ))}
-        </Grid>
+            </Grid>
 
-        {/* No results */}
-        {!loading && hotels.length === 0 && !error && (
-          <Box
-            sx={{
-              textAlign: 'center',
-              py: 8,
-              px: 4,
-            }}
-          >
-            <HotelIcon sx={{ fontSize: 80, color: 'divider', mb: 2 }} />
-            <Typography variant="h5" gutterBottom>
-              No hotels found
-            </Typography>
-            <Typography variant="body1" color="text.secondary">
-              Try different search terms or explore our available options.
-            </Typography>
-          </Box>
-        )}
-
-        {/* Pagination */}
-        {!loading && hotels.length > 0 && totalPages > 1 && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 6 }}>
-            <Pagination
-              count={totalPages}
-              page={page}
-              onChange={handlePageChange}
-              color="primary"
-              size="large"
-              showFirstButton
-              showLastButton
-            />
-          </Box>
+            {totalPages > 1 && (
+              <Box component="nav" aria-label="Search results pages" sx={{ display: 'flex', justifyContent: 'center', mt: 6 }}>
+                <Pagination
+                  count={totalPages}
+                  page={Math.min(page, totalPages)}
+                  onChange={handlePageChange}
+                  color="primary"
+                  size="large"
+                  showFirstButton
+                  showLastButton
+                />
+              </Box>
+            )}
+          </>
         )}
       </Container>
     </Box>

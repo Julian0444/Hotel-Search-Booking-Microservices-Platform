@@ -4,10 +4,11 @@
  */
 
 // API Configuration
-// En desarrollo, usa el proxy de Vite (/api) para evitar CORS
-// En producción (Docker), usa la URL directa
+// El navegador usa su mismo origen: Vite y nginx del frontend envían /api
+// al gateway TLS desde el servidor, también con el certificado local.
+// La API está versionada bajo /api/v1 (plan 07 / A2)
 export const API_CONFIG = {
-  BASE_URL: import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '/api' : 'http://localhost'),
+  BASE_URL: import.meta.env.VITE_API_URL || '/api/v1',
   TIMEOUT: 30000,
 };
 
@@ -23,41 +24,51 @@ export const USER_ROLES = {
   CLIENT: 'cliente',
 };
 
-// Reservation Status
+// Reservation status del dominio (hotels-api, plan 04): el backend es el
+// dueño del lifecycle; el frontend solo agrupa por fechas para presentación
 export const RESERVATION_STATUS = {
-  UPCOMING: 'upcoming',
-  IN_PROGRESS: 'in_progress',
-  COMPLETED: 'completed',
+  CONFIRMED: 'confirmed',
   CANCELLED: 'cancelled',
 };
 
-// Hotel Amenities
-export const AMENITIES = {
-  WIFI: 'wifi',
-  POOL: 'pool',
-  RESTAURANT: 'restaurant',
-  GYM: 'gym',
-  SPA: 'spa',
-  PARKING: 'parking',
-  AC: 'air_conditioning',
-  BAR: 'bar',
-  ROOM_SERVICE: 'room_service',
-  LAUNDRY: 'laundry',
-};
+// Sort options del contrato de search-api (plan 13): whitelist compartida con
+// el backend — el orden lo aplica Solr sobre el índice completo
+export const SORT_OPTIONS = [
+  { value: 'relevance', label: 'Relevance' },
+  { value: 'price_asc', label: 'Price: low to high' },
+  { value: 'price_desc', label: 'Price: high to low' },
+  { value: 'rating_desc', label: 'Top rated' },
+];
 
-// Sort Options
-export const SORT_OPTIONS = {
-  RELEVANCE: 'relevance',
-  PRICE_LOW: 'price-low',
-  PRICE_HIGH: 'price-high',
-  RATING: 'rating',
+export const DEFAULT_SORT = 'relevance';
+
+// Catálogo de amenities conocidas (icono + label estable); cualquier otra se
+// normaliza con icono genérico — el form admin ofrece estas como opciones
+export const AMENITY_CATALOG = [
+  'wifi',
+  'pool',
+  'restaurant',
+  'gym',
+  'spa',
+  'parking',
+  'air_conditioning',
+  'bar',
+  'room_service',
+  'laundry',
+];
+
+// Límites del booking concierge (el backend valida num_rooms contra el cupo
+// real del hotel; esto solo acota los controles de la UI)
+export const BOOKING_LIMITS = {
+  MAX_ROOMS: 5,
+  MAX_GUESTS: 10,
+  MAX_STAY_NIGHTS: 30,
 };
 
 // Local Storage Keys
 export const STORAGE_KEYS = {
   TOKEN: 'token',
   USER: 'user',
-  THEME: 'theme',
 };
 
 // Routes
@@ -73,17 +84,11 @@ export const ROUTES = {
   ADMIN_EDIT_HOTEL: '/admin/hotels/:id/edit',
 };
 
-// Placeholder Images
-export const PLACEHOLDER_IMAGES = [
-  'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800',
-  'https://images.unsplash.com/photo-1582719508461-905c673771fd?w=800',
-  'https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=800',
-  'https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?w=800',
-  'https://images.unsplash.com/photo-1571896349842-33c89424de2d?w=800',
-  'https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?w=800',
-];
+// Fallback local para hoteles sin imágenes (fase 4: nada de depender de un
+// CDN externo para que la UI sea legible)
+export const HOTEL_FALLBACK_IMAGE = '/images/hotel-fallback.svg';
 
-// Default Hotel Times
+// Default Hotel Times ("HH:mm", contrato RV21)
 export const DEFAULT_TIMES = {
   CHECK_IN: '15:00',
   CHECK_OUT: '11:00',
@@ -92,7 +97,10 @@ export const DEFAULT_TIMES = {
 // Validation
 export const VALIDATION = {
   MIN_USERNAME_LENGTH: 3,
-  MIN_PASSWORD_LENGTH: 6,
+  MIN_PASSWORD_LENGTH: 8, // must match users-api RegisterRequest policy
   MAX_RATING: 5,
   MIN_RATING: 0,
 };
+
+// Repo público: única promesa "externa" que la Home/Footer pueden mostrar
+export const REPO_URL = 'https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform';

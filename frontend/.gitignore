@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# Test artifacts (plan 13)
+coverage
+playwright-report
+test-results
+lighthouse
+e2e/.auth
+e2e-evidence
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

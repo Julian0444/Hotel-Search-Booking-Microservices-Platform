@@ -1,0 +1,814 @@
+openapi: 3.0.3
+info:
+  title: Hotels API
+  version: 1.0.0
+  description: |
+    Hotel catalog and reservations.
+
+    Hotel CRUD (admin-only writes), reservations whose inventory and result
+    commit together in Mongo replica-set transactions, and opt-in **idempotent creation**, plus
+    a read-only admin panel with the real health of every service instance.
+    Catalog writes attempt a confirmed `CREATE`/`UPDATE`/`DELETE` publication
+    to RabbitMQ within a two-second budget. A successful Mongo write remains
+    successful when publication fails; search-api's periodic reconciliation
+    recovers this non-atomic Mongo-to-broker window. Reservations never publish
+    messages. Inventory and availability are read from Mongo, with no hotel
+    or reservation cache.
+
+    Conventions (platform-wide):
+    - Success responses use `{"data": ...}`; lists add `"meta"` — the catalog
+      list carries `total`, the reservation lists only `limit`/`offset`.
+    - Errors always have the shape `{"error": {"code", "message", "trace_id"}}` with stable codes.
+    - The canonical `user_id` is a **string** in every response (it mirrors the JWT claim).
+    - Reservation dates are **civil dates** `YYYY-MM-DD` (no time, no zone) in
+      requests and responses; audit timestamps (`created_at`, `cancelled_at`) are RFC 3339.
+    - Money is **integer cents** (`total_price`, currency `USD`) — never floats.
+    - `check_in_time`/`check_out_time` on hotels are times of day `"HH:mm"`.
+    - An `Accept` header that cannot take `application/json` yields `406 not_acceptable`.
+    - The gateway adds rate limiting: 10 req/s per IP (burst 20 on most routes,
+      10 on `/admin/*`); exceeding a limit returns `429` with the same error envelope.
+
+    Auth: HS256 JWTs issued by users-api (`POST /login`); this service validates
+    its own audience (`hotels-api`) and the role claim `tipo`
+    (`cliente` | `administrador`). Unversioned health endpoints
+    (`/livez`, `/readyz`) live outside `/api/v1`.
+  license:
+    name: MIT
+    url: https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/blob/main/LICENSE
+  contact:
+    name: Julian Irusta Roure
+    url: https://github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform
+servers:
+  - url: https://localhost/api/v1
+    description: nginx API gateway (local, self-signed TLS — use `curl -k`)
+tags:
+  - name: hotels
+    description: Public catalog (list, detail, availability)
+  - name: reservations
+    description: Booking, history and cancellation (authenticated)
+  - name: admin
+    description: Hotel management and platform status (administrators only)
+security:
+  - bearerAuth: []
+paths:
+  /hotels:
+    get:
+      operationId: listHotels
+      tags: [hotels]
+      summary: List the hotel catalog
+      description: |
+        Public paginated list, stable order (`_id` ascending). Without
+        `after_id`, uses offset pagination and returns `meta.total`.
+        Supplying `after_id` (empty for the first page) selects keyset
+        pagination used by reconciliation; `offset` is ignored and metadata
+        carries only `limit` and `after_id`. Continue until an empty page.
+        Keyset avoids skipped records when earlier hotels are deleted.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - name: after_id
+          in: query
+          required: false
+          allowEmptyValue: true
+          schema: { type: string, pattern: '^([0-9a-fA-F]{24})?$' }
+          description: Keyset cursor, exclusive; an empty value starts the scan.
+      responses:
+        '200':
+          description: Page of hotels with the list envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Hotel' }
+                  meta:
+                    oneOf:
+                      - $ref: '#/components/schemas/ListMeta'
+                      - $ref: '#/components/schemas/CursorMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /hotels/{hotel_id}:
+    get:
+      operationId: getHotel
+      tags: [hotels]
+      summary: Get a hotel by id
+      description: Public detail. A malformed id behaves as "not found" (`hotel_not_found`).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/HotelID'
+      responses:
+        '200':
+          description: The hotel.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Hotel' }
+        '404':
+          $ref: '#/components/responses/HotelNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /hotels/availability:
+    post:
+      operationId: getAvailability
+      tags: [hotels]
+      summary: Check availability for a date range
+      description: |
+        Public batch check against the per-night inventory (the same counters
+        the booking claim uses). A hotel is `true` when **every night** in
+        `[check_in, check_out)` still has capacity for at least one room.
+        Unknown hotel ids — or any hotel whose check fails — report `false`
+        (conservative). Duplicated ids collapse into one map entry.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvailabilityRequest'
+      responses:
+        '200':
+          description: Availability per requested hotel id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    description: Map of hotel id to availability for the whole range.
+                    additionalProperties: { type: boolean }
+                    example:
+                      6a701f4c93687483413f118c: true
+                      '000000000000000000000000': false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /hotels/{hotel_id}/reservations:
+    get:
+      operationId: listHotelReservations
+      tags: [admin]
+      summary: List the reservations of a hotel (admin only)
+      description: |
+        Every reservation of the hotel, all guests included — the response
+        exposes each guest's `user_id` (PII), so this route requires the
+        `administrador` role. `meta` carries no `total` (page-only metadata).
+      parameters:
+        - $ref: '#/components/parameters/HotelID'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Page of reservations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /reservations:
+    post:
+      operationId: createReservation
+      tags: [reservations]
+      summary: Create a reservation
+      description: |
+        Books `num_rooms` rooms for every night in `[check_in, check_out)`.
+        Reservation, all occupied nights and any idempotency record commit
+        in one Mongo transaction. Capacity changes and deletion coordinate
+        through the same hotel write. A request exceeding available capacity
+        gets `409 no_availability`; a failed transaction leaves no partial nights.
+        The maximum stay is 366 nights; checkout is excluded.
+
+        `hotel_name`, `total_price` and `currency` are derived server-side
+        from the hotel (never taken from the body):
+        `total_price = round(price_per_night × 100) × nights × num_rooms`, in cents.
+
+        **Idempotency (opt-in)**: send an `Idempotency-Key` header to make
+        retries recoverable. The key is scoped to `(key, authenticated user)`
+        and commits with the reservation ID and canonical payload hash.
+        Same key and payload recover the same `201` result, including after
+        timeout or restart, with `Idempotency-Replayed: true`; another payload
+        gets `409 idempotency_conflict`. Concurrent attempts coordinate in Mongo;
+        there is no separately persisted in-flight state.
+        Keys expire via Mongo TTL after 24 hours from creation (cleanup is
+        asynchronous). Deduplication is not guaranteed after that retention
+        window. Without the header, each POST is a separate booking attempt.
+        Failed validation or an aborted transaction does not consume the key;
+        a timeout alone is not proof of an aborted operation. Retry an unknown
+        result using the SAME key and payload.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 200 }
+          description: Client-generated key without surrounding whitespace that makes this POST safe to retry (see description).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReservationRequest'
+      responses:
+        '201':
+          description: Reservation created (or replayed). `Location` points at the new resource.
+          headers:
+            Location:
+              schema: { type: string, example: /api/v1/reservations/6a7131d1d443f447ba44eaf1 }
+              description: Path of the created reservation.
+            Idempotency-Replayed:
+              schema: { type: string, example: 'true' }
+              description: Present (with value `true`) only when this response is an idempotent replay of a stored one.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [id]
+                    properties:
+                      id: { type: string, example: 6a7131d1d443f447ba44eaf1 }
+        '400':
+          description: >
+            Malformed body (`invalid_body`) or invalid reservation
+            (`invalid_reservation`): dates not `YYYY-MM-DD`, `check_out` not
+            after `check_in`, `check_in` in the past (UTC day), or negative
+            `num_rooms`/`num_guests`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The body's `user_id` does not match the token — users can only book for themselves (`forbidden`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          $ref: '#/components/responses/HotelNotFound'
+        '409':
+          description: >
+            No capacity for some night of the requested range, or `num_rooms`
+            beyond the hotel capacity (`no_availability`); a reused key with a
+            different canonical payload (`idempotency_conflict`); or a legacy
+            key requiring inspection/migration (`idempotency_migration_required`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /reservations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ReservationID'
+    get:
+      operationId: getReservation
+      tags: [reservations]
+      summary: Get a reservation by id (owner or admin)
+      description: The resource `Location` points at after a create. Owners see their own; admins see any.
+      responses:
+        '200':
+          description: The reservation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Reservation' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ReservationNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+    delete:
+      operationId: cancelReservation
+      tags: [reservations]
+      summary: Cancel a reservation (owner only)
+      description: |
+        Soft-cancel: marks the reservation `cancelled` (it stays in the
+        history with `cancelled_at`) and releases all its nights in the
+        same transaction. **Owner only — admins cannot cancel other users'
+        reservations.** Idempotent: cancelling an already-cancelled
+        reservation is `204` again without double-releasing inventory.
+      responses:
+        '204':
+          description: Cancelled (or already cancelled).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ReservationNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /users/{user_id}/reservations:
+    get:
+      operationId: listUserReservations
+      tags: [reservations]
+      summary: List a user's reservations (owner or admin)
+      description: >
+        Booking history, cancelled included. A user can list only their own
+        reservations; admins can list anyone's. `meta` carries no `total`.
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Page of reservations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /users/{user_id}/hotels/{hotel_id}/reservations:
+    get:
+      operationId: listUserHotelReservations
+      tags: [reservations]
+      summary: List a user's reservations in one hotel (owner or admin)
+      description: Same ownership rule and envelope as the user history, filtered to one hotel.
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/HotelID'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Page of reservations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /admin/hotels:
+    post:
+      operationId: createHotel
+      tags: [admin]
+      summary: Create a hotel (admin only)
+      description: |
+        Validates required text, capacity, price, rating and both `HH:mm`
+        schedules before writing. Identity is assigned by the server.
+        Attempts a confirmed `CREATE` event; Mongo success returns `201` even
+        if the broker is down. Periodic reconciliation repairs the index.
+        Mongo and RabbitMQ do not form a single transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HotelInput'
+      responses:
+        '201':
+          description: Hotel created. `Location` points at the new resource.
+          headers:
+            Location:
+              schema: { type: string, example: /api/v1/hotels/6a701f4c93687483413f118c }
+              description: Path of the created hotel.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [id]
+                    properties:
+                      id: { type: string, example: 6a701f4c93687483413f118c }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /admin/hotels/{hotel_id}:
+    parameters:
+      - $ref: '#/components/parameters/HotelID'
+    put:
+      operationId: updateHotel
+      tags: [admin]
+      summary: Update a hotel (admin only)
+      description: |
+        Replaces the public hotel representation. Required text and schedules
+        must be supplied; omitted optional fields reset to their zero/empty
+        value. Zero price/rating/capacity and empty amenities/images persist.
+        Capacity zero closes new bookings; a capacity below any recorded
+        booked night is rejected with `409 capacity_conflict`.
+        Returns the persisted representation. A failed `UPDATE` publication
+        does not change successful HTTP status; reconciliation repairs search.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HotelInput'
+      responses:
+        '200':
+          description: The updated hotel.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Hotel' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/HotelNotFound'
+        '409':
+          description: Capacity conflicts with existing inventory (`capacity_conflict`) or deletion would lose reservation history (`hotel_has_reservations`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+    delete:
+      operationId: deleteHotel
+      tags: [admin]
+      summary: Delete a hotel (admin only)
+      description: >
+        Rejects a hotel with any reservation history, including cancelled
+        reservations, with `409 hotel_has_reservations`. Otherwise deletes
+        hotel and inventory together. Attempts a `DELETE` event; successful
+        deletion returns `204` even if publishing fails. Reconciliation removes
+        the orphaned search document if that event is lost.
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/HotelNotFound'
+        '409':
+          description: Capacity conflicts with existing inventory (`capacity_conflict`) or deletion would lose reservation history (`hotel_has_reservations`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /admin/microservices:
+    get:
+      operationId: getMicroservicesStatus
+      tags: [admin]
+      summary: Platform status panel (admin only, read-only)
+      description: |
+        Probes the `GET /readyz` of **every instance of every service in
+        parallel** (2 s timeout per probe) and reports measured status and
+        latency. Strictly read-only — there are no scale/restart/log actions.
+      responses:
+        '200':
+          description: Real, measured status of the platform.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/MicroservicesStatus' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Internal'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by users-api `POST /login`; this service validates the `hotels-api` audience.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size (default 20, clamped to 100; invalid values fall back to the default).
+      schema: { type: integer, default: 20, maximum: 100 }
+    Offset:
+      name: offset
+      in: query
+      description: Items to skip (default 0; negative/invalid values fall back to 0).
+      schema: { type: integer, default: 0 }
+    HotelID:
+      name: hotel_id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Hotel id (Mongo ObjectID hex).
+    ReservationID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Reservation id (Mongo ObjectID hex).
+    UserID:
+      name: user_id
+      in: path
+      required: true
+      schema: { type: string }
+      description: User id (numeric string, as issued in the JWT claim).
+  schemas:
+    Hotel:
+      type: object
+      required: [id, name, description, address, city, state, country, phone,
+                 email, price_per_night, rating, available_rooms,
+                 check_in_time, check_out_time, amenities, images]
+      properties:
+        id: { type: string, example: 6a701f4c93687483413f118c }
+        name: { type: string, example: Hotel Sierras de Córdoba }
+        description: { type: string, example: 'Hotel boutique frente a las sierras, con desayuno regional y pileta climatizada.' }
+        address: { type: string, example: Av. San Martín 1200 }
+        city: { type: string, example: Córdoba }
+        state: { type: string, example: Córdoba }
+        country: { type: string, example: Argentina }
+        phone: { type: string, example: +54 351 555-0101 }
+        email: { type: string, example: reservas@sierrascba.demo }
+        price_per_night:
+          type: number
+          format: double
+          description: Catalog price per night in USD. Reservation totals are derived server-side in integer cents.
+          example: 95
+        rating: { type: number, format: double, example: 4.5 }
+        available_rooms:
+          type: integer
+          description: Total room capacity per night (the per-night inventory counts claims against it).
+          example: 12
+        check_in_time: { type: string, description: 'Time of day `"HH:mm"`.', example: '14:00' }
+        check_out_time: { type: string, description: 'Time of day `"HH:mm"`.', example: '10:00' }
+        amenities:
+          type: array
+          nullable: true
+          items: { type: string }
+          example: [wifi, pileta, desayuno]
+        images:
+          type: array
+          nullable: true
+          items: { type: string }
+          description: Image URLs. May be empty — clients render a local fallback.
+    HotelInput:
+      type: object
+      description: >
+        Complete POST/PUT representation; identity is server-assigned on POST
+        and taken from the path on PUT. Required strings cannot be blank.
+        Omitted optional fields reset to zero/empty; lists may be empty or null.
+      required: [name, address, city, country, check_in_time, check_out_time]
+      properties:
+        name: { type: string, minLength: 1, example: Hotel Sierras de Córdoba }
+        description: { type: string }
+        address: { type: string, minLength: 1 }
+        city: { type: string, minLength: 1 }
+        state: { type: string }
+        country: { type: string, minLength: 1 }
+        phone: { type: string }
+        email: { type: string }
+        price_per_night: { type: number, format: double, minimum: 0, maximum: 1000000, default: 0, example: 95 }
+        rating: { type: number, format: double, minimum: 0, maximum: 5, default: 0, example: 4.5 }
+        available_rooms: { type: integer, minimum: 0, maximum: 10000, default: 0, example: 12 }
+        check_in_time: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', example: '14:00' }
+        check_out_time: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', example: '10:00' }
+        amenities:
+          type: array
+          nullable: true
+          items: { type: string }
+        images:
+          type: array
+          nullable: true
+          items: { type: string }
+    CreateReservationRequest:
+      type: object
+      required: [hotel_id, check_in, check_out]
+      properties:
+        hotel_id: { type: string, example: 6a701f4c93687483413f118c }
+        user_id:
+          type: string
+          description: Optional — must match the token's user when present (users book only for themselves); omitted, it is taken from the token.
+        check_in: { type: string, format: date, example: '2027-03-01' }
+        check_out: { type: string, format: date, example: '2027-03-03' }
+        num_rooms: { type: integer, default: 1, minimum: 1, description: Rooms to book (omitted/0 defaults to 1; must not exceed the hotel capacity). }
+        num_guests: { type: integer, default: 1, minimum: 1, description: Guests (omitted/0 defaults to 1). }
+    Reservation:
+      type: object
+      required: [id, hotel_id, hotel_name, user_id, check_in, check_out,
+                 status, num_rooms, num_guests, total_price, currency, created_at]
+      properties:
+        id: { type: string, example: 6a7131d1d443f447ba44eaf1 }
+        hotel_id: { type: string, example: 6a701f4c93687483413f118c }
+        hotel_name:
+          type: string
+          description: Derived from the hotel at booking time (never client-provided).
+          example: Hotel Sierras de Córdoba
+        user_id: { type: string, example: '25' }
+        check_in: { type: string, format: date, example: '2027-03-01' }
+        check_out: { type: string, format: date, example: '2027-03-03' }
+        status: { type: string, enum: [confirmed, cancelled] }
+        num_rooms: { type: integer, example: 1 }
+        num_guests: { type: integer, example: 1 }
+        total_price:
+          type: integer
+          format: int64
+          description: Total in **cents** — `round(price_per_night × 100) × nights × num_rooms`.
+          example: 19000
+        currency: { type: string, example: USD }
+        created_at: { type: string, format: date-time, example: '2026-08-04T00:26:57.94Z' }
+        cancelled_at:
+          type: string
+          format: date-time
+          description: Present only on cancelled reservations.
+    ReservationPage:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Reservation' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+    AvailabilityRequest:
+      type: object
+      required: [hotel_ids, check_in, check_out]
+      properties:
+        hotel_ids:
+          type: array
+          items: { type: string }
+          example: [6a701f4c93687483413f118c]
+        check_in: { type: string, format: date, example: '2027-03-01' }
+        check_out: { type: string, format: date, example: '2027-03-03' }
+    ListMeta:
+      type: object
+      required: [total, limit, offset]
+      properties:
+        total: { type: integer, description: Total items in the collection, example: 5 }
+        limit: { type: integer, example: 20 }
+        offset: { type: integer, example: 0 }
+    CursorMeta:
+      type: object
+      required: [limit, after_id]
+      properties:
+        limit: { type: integer, example: 50 }
+        after_id: { type: string, example: 6a701f4c93687483413f118c }
+    PageMeta:
+      type: object
+      required: [limit, offset]
+      description: Page-only metadata — the reservation lists carry no `total`.
+      properties:
+        limit: { type: integer, example: 20 }
+        offset: { type: integer, example: 0 }
+    MicroservicesStatus:
+      type: object
+      required: [services, summary]
+      properties:
+        services:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceStatus' }
+        summary:
+          type: object
+          required: [total_services, total_instances, healthy_services]
+          properties:
+            total_services: { type: integer, example: 3 }
+            total_instances: { type: integer, example: 5 }
+            healthy_services: { type: integer, example: 3 }
+    ServiceStatus:
+      type: object
+      required: [name, status, load_balanced, instances]
+      properties:
+        name: { type: string, example: users-api }
+        status:
+          type: string
+          enum: [up, degraded, down]
+          description: '`up` = all instances healthy, `degraded` = some, `down` = none.'
+        load_balanced: { type: boolean, description: True when the service runs more than one instance. }
+        instances:
+          type: array
+          items: { $ref: '#/components/schemas/InstanceStatus' }
+    InstanceStatus:
+      type: object
+      required: [name, url, status, latency_ms]
+      properties:
+        name: { type: string, example: users-api-1:8082 }
+        url: { type: string, example: http://users-api-1:8082 }
+        status: { type: string, enum: [up, down] }
+        latency_ms: { type: integer, format: int64, description: Measured `/readyz` round-trip., example: 4 }
+        error: { type: string, description: Present when the probe failed or returned non-200. }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, trace_id]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable code. This service emits:
+                `invalid_body`, `invalid_reservation`, `unauthorized`,
+                `forbidden`, `hotel_not_found`, `reservation_not_found`,
+                `no_availability`, `idempotency_conflict`, `idempotency_migration_required`,
+                `invalid_idempotency_key`, `invalid_hotel`, `invalid_cursor`,
+                `capacity_conflict`, `hotel_has_reservations`, `not_acceptable`,
+                `internal` — plus `rate_limited`, `not_found` and
+                `upstream_unavailable` generated by the gateway.
+            message: { type: string }
+            trace_id:
+              type: string
+              description: Request id propagated end-to-end (`X-Request-ID`); correlate with the structured logs.
+  responses:
+    BadRequest:
+      description: Malformed body or invalid hotel, reservation, cursor or idempotency key (`invalid_body`, `invalid_hotel`, `invalid_reservation`, `invalid_cursor`, `invalid_idempotency_key`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Unauthorized:
+      description: Missing/invalid bearer token (`unauthorized`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Forbidden:
+      description: Authenticated but not allowed (`forbidden`) — wrong role or not the resource owner.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    HotelNotFound:
+      description: Hotel does not exist (`hotel_not_found`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    ReservationNotFound:
+      description: Reservation does not exist (`reservation_not_found`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    RateLimited:
+      description: Gateway rate limit exceeded (`rate_limited`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Internal:
+      description: >
+        Unexpected failure (`internal`). Details go to the structured logs
+        only, correlated by `trace_id`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }

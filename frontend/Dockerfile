@@ -1,5 +1,6 @@
-# Build stage
-FROM node:20-alpine as build
+# Build stage — Node 22: los devDeps del toolchain (jsdom 30/undici 8)
+# declaran engines >=22; alineado con los jobs frontend del CI
+FROM node:22-alpine as build
 
 WORKDIR /app
 

@@ -1,0 +1,35 @@
+Search closeout evidence record
+Written at 2026-10-06T05:32:55.360346+00:00
+
+PROVENANCE: This is a retrospective record of observed tool results from the busqueda agent session, not an original raw migration log. No migration was rerun to create this record.
+
+Schema application observed on 2026-10-06 UTC:
+Command: COMPOSE_PROJECT_NAME=hotel-closure search-api/scripts/apply-solr-schema.sh
+Exit status: 0.
+Existing core had five canonical hotel IDs plus deliberately injected orphan 00000000000000000000dead01.
+One-shot reconciliation log: checked=6 indexed=5.
+Backup retained inside Solr volume: /var/solr/data/hotels/conf/schema.xml.before-20261006T050726Z-9522
+Observed active /schema/fieldtypes/text_general response included ASCIIFoldingFilterFactory in index and query analyzers.
+Observed final index retained the five original IDs and no longer contained the orphan:
+6ac480c05268b5fd723f118c Hotel Sierras de Córdoba
+6ac480c05268b5fd723f118d Palermo Soho Suites
+6ac480c05268b5fd723f118e Posada del Vino
+6ac480c05268b5fd723f118f Refugio del Lago
+6ac480c05268b5fd723f1190 Hostal de la Quebrada
+Script stopped search-api, copied only schema.xml, reloaded the core, reconciled, and restarted search-api; no volume was deleted.
+
+Independent live integration observed passing earlier in this session:
+go test -tags=integration -race ./search-api/... with real isolated Solr 9 and RabbitMQ 3.
+search-api/scripts/test-integration.sh also completed successfully with auto-created isolated containers.
+Latest combined root integration log independently read and confirmed passing: /private/tmp/final-root-integration.log
+That log includes Mongo repository integration, search-api integration, and hotels-api publisher integration.
+
+Final Redocly validation raw log: /private/tmp/hotel-redocly-final.log
+Redocly version 2.58.1; lint hotels.yaml, search.yaml, users.yaml; exit=0; 0 errors, 3 expected localhost server warnings.
+
+Cleanup observed on 2026-10-06 UTC: hotel-search-verify-solr and hotel-search-verify-rabbit removed with their exclusive anonymous test volumes after inspect and docker ps volume-usage checks. No Compose/demo volume was involved.
+
+Current source SHA-256 at record creation (not a Git commit claim):
+4f07bab0391a2c504c21f56e1076fd6a9330305714cf5a151ff3adb7e981ce01  search-api/internal/solr-config/conf/schema.xml
+aac903fee0e733c40bfb4ec66690e500d810c9b358f250970c75d665cb757592  search-api/scripts/apply-solr-schema.sh
+0ab70598c373bb0f3cf4f2ea08d4ab728c9d3d9feacee803c452daa5fddca0b3  search-api/scripts/test-integration.sh

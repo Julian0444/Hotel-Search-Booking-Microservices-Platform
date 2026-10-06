@@ -1,0 +1,214 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [users-api, hotels-api, search-api, platform-contracts]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # stable y no go-version-file: instalar la versión exacta del go.mod
+          # deja un stdlib sin parches (govulncheck rojo) y fuerza un switch de
+          # toolchain que rompe covdata en el runner
+          go-version: stable
+          check-latest: true
+          # go.* y no go.sum: platform-contracts no tiene go.sum (cero deps) y
+          # setup-go falla si el path de cache no matchea ningún archivo (RV13)
+          cache-dependency-path: ${{ matrix.module }}/go.*
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
+      - uses: golangci/golangci-lint-action@v8 # CLI v2, lee el .golangci.yml raíz
+        with:
+          working-directory: ${{ matrix.module }}
+      - name: go test
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: govulncheck
+        run: |
+          GOWORK=off go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOWORK=off govulncheck ./...
+
+  # Tests de integración (testcontainers): en PRs y ejecución manual para no encarecer cada push
+  integration:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+          cache-dependency-path: |
+            hotels-api/go.sum
+            search-api/go.sum
+      - run: make test-integration
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # jsdom 30 / undici 8 exigen Node ≥22 (engines); con Node 20 los
+          # forks workers de vitest mueren al cargar jsdom (markAsUncloneable)
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      # TZ al oeste de UTC: los tests de fechas civiles deben pasar igual que
+      # en UTC (plan 13 — el bug era exactamente ese)
+      - run: TZ=America/Los_Angeles npm run test:coverage
+      - run: npm run build
+      - run: npm audit --audit-level=high
+
+  # E2E Playwright contra el stack completo (plan 13 fase 10): en PRs y ejecución manual,
+  # mismo criterio que integration — levanta compose con el profile frontend
+  # (SPA buildeado en :5173 + gateway TLS self-signed) y corre los recorridos.
+  frontend-e2e:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # jsdom 30 / undici 8 exigen Node ≥22 (engines); con Node 20 los
+          # forks workers de vitest mueren al cargar jsdom (markAsUncloneable)
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Preparar .env y certs self-signed del gateway
+        run: |
+          cp .env.example .env
+          mkdir -p nginx/certs
+          # nginx.conf exige exactamente cert.pem/key.pem (nginx/certs/README.md)
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+            -keyout nginx/certs/key.pem -out nginx/certs/cert.pem \
+            -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+      - name: Levantar el stack (con SPA buildeado)
+        run: |
+          docker compose --profile frontend up -d --build
+          # Solr tarda ~90s; el resto encadena healthchecks. El grep -v '^$'
+          # descarta servicios SIN healthcheck (memcached, frontend) — sin eso
+          # el loop nunca converge y quema los 300s completos.
+          for i in $(seq 1 60); do
+            unhealthy=$(docker compose ps --format '{{.Health}}' | grep -v '^$' | grep -cv 'healthy' || true)
+            [ "$unhealthy" -eq 0 ] && break
+            sleep 5
+          done
+          docker compose ps
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm run test:e2e
+        working-directory: frontend
+        env:
+          ADMIN_USERNAME: admin
+          ADMIN_PASSWORD: change-me-min-8-chars
+      - name: Reporte de Playwright si falló (html + traces)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Logs del stack si falló
+        if: failure()
+        run: docker compose logs --tail 100
+
+  # Supply-chain de imágenes (plan 09, CN4): build multi-stage + Trivy como gate
+  # en cada push/PR; push multi-arch a GHCR con tags inmutables solo en main
+  # (y en tags v* para el semver). needs: go — nunca publicar imágenes de un
+  # commit con tests rotos.
+  docker:
+    needs: go
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push a ghcr.io con el GITHUB_TOKEN
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # los 3 buildean con contexto RAÍZ: el replace de go.mod necesita
+          # platform-contracts/ dentro del contexto (users-api desde el plan 11)
+          - service: users-api
+            context: .
+            dockerfile: ./users-api/Dockerfile
+          - service: hotels-api
+            context: .
+            dockerfile: ./hotels-api/Dockerfile
+          - service: search-api
+            context: .
+            dockerfile: ./search-api/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      # QEMU solo emula el stage final alpine en arm64; el toolchain de Go
+      # cross-compila nativo (--platform=$BUILDPLATFORM en los Dockerfiles)
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build para escaneo (amd64, sin push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          load: true
+          tags: local/${{ matrix.service }}:scan
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+      - name: Trivy (gate de HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: local/${{ matrix.service }}:scan
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          # Sin fix upstream no hay acción posible: el gate queda accionable
+          # (sobre multi-stage el scan ve binario + alpine final, no el toolchain)
+          ignore-unfixed: true
+      - name: Login a GHCR
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tags inmutables (sha- siempre; semver en tags v*)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/julian0444/${{ matrix.service }}
+          tags: |
+            type=sha,prefix=sha-
+            type=semver,pattern=v{{version}}
+      - name: Push multi-arch a GHCR
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}

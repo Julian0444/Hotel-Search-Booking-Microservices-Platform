@@ -1,0 +1,24 @@
+docs {
+  # Search API — búsqueda full-text (read model CQRS-lite)
+
+  Búsqueda sobre el índice Solr `hotels`, sincronizado por eventos de
+  `hotels-news` (thin event + lookup a hotels-api) — contra el gateway nginx
+  (`{{baseUrl}}` = https://localhost/api/v1).
+
+  Cómo usarla:
+  - Seleccionar el environment **local**.
+  - TLS self-signed → desactivar la verificación SSL en Bruno o usar
+    `--insecure` en CLI.
+  - `admin_password` trae el placeholder de `.env.example`: ajustarlo al
+    ADMIN_PASSWORD de tu `.env` (en CLI: `--env-var admin_password=...`).
+  - El gateway no cachea búsqueda. Consultar la MISMA URI permite verificar
+    convergencia de Solr; no agregar parámetros para esquivar cachés.
+  - Se busca nombre, descripción, ciudad y país, con folding de tildes y
+    mayúsculas sin cambiar los textos visibles.
+  - Una instancia search-api coordina eventos y reconciliación de huérfanos:
+    al arrancar, cada minuto tras éxito y mediante POST /reindex.
+  - Solo `POST /reindex` requiere token (admin).
+
+  CLI (desde esta carpeta):
+  `npx -y @usebruno/cli run --env local --insecure --env-var admin_password=...`
+}

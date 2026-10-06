@@ -1,0 +1,37 @@
+meta {
+  name: Login (admin)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "{{admin_username}}",
+    "password": "{{admin_password}}"
+  }
+}
+
+script:post-response {
+  if (res.status === 200) {
+    bru.setVar("admin_token", res.body.data.token);
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Login del admin sembrado por env (ADMIN_USERNAME/ADMIN_PASSWORD del `.env`).
+  Ajustar `admin_password` en el environment si difiere del placeholder.
+}
+
+settings {
+  encodeUrl: true
+}

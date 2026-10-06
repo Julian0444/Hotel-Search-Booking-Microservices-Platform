@@ -1,0 +1,32 @@
+meta {
+  name: Cancel Reservation
+  type: http
+  seq: 15
+}
+
+delete {
+  url: {{baseUrl}}/reservations/{{reservation_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{guest_token}}
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  Soft-cancel SOLO del dueño (un admin no puede cancelar reservas ajenas):
+  marca la reserva cancelled (queda en el historial con `cancelled_at`) y
+  libera sus noches al inventario. Idempotente: repetir el DELETE sobre una
+  reserva ya cancelada devuelve 204 sin doble liberación.
+
+  Inexistente → 404 `reservation_not_found`.
+}
+
+settings {
+  encodeUrl: true
+}

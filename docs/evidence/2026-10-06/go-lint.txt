@@ -1,0 +1,8 @@
+== golangci-lint users-api
+0 issues.
+== golangci-lint hotels-api
+0 issues.
+== golangci-lint search-api
+0 issues.
+== golangci-lint platform-contracts
+0 issues.

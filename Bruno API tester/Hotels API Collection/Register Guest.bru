@@ -1,0 +1,42 @@
+meta {
+  name: Register Guest
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/users
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "{{guest_username}}",
+    "password": "{{guest_password}}"
+  }
+}
+
+script:pre-request {
+  bru.setVar("guest_username", "bruno_guest_" + Date.now());
+  bru.setVar("guest_password", "BrunoGuest123");
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("guest_user_id", res.body.data.id);
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  Registra un huésped fresco (cliente) para el flujo de reservas — así la
+  corrida no toca el historial de otros usuarios y puede borrarlo al final.
+}
+
+settings {
+  encodeUrl: true
+}

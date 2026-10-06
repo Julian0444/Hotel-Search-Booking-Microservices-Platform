@@ -1,9 +1,11 @@
 /**
  * Common components barrel export
- * Add shared UI components here as the project grows
  */
 
-// Placeholder for future common components
-// export { default as Button } from './Button';
-// export { default as Modal } from './Modal';
-// export { default as LoadingSpinner } from './LoadingSpinner';
+export { default as AppLoader } from './AppLoader';
+export { default as BrandMark } from './BrandMark';
+export { default as EmptyState } from './EmptyState';
+export { default as ErrorState } from './ErrorState';
+export { default as ResponsiveImage } from './ResponsiveImage';
+export { default as RouteFallback } from './RouteFallback';
+export { default as RouteMeta } from './RouteMeta';

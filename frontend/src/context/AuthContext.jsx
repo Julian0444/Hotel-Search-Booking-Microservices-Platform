@@ -1,136 +1,108 @@
 /**
- * Authentication Context
- * Provides authentication state and methods throughout the application
+ * Auth Provider (plan 13 fase 2, RV31/F13-02).
+ * - Bootstrap: valida exp/iss/aud del token guardado ANTES de aceptar la
+ *   sesión (adiós sesión zombie); malformado/vencido arranca anónimo.
+ * - isBootstrapping (carga inicial) e isSubmitting (login/register en vuelo)
+ *   son estados separados: el loader de app no es el spinner del form.
+ * - El interceptor emite session-expired; acá solo se limpia estado — el
+ *   componente de rutas navega con el Router (sin hard redirect del navegador).
  */
 
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { AuthContext } from './auth-context';
 import { authService } from '../services';
-import { STORAGE_KEYS, USER_ROLES } from '../constants';
+import { persistSession, clearSession, readStoredSession } from '../services/authStorage';
+import { onSessionExpired } from '../services/authEvents';
+import { USER_ROLES } from '../constants';
 
-const AuthContext = createContext(null);
-
-/**
- * Custom hook to access auth context
- * @returns {AuthContextValue}
- */
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
-
-/**
- * Auth Provider Component
- */
 export const AuthProvider = ({ children }) => {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState(null);
 
-  // Load user from localStorage on mount
   useEffect(() => {
-    const storedUser = localStorage.getItem(STORAGE_KEYS.USER);
-    const storedToken = localStorage.getItem(STORAGE_KEYS.TOKEN);
-
-    if (storedUser && storedToken) {
-      try {
-        setUser(JSON.parse(storedUser));
-      } catch {
-        localStorage.removeItem(STORAGE_KEYS.USER);
-        localStorage.removeItem(STORAGE_KEYS.TOKEN);
-      }
+    const session = readStoredSession();
+    if (session) {
+      setUser(session.user);
     }
-    setLoading(false);
+    setIsBootstrapping(false);
   }, []);
 
-  /**
-   * Login user
-   * @param {string} username
-   * @param {string} password
-   * @returns {Promise<{ success: boolean, error?: string }>}
-   */
-  const login = useCallback(async (username, password) => {
-    setError(null);
-    setLoading(true);
+  // Un 401 de sesión en cualquier request: el storage ya quedó limpio
+  // (interceptor); acá cae el estado y se anota el motivo para que Login lo
+  // explique. Las queries privadas se descartan para que Back no muestre
+  // datos de la sesión anterior.
+  useEffect(
+    () =>
+      onSessionExpired(() => {
+        setUser(null);
+        setSessionNotice('Your session expired. Please sign in again.');
+        queryClient.clear();
+      }),
+    [queryClient],
+  );
 
+  const login = useCallback(async (username, password) => {
+    setIsSubmitting(true);
     try {
       const response = await authService.login(username, password);
       const userData = {
-        id: response.user_id,
+        id: String(response.user_id),
         username: response.username,
         tipo: response.tipo,
       };
-
-      localStorage.setItem(STORAGE_KEYS.TOKEN, response.token);
-      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(userData));
+      persistSession({ token: response.token, user: userData });
       setUser(userData);
-
+      setSessionNotice(null);
       return { success: true };
-    } catch (err) {
-      const message = err.response?.data?.error || 'Failed to login. Please try again.';
-      setError(message);
-      return { success: false, error: message };
+    } catch (error) {
+      return { success: false, error: error.message };
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   }, []);
 
-  /**
-   * Register new user
-   * @param {string} username
-   * @param {string} password
-   * @param {string} tipo
-   * @returns {Promise<{ success: boolean, error?: string }>}
-   */
-  const register = useCallback(async (username, password, tipo = USER_ROLES.CLIENT) => {
-    setError(null);
-    setLoading(true);
-
-    try {
-      await authService.register(username, password, tipo);
+  const register = useCallback(
+    async (username, password) => {
+      setIsSubmitting(true);
+      try {
+        await authService.register(username, password);
+      } catch (error) {
+        setIsSubmitting(false);
+        return { success: false, error: error.message };
+      }
       // Auto-login after registration
-      return await login(username, password);
-    } catch (err) {
-      const message = err.response?.data?.error || 'Registration failed. Please try again.';
-      setError(message);
-      return { success: false, error: message };
-    } finally {
-      setLoading(false);
-    }
-  }, [login]);
-
-  /**
-   * Logout user
-   */
-  const logout = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEYS.TOKEN);
-    localStorage.removeItem(STORAGE_KEYS.USER);
-    setUser(null);
-    setError(null);
-  }, []);
-
-  const isAdmin = user?.tipo === USER_ROLES.ADMIN;
-  const isAuthenticated = !!user;
-
-  const value = {
-    user,
-    loading,
-    error,
-    isAuthenticated,
-    isAdmin,
-    login,
-    register,
-    logout,
-    setError,
-  };
-
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
+      return login(username, password);
+    },
+    [login],
   );
-};
 
-export default AuthContext;
+  const logout = useCallback(() => {
+    clearSession();
+    setUser(null);
+    setSessionNotice(null);
+    // Invalida TODO el estado remoto privado: reservas, listados admin, etc.
+    queryClient.clear();
+  }, [queryClient]);
+
+  const value = useMemo(
+    () => ({
+      user,
+      isBootstrapping,
+      isSubmitting,
+      sessionNotice,
+      clearSessionNotice: () => setSessionNotice(null),
+      isAuthenticated: !!user,
+      isAdmin: user?.tipo === USER_ROLES.ADMIN,
+      login,
+      register,
+      logout,
+    }),
+    [user, isBootstrapping, isSubmitting, sessionNotice, login, register, logout],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};

@@ -1,0 +1,41 @@
+time="2026-10-05T22:32:06-07:00" level=warning msg="No services to build"
+ Container hotel-closure-users-api-1-1 Recreate
+ Container hotel-closure-hotels-api-1 Recreate
+ Container hotel-closure-users-api-1-1 Recreated
+ Container hotel-closure-hotels-api-1 Recreated
+ Container hotel-closure-hotels-api-1 Starting
+ Container hotel-closure-users-api-1-1 Starting
+ Container hotel-closure-hotels-api-1 Started
+ Container hotel-closure-users-api-1-1 Started
+{
+  "before": {
+    "hotels-api": {
+      "id": "ca1c9dd9bb16",
+      "ip": "172.21.0.8"
+    },
+    "nginx": {
+      "id": "346f2c9952dc",
+      "ip": "172.21.0.12"
+    },
+    "users-api-1": {
+      "id": "fe29a6dd0ca5",
+      "ip": "172.21.0.2"
+    }
+  },
+  "after": {
+    "hotels-api": {
+      "id": "3d30ef52b298",
+      "ip": "172.21.0.2"
+    },
+    "nginx": {
+      "id": "346f2c9952dc",
+      "ip": "172.21.0.12"
+    },
+    "users-api-1": {
+      "id": "58a69c5e56d6",
+      "ip": "172.21.0.8"
+    }
+  },
+  "same_origin_http": 200,
+  "gateway_not_restarted": true
+}

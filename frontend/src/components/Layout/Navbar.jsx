@@ -1,97 +1,71 @@
 /**
- * Navigation Bar Component
- * Main navigation with responsive drawer for mobile
+ * Navigation Bar (plan 13 fase 4): marca propia, links por rol, estado
+ * activo con NavLink y drawer mobile accesible que cierra al navegar.
  */
 
 import { useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, Link, useNavigate, useLocation } from 'react-router';
 import {
   AppBar,
-  Box,
-  Toolbar,
-  IconButton,
-  Typography,
-  Menu,
-  Container,
   Avatar,
+  Box,
   Button,
-  Tooltip,
-  MenuItem,
+  Container,
+  Divider,
   Drawer,
+  IconButton,
   List,
   ListItem,
   ListItemButton,
-  ListItemText,
   ListItemIcon,
-  Divider,
-  useTheme,
-  useMediaQuery,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Toolbar,
+  Typography,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
-  Hotel as HotelIcon,
   EventNote as EventNoteIcon,
   AdminPanelSettings as AdminIcon,
   Logout as LogoutIcon,
   Login as LoginIcon,
   PersonAdd as PersonAddIcon,
   Search as SearchIcon,
+  Home as HomeIcon,
 } from '@mui/icons-material';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../hooks/useAuth';
 import { ROUTES } from '../../constants';
 import { getInitials } from '../../utils/helpers';
+import BrandMark from '../common/BrandMark';
 
 const Navbar = () => {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, isAuthenticated, isAdmin, logout } = useAuth();
+  const { user, isAuthenticated, isAdmin } = useAuth();
 
   const [anchorElUser, setAnchorElUser] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const handleOpenUserMenu = (event) => {
-    setAnchorElUser(event.currentTarget);
-  };
-
-  const handleCloseUserMenu = () => {
-    setAnchorElUser(null);
-  };
-
-  const handleDrawerToggle = () => {
-    setMobileOpen(!mobileOpen);
-  };
+  const closeDrawer = () => setMobileOpen(false);
 
   const handleLogout = () => {
-    logout();
-    handleCloseUserMenu();
-    navigate(ROUTES.HOME);
+    setAnchorElUser(null);
+    closeDrawer();
+    navigate(ROUTES.HOME, { replace: true, state: { signOut: true } });
   };
 
   const navItems = [
-    { label: 'Home', path: ROUTES.HOME, icon: <HotelIcon /> },
+    { label: 'Home', path: ROUTES.HOME, icon: <HomeIcon /> },
     { label: 'Search', path: ROUTES.SEARCH, icon: <SearchIcon /> },
   ];
 
   const isActive = (path) => location.pathname === path;
 
   const drawer = (
-    <Box sx={{ width: 280, pt: 2 }}>
+    <Box sx={{ width: 280, pt: 2 }} role="presentation">
       <Box sx={{ px: 3, pb: 2 }}>
-        <Typography
-          variant="h5"
-          sx={{
-            fontWeight: 700,
-            color: 'primary.main',
-            letterSpacing: '-0.02em',
-          }}
-        >
-          StayLux
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          Unforgettable Experiences
-        </Typography>
+        <BrandMark compact />
       </Box>
       <Divider />
       <List>
@@ -100,22 +74,9 @@ const Navbar = () => {
             <ListItemButton
               component={Link}
               to={item.path}
-              onClick={handleDrawerToggle}
+              onClick={closeDrawer}
               selected={isActive(item.path)}
-              sx={{
-                mx: 1,
-                borderRadius: 2,
-                '&.Mui-selected': {
-                  bgcolor: 'primary.main',
-                  color: 'white',
-                  '&:hover': {
-                    bgcolor: 'primary.dark',
-                  },
-                  '& .MuiListItemIcon-root': {
-                    color: 'white',
-                  },
-                },
-              }}
+              sx={{ mx: 1, borderRadius: 2, minHeight: 44 }}
             >
               <ListItemIcon sx={{ minWidth: 40 }}>{item.icon}</ListItemIcon>
               <ListItemText primary={item.label} />
@@ -130,13 +91,14 @@ const Navbar = () => {
             <ListItemButton
               component={Link}
               to={ROUTES.RESERVATIONS}
-              onClick={handleDrawerToggle}
-              sx={{ mx: 1, borderRadius: 2 }}
+              onClick={closeDrawer}
+              selected={isActive(ROUTES.RESERVATIONS)}
+              sx={{ mx: 1, borderRadius: 2, minHeight: 44 }}
             >
               <ListItemIcon sx={{ minWidth: 40 }}>
                 <EventNoteIcon />
               </ListItemIcon>
-              <ListItemText primary="My Reservations" />
+              <ListItemText primary="My reservations" />
             </ListItemButton>
           </ListItem>
           {isAdmin && (
@@ -144,57 +106,42 @@ const Navbar = () => {
               <ListItemButton
                 component={Link}
                 to={ROUTES.ADMIN}
-                onClick={handleDrawerToggle}
-                sx={{ mx: 1, borderRadius: 2 }}
+                onClick={closeDrawer}
+                selected={isActive(ROUTES.ADMIN)}
+                sx={{ mx: 1, borderRadius: 2, minHeight: 44 }}
               >
                 <ListItemIcon sx={{ minWidth: 40 }}>
                   <AdminIcon />
                 </ListItemIcon>
-                <ListItemText primary="Admin Panel" />
+                <ListItemText primary="Admin panel" />
               </ListItemButton>
             </ListItem>
           )}
           <ListItem disablePadding>
-            <ListItemButton
-              onClick={() => {
-                handleLogout();
-                handleDrawerToggle();
-              }}
-              sx={{ mx: 1, borderRadius: 2, color: 'error.main' }}
-            >
+            <ListItemButton onClick={handleLogout} sx={{ mx: 1, borderRadius: 2, minHeight: 44, color: 'error.main' }}>
               <ListItemIcon sx={{ minWidth: 40, color: 'error.main' }}>
                 <LogoutIcon />
               </ListItemIcon>
-              <ListItemText primary="Sign Out" />
+              <ListItemText primary="Sign out" />
             </ListItemButton>
           </ListItem>
         </List>
       ) : (
         <List>
           <ListItem disablePadding>
-            <ListItemButton
-              component={Link}
-              to={ROUTES.LOGIN}
-              onClick={handleDrawerToggle}
-              sx={{ mx: 1, borderRadius: 2 }}
-            >
+            <ListItemButton component={Link} to={ROUTES.LOGIN} onClick={closeDrawer} sx={{ mx: 1, borderRadius: 2, minHeight: 44 }}>
               <ListItemIcon sx={{ minWidth: 40 }}>
                 <LoginIcon />
               </ListItemIcon>
-              <ListItemText primary="Sign In" />
+              <ListItemText primary="Sign in" />
             </ListItemButton>
           </ListItem>
           <ListItem disablePadding>
-            <ListItemButton
-              component={Link}
-              to={ROUTES.REGISTER}
-              onClick={handleDrawerToggle}
-              sx={{ mx: 1, borderRadius: 2 }}
-            >
+            <ListItemButton component={Link} to={ROUTES.REGISTER} onClick={closeDrawer} sx={{ mx: 1, borderRadius: 2, minHeight: 44 }}>
               <ListItemIcon sx={{ minWidth: 40 }}>
                 <PersonAddIcon />
               </ListItemIcon>
-              <ListItemText primary="Sign Up" />
+              <ListItemText primary="Create account" />
             </ListItemButton>
           </ListItem>
         </List>
@@ -206,190 +153,113 @@ const Navbar = () => {
     <>
       <AppBar
         position="sticky"
-        sx={{
-          bgcolor: 'rgba(255, 255, 255, 0.95)',
-          backdropFilter: 'blur(10px)',
-          color: 'text.primary',
-        }}
+        sx={{ bgcolor: 'rgba(255, 255, 255, 0.96)', backdropFilter: 'blur(8px)', color: 'text.primary' }}
       >
         <Container maxWidth="xl">
-          <Toolbar disableGutters sx={{ minHeight: { xs: 64, md: 72 } }}>
-            {isMobile && (
-              <IconButton
-                color="inherit"
-                aria-label="open drawer"
-                edge="start"
-                onClick={handleDrawerToggle}
-                sx={{ mr: 2 }}
-              >
-                <MenuIcon />
-              </IconButton>
-            )}
+          <Toolbar disableGutters sx={{ minHeight: { xs: 64, md: 72 }, gap: 2 }}>
+            <IconButton
+              color="inherit"
+              aria-label="Open navigation menu"
+              edge="start"
+              onClick={() => setMobileOpen(true)}
+              sx={{ display: { md: 'none' } }}
+            >
+              <MenuIcon />
+            </IconButton>
+
+            <BrandMark />
 
             <Box
-              component={Link}
-              to={ROUTES.HOME}
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                textDecoration: 'none',
-                color: 'inherit',
-                mr: 4,
-              }}
+              component="nav"
+              aria-label="Primary"
+              sx={{ flexGrow: 1, display: { xs: 'none', md: 'flex' }, gap: 1, ml: 3 }}
             >
-              <HotelIcon sx={{ fontSize: 32, color: 'secondary.main', mr: 1 }} />
-              <Box>
-                <Typography
-                  variant="h5"
+              {navItems.map((item) => (
+                <Button
+                  key={item.path}
+                  component={NavLink}
+                  to={item.path}
                   sx={{
-                    fontWeight: 700,
-                    color: 'primary.main',
-                    lineHeight: 1,
-                    letterSpacing: '-0.02em',
+                    color: isActive(item.path) ? 'primary.main' : 'text.secondary',
+                    fontWeight: isActive(item.path) ? 600 : 500,
+                    borderBottom: '2px solid',
+                    borderColor: isActive(item.path) ? 'secondary.main' : 'transparent',
+                    borderRadius: 0,
                   }}
                 >
-                  StayLux
-                </Typography>
-                {!isMobile && (
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: 'text.secondary',
-                      letterSpacing: '0.1em',
-                      fontSize: '0.65rem',
-                    }}
-                  >
-                    UNFORGETTABLE EXPERIENCES
-                  </Typography>
-                )}
-              </Box>
+                  {item.label}
+                </Button>
+              ))}
             </Box>
 
-            {!isMobile && (
-              <Box sx={{ flexGrow: 1, display: 'flex', gap: 1 }}>
-                {navItems.map((item) => (
+            <Box sx={{ flexGrow: { xs: 1, md: 0 } }} />
+
+            <Box sx={{ display: { xs: 'none', md: 'flex' }, alignItems: 'center', gap: 1 }}>
+              {isAuthenticated ? (
+                <>
                   <Button
-                    key={item.path}
                     component={Link}
-                    to={item.path}
-                    sx={{
-                      color: isActive(item.path) ? 'primary.main' : 'text.secondary',
-                      fontWeight: isActive(item.path) ? 600 : 500,
-                      position: 'relative',
-                      '&::after': {
-                        content: '""',
-                        position: 'absolute',
-                        bottom: 6,
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        width: isActive(item.path) ? '60%' : '0%',
-                        height: 2,
-                        bgcolor: 'secondary.main',
-                        transition: 'width 0.3s ease',
-                      },
-                      '&:hover::after': {
-                        width: '60%',
-                      },
-                    }}
+                    to={ROUTES.RESERVATIONS}
+                    startIcon={<EventNoteIcon />}
+                    sx={{ color: 'text.secondary' }}
                   >
-                    {item.label}
+                    My reservations
                   </Button>
-                ))}
-              </Box>
-            )}
-
-            <Box sx={{ flexGrow: isMobile ? 1 : 0 }} />
-
-            {!isMobile && (
-              <>
-                {isAuthenticated ? (
-                  <>
-                    <Button
-                      component={Link}
-                      to={ROUTES.RESERVATIONS}
-                      startIcon={<EventNoteIcon />}
-                      sx={{ mr: 2, color: 'text.secondary' }}
-                    >
-                      My Reservations
+                  {isAdmin && (
+                    <Button component={Link} to={ROUTES.ADMIN} startIcon={<AdminIcon />} sx={{ color: 'secondary.dark' }}>
+                      Admin
                     </Button>
-                    {isAdmin && (
-                      <Button
-                        component={Link}
-                        to={ROUTES.ADMIN}
-                        startIcon={<AdminIcon />}
-                        sx={{ mr: 2, color: 'secondary.dark' }}
-                      >
-                        Admin
-                      </Button>
-                    )}
-                    <Tooltip title="Account settings">
-                      <IconButton onClick={handleOpenUserMenu} sx={{ p: 0 }}>
-                        <Avatar
-                          sx={{
-                            bgcolor: 'primary.main',
-                            width: 40,
-                            height: 40,
-                            fontSize: '1rem',
-                            fontWeight: 600,
-                          }}
-                        >
-                          {getInitials(user?.username)}
-                        </Avatar>
-                      </IconButton>
-                    </Tooltip>
-                    <Menu
-                      sx={{ mt: '45px' }}
-                      anchorEl={anchorElUser}
-                      anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-                      keepMounted
-                      transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-                      open={Boolean(anchorElUser)}
-                      onClose={handleCloseUserMenu}
-                    >
-                      <Box sx={{ px: 2, py: 1 }}>
-                        <Typography variant="subtitle2" fontWeight={600}>
-                          {user?.username}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {isAdmin ? 'Administrator' : 'Customer'}
-                        </Typography>
-                      </Box>
-                      <Divider />
-                      <MenuItem onClick={handleLogout}>
-                        <ListItemIcon>
-                          <LogoutIcon fontSize="small" />
-                        </ListItemIcon>
-                        Sign Out
-                      </MenuItem>
-                    </Menu>
-                  </>
-                ) : (
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button
-                      component={Link}
-                      to={ROUTES.LOGIN}
-                      variant="outlined"
-                      color="primary"
-                      sx={{ borderWidth: 2 }}
-                    >
-                      Sign In
-                    </Button>
-                    <Button
-                      component={Link}
-                      to={ROUTES.REGISTER}
-                      variant="contained"
-                      color="primary"
-                    >
-                      Sign Up
-                    </Button>
-                  </Box>
-                )}
-              </>
-            )}
+                  )}
+                  <IconButton
+                    onClick={(event) => setAnchorElUser(event.currentTarget)}
+                    aria-label={`Account menu for ${user?.username}`}
+                    sx={{ p: 0.5 }}
+                  >
+                    <Avatar sx={{ bgcolor: 'primary.main', width: 40, height: 40, fontSize: '1rem', fontWeight: 600 }}>
+                      {getInitials(user?.username)}
+                    </Avatar>
+                  </IconButton>
+                  <Menu
+                    anchorEl={anchorElUser}
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                    transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                    open={Boolean(anchorElUser)}
+                    onClose={() => setAnchorElUser(null)}
+                  >
+                    <Box sx={{ px: 2, py: 1 }}>
+                      <Typography variant="subtitle2" component="p" fontWeight={600}>
+                        {user?.username}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {isAdmin ? 'Administrator' : 'Customer'}
+                      </Typography>
+                    </Box>
+                    <Divider />
+                    <MenuItem onClick={handleLogout}>
+                      <ListItemIcon>
+                        <LogoutIcon fontSize="small" />
+                      </ListItemIcon>
+                      Sign out
+                    </MenuItem>
+                  </Menu>
+                </>
+              ) : (
+                <>
+                  <Button component={Link} to={ROUTES.LOGIN} variant="outlined" color="primary">
+                    Sign in
+                  </Button>
+                  <Button component={Link} to={ROUTES.REGISTER} variant="contained" color="primary">
+                    Create account
+                  </Button>
+                </>
+              )}
+            </Box>
 
-            {isMobile && isAuthenticated && (
+            {isAuthenticated && (
               <Avatar
+                aria-hidden
                 sx={{
+                  display: { xs: 'flex', md: 'none' },
                   bgcolor: 'primary.main',
                   width: 36,
                   height: 36,
@@ -406,7 +276,7 @@ const Navbar = () => {
       <Drawer
         variant="temporary"
         open={mobileOpen}
-        onClose={handleDrawerToggle}
+        onClose={closeDrawer}
         ModalProps={{ keepMounted: true }}
         sx={{
           display: { xs: 'block', md: 'none' },

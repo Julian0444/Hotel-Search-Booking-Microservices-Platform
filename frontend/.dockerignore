@@ -1,0 +1,17 @@
+# CN2 — obligatorio: sin esto el node_modules del host (binarios nativos de
+# macOS) sombrea el `npm ci` del contenedor y el build queda corrupto.
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+*.md
+.gitignore
+Dockerfile
+.dockerignore
+# E2E (plan 13 fase 10): no invalidar el contexto del build del SPA por specs
+e2e/
+playwright.config.js
+playwright-report/
+test-results/
+e2e-evidence/

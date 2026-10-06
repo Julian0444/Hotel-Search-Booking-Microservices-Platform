@@ -1,275 +1,172 @@
+// Package microservices expone el panel admin de estado de la plataforma
+// (C2). Es READ-ONLY y REAL: cada instancia se consulta por su GET /readyz
+// (O3) y se reporta estado + latencia medidos — reemplaza al panel anterior,
+// que devolvía uptimes hardcodeados, health por hash del hostname y acciones
+// de scale/restart/logs que no hacían nada.
 package microservices
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-// Estructura para representar el estado de un microservicio
+// probeTimeout acota cada GET /readyz: una instancia caída responde "down"
+// rápido en vez de colgar el panel entero.
+const probeTimeout = 2 * time.Second
+
+// ServiceTarget describe un servicio y las URLs base de sus instancias.
+type ServiceTarget struct {
+	Name         string
+	InstanceURLs []string
+}
+
+// ParseTargets parsea el spec de MICROSERVICES_TARGETS:
+//
+//	"users-api=http://users-api-1:8082,http://users-api-2:8082;hotels-api=http://127.0.0.1:8081"
+//
+// (";" separa servicios, "," separa instancias). Entradas malformadas se
+// descartan en silencio: el panel es diagnóstico, no configuración crítica.
+func ParseTargets(spec string) []ServiceTarget {
+	var targets []ServiceTarget
+	for _, entry := range strings.Split(spec, ";") {
+		name, urls, found := strings.Cut(strings.TrimSpace(entry), "=")
+		if !found || name == "" {
+			continue
+		}
+		var instanceURLs []string
+		for _, u := range strings.Split(urls, ",") {
+			if u = strings.TrimSpace(u); u != "" {
+				instanceURLs = append(instanceURLs, u)
+			}
+		}
+		if len(instanceURLs) > 0 {
+			targets = append(targets, ServiceTarget{Name: name, InstanceURLs: instanceURLs})
+		}
+	}
+	return targets
+}
+
+// InstanceStatus es el resultado del probe a una instancia.
+type InstanceStatus struct {
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	Status    string `json:"status"` // "up" | "down"
+	LatencyMS int64  `json:"latency_ms"`
+	Error     string `json:"error,omitempty"`
+}
+
+// ServiceStatus agrega las instancias de un servicio.
 type ServiceStatus struct {
-	Name      string    `json:"name"`
-	Instances []Instance `json:"instances"`
-	Status    string    `json:"status"`
-	LoadBalanced bool   `json:"load_balanced"`
-}
-
-type Instance struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Port     string `json:"port"`
-	UpTime   string `json:"uptime"`
-	Health   string `json:"health"`
-}
-
-type ScaleRequest struct {
-	ServiceName string `json:"service_name" binding:"required"`
-	Replicas    int    `json:"replicas" binding:"required,min=1,max=10"`
+	Name         string           `json:"name"`
+	Status       string           `json:"status"` // "up" | "degraded" | "down"
+	LoadBalanced bool             `json:"load_balanced"`
+	Instances    []InstanceStatus `json:"instances"`
 }
 
 type Controller struct {
-	// En una implementación real, aquí tendríamos un cliente de Docker
-	// dockerClient *docker.Client
+	targets    []ServiceTarget
+	httpClient *http.Client
 }
 
-func NewController() Controller {
-	return Controller{}
+func NewController(targets []ServiceTarget) Controller {
+	return Controller{
+		targets:    targets,
+		httpClient: &http.Client{Timeout: probeTimeout},
+	}
 }
 
-// GetMicroservicesStatus devuelve el estado de todos los microservicios
+// GetMicroservicesStatus devuelve el estado real de todos los servicios:
+// todas las instancias se prueban en paralelo (el panel responde en
+// ~probeTimeout aun con la plataforma entera caída).
+// GET /api/v1/admin/microservices
 func (controller Controller) GetMicroservicesStatus(ctx *gin.Context) {
-	// Simular la consulta del estado de los microservicios
-	services := []ServiceStatus{
-		{
-			Name: "users-api",
-			Instances: []Instance{
-				{
-					ID:       "users-api-1",
-					Name:     "users-api-1",
-					Status:   "running",
-					Port:     "8080",
-					UpTime:   "2h 15m",
-					Health:   controller.checkServiceHealth("users-api-1:8080"),
-				},
-				{
-					ID:       "users-api-2", 
-					Name:     "users-api-2",
-					Status:   "running",
-					Port:     "8081",
-					UpTime:   "2h 10m",
-					Health:   controller.checkServiceHealth("users-api-2:8080"),
-				},
-				{
-					ID:       "users-api-3",
-					Name:     "users-api-3", 
-					Status:   "running",
-					Port:     "8082",
-					UpTime:   "2h 5m",
-					Health:   controller.checkServiceHealth("users-api-3:8080"),
-				},
-			},
-			Status:       "healthy",
-			LoadBalanced: true,
-		},
-		{
-			Name: "hotels-api",
-			Instances: []Instance{
-				{
-					ID:       "hotels-api-container",
-					Name:     "hotels-api-container",
-					Status:   "running",
-					Port:     "8083",
-					UpTime:   "2h 20m",
-					Health:   controller.checkServiceHealth("hotels-api:8081"),
-				},
-			},
-			Status:       "healthy",
-			LoadBalanced: false,
-		},
-		{
-			Name: "search-api",
-			Instances: []Instance{
-				{
-					ID:       "search-api-container",
-					Name:     "search-api-container",
-					Status:   "running", 
-					Port:     "8084",
-					UpTime:   "2h 18m",
-					Health:   controller.checkServiceHealth("search-api:8082"),
-				},
-			},
-			Status:       "healthy",
-			LoadBalanced: false,
-		},
+	services := make([]ServiceStatus, len(controller.targets))
+
+	var wg sync.WaitGroup
+	for i, target := range controller.targets {
+		services[i] = ServiceStatus{
+			Name:         target.Name,
+			LoadBalanced: len(target.InstanceURLs) > 1,
+			Instances:    make([]InstanceStatus, len(target.InstanceURLs)),
+		}
+		for j, url := range target.InstanceURLs {
+			wg.Add(1)
+			go func(i, j int, url string) {
+				defer wg.Done()
+				services[i].Instances[j] = controller.probeInstance(ctx.Request.Context(), url)
+			}(i, j, url)
+		}
+	}
+	wg.Wait()
+
+	totalInstances := 0
+	healthyServices := 0
+	for i := range services {
+		up := 0
+		for _, instance := range services[i].Instances {
+			if instance.Status == "up" {
+				up++
+			}
+		}
+		totalInstances += len(services[i].Instances)
+		switch {
+		case up == len(services[i].Instances):
+			services[i].Status = "up"
+			healthyServices++
+		case up > 0:
+			services[i].Status = "degraded"
+		default:
+			services[i].Status = "down"
+		}
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
+	ctx.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"services": services,
 		"summary": gin.H{
-			"total_services": len(services),
-			"total_instances": controller.countTotalInstances(services),
-			"healthy_services": controller.countHealthyServices(services),
-			"load_balanced_services": controller.countLoadBalancedServices(services),
+			"total_services":   len(services),
+			"total_instances":  totalInstances,
+			"healthy_services": healthyServices,
 		},
-	})
+	}})
 }
 
-// ScaleService permite escalar un servicio (crear o eliminar instancias)
-func (controller Controller) ScaleService(ctx *gin.Context) {
-	var request ScaleRequest
-	if err := ctx.ShouldBindJSON(&request); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("invalid request: %s", err.Error()),
-		})
-		return
+// probeInstance hace GET {url}/readyz y mide la latencia. Cualquier cosa que
+// no sea un 200 dentro del timeout es "down" (readyz ya devuelve 503 si una
+// dependencia del servicio falla, O3).
+func (controller Controller) probeInstance(parent context.Context, url string) InstanceStatus {
+	status := InstanceStatus{
+		Name:   strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://"),
+		URL:    url,
+		Status: "down",
 	}
 
-	// Validar que el servicio existe y es escalable
-	if !controller.isServiceScalable(request.ServiceName) {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("service %s is not scalable or does not exist", request.ServiceName),
-		})
-		return
+	probeCtx, cancel := context.WithTimeout(parent, probeTimeout)
+	defer cancel()
+
+	start := time.Now()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, url+"/readyz", nil)
+	if err != nil {
+		status.Error = err.Error()
+		return status
 	}
+	resp, err := controller.httpClient.Do(req)
+	status.LatencyMS = time.Since(start).Milliseconds()
+	if err != nil {
+		status.Error = err.Error()
+		return status
+	}
+	defer func() { _ = resp.Body.Close() }()
 
-	// En una implementación real, aquí interactuaríamos con Docker Compose o Kubernetes
-	// Por ahora, simularemos la respuesta
-	message := controller.simulateScaling(request.ServiceName, request.Replicas)
-
-	ctx.JSON(http.StatusOK, gin.H{
-		"message": message,
-		"service": request.ServiceName,
-		"new_replicas": request.Replicas,
-		"timestamp": time.Now().Format(time.RFC3339),
-	})
+	if resp.StatusCode == http.StatusOK {
+		status.Status = "up"
+	} else {
+		status.Error = fmt.Sprintf("readyz returned status %d", resp.StatusCode)
+	}
+	return status
 }
-
-// GetServiceLogs obtiene los logs de un servicio específico
-func (controller Controller) GetServiceLogs(ctx *gin.Context) {
-	serviceName := ctx.Param("service_name")
-	instanceID := ctx.Query("instance_id")
-	
-	if serviceName == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "service_name is required",
-		})
-		return
-	}
-
-	// Simular logs del servicio
-	logs := controller.generateMockLogs(serviceName, instanceID)
-
-	ctx.JSON(http.StatusOK, gin.H{
-		"service": serviceName,
-		"instance": instanceID,
-		"logs": logs,
-		"timestamp": time.Now().Format(time.RFC3339),
-	})
-}
-
-// RestartService reinicia un servicio específico
-func (controller Controller) RestartService(ctx *gin.Context) {
-	serviceName := ctx.Param("service_name")
-	instanceID := ctx.Query("instance_id")
-
-	if serviceName == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "service_name is required",
-		})
-		return
-	}
-
-	// Simular reinicio del servicio
-	message := fmt.Sprintf("Service %s", serviceName)
-	if instanceID != "" {
-		message += fmt.Sprintf(" (instance: %s)", instanceID)
-	}
-	message += " restart initiated successfully"
-
-	ctx.JSON(http.StatusOK, gin.H{
-		"message": message,
-		"service": serviceName,
-		"instance": instanceID,
-		"timestamp": time.Now().Format(time.RFC3339),
-	})
-}
-
-// Funciones auxiliares
-
-func (controller Controller) checkServiceHealth(address string) string {
-	// En una implementación real, haríamos un HTTP GET al health endpoint
-	// Por ahora, simulamos alternando entre healthy y warning
-	hash := 0
-	for _, char := range address {
-		hash += int(char)
-	}
-	
-	if hash%3 == 0 {
-		return "warning"
-	}
-	return "healthy"
-}
-
-func (controller Controller) countTotalInstances(services []ServiceStatus) int {
-	total := 0
-	for _, service := range services {
-		total += len(service.Instances)
-	}
-	return total
-}
-
-func (controller Controller) countHealthyServices(services []ServiceStatus) int {
-	healthy := 0
-	for _, service := range services {
-		if service.Status == "healthy" {
-			healthy++
-		}
-	}
-	return healthy
-}
-
-func (controller Controller) countLoadBalancedServices(services []ServiceStatus) int {
-	loadBalanced := 0
-	for _, service := range services {
-		if service.LoadBalanced {
-			loadBalanced++
-		}
-	}
-	return loadBalanced
-}
-
-func (controller Controller) isServiceScalable(serviceName string) bool {
-	// Solo users-api es escalable por ahora (tiene balanceador de carga)
-	scalableServices := []string{"users-api"}
-	for _, service := range scalableServices {
-		if service == serviceName {
-			return true
-		}
-	}
-	return false
-}
-
-func (controller Controller) simulateScaling(serviceName string, replicas int) string {
-	return fmt.Sprintf("Scaling %s to %d replicas. This would normally interact with Docker Compose or Kubernetes to create/remove instances.", serviceName, replicas)
-}
-
-func (controller Controller) generateMockLogs(serviceName, instanceID string) []string {
-	logs := []string{
-		"[INFO] " + time.Now().Add(-10*time.Minute).Format("2006-01-02 15:04:05") + " Service started successfully",
-		"[INFO] " + time.Now().Add(-8*time.Minute).Format("2006-01-02 15:04:05") + " Database connection established",
-		"[DEBUG] " + time.Now().Add(-5*time.Minute).Format("2006-01-02 15:04:05") + " Processing request from client",
-		"[INFO] " + time.Now().Add(-2*time.Minute).Format("2006-01-02 15:04:05") + " Health check passed",
-		"[DEBUG] " + time.Now().Add(-1*time.Minute).Format("2006-01-02 15:04:05") + " Request completed successfully",
-	}
-
-	if instanceID != "" {
-		for i, log := range logs {
-			logs[i] = fmt.Sprintf("[%s] %s", instanceID, log)
-		}
-	}
-
-	return logs
-} 

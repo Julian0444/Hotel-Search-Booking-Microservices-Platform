@@ -1,26 +1,28 @@
 meta {
-  name: Delete Hotel (Admin)
+  name: Delete Hotel (admin)
   type: http
-  seq: 5
+  seq: 18
 }
 
 delete {
-  url: http://localhost/admin/hotels/{{hotel_id}}
+  url: {{baseUrl}}/admin/hotels/{{disposable_hotel_id}}
   body: none
   auth: bearer
 }
 
 auth:bearer {
-  token: {{token}}
+  token: {{admin_token}}
 }
 
-vars:pre-request {
-  hotel_id: 
+assert {
+  res.status: eq 204
 }
 
 docs {
-  Elimina un hotel.
-  Requiere token de administrador.
+  Borra el hotel descartable SIN historial creado en esta corrida. Debe
+  responder 204 y publicar DELETE; si el broker falla, mantiene éxito y
+  la reconciliación elimina el documento huérfano de búsqueda.
+  Un hotel con historial devuelve 409; el caso anterior lo comprueba.
 }
 
 settings {

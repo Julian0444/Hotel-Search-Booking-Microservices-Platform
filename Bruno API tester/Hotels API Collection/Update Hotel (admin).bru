@@ -1,0 +1,63 @@
+meta {
+  name: Update Hotel (admin)
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{baseUrl}}/admin/hotels/{{created_hotel_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+body:json {
+  {
+    "name": "Bruno Demo Hotel actualizado",
+    "description": "",
+    "address": "Calle Falsa 123",
+    "city": "Buenos Aires",
+    "state": "",
+    "country": "Argentina",
+    "phone": "",
+    "email": "",
+    "price_per_night": 0,
+    "rating": 0,
+    "available_rooms": 2,
+    "check_in_time": "15:00",
+    "check_out_time": "11:00",
+    "amenities": [],
+    "images": []
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("PUT conserva ceros y permite vaciar opcionales", function() {
+    expect(res.body.data.price_per_night).to.equal(0);
+    expect(res.body.data.rating).to.equal(0);
+    expect(res.body.data.description).to.equal("");
+    expect(res.body.data.amenities).to.have.lengthOf(0);
+    expect(res.body.data.images).to.have.lengthOf(0);
+  });
+}
+
+docs {
+  PUT completo: nombre, dirección, ciudad, país y ambos horarios obligatorios.
+  Ceros válidos y listas vacías se persisten; opcionales omitidos se limpian.
+  available_rooms=0 cierra nuevas reservas, pero no puede quedar por debajo
+  de noches ya ocupadas (409 capacity_conflict). Aquí queda en 2 para continuar
+  el flujo de reserva. Precio y rating cero son válidos.
+  Hotel inexistente → 404. Persistir con éxito conserva 200 si falla RabbitMQ;
+  la reconciliación periódica actualiza búsqueda.
+}
+
+settings {
+  encodeUrl: true
+}

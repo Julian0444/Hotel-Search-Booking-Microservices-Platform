@@ -1,481 +1,188 @@
 /**
- * Admin Dashboard Page
- * Administrative panel for managing hotels and users
+ * Admin Dashboard (plan 13 fase 7, RV31/F13-07).
+ * Sin Promise.all: hotels/users/services son queries INDEPENDIENTES con
+ * retry propio — un error parcial no borra el resto. Tabs que cargan al
+ * visitarse; stats derivadas de la data disponible; self-delete bloqueado
+ * en la lista; confirmaciones que nombran el recurso.
  */
 
-import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import {
-  Box,
-  Container,
-  Typography,
-  Grid,
-  Card,
-  CardContent,
-  Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
-  IconButton,
-  Chip,
-  Skeleton,
   Alert,
+  Box,
+  Button,
+  Card,
+  Container,
   Dialog,
-  DialogTitle,
-  DialogContent,
   DialogActions,
+  DialogContent,
+  DialogTitle,
   Snackbar,
-  Tabs,
   Tab,
-  Tooltip,
+  Tabs,
+  Typography,
 } from '@mui/material';
 import {
-  Add as AddIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
   Hotel as HotelIcon,
   Person as PersonIcon,
-  AdminPanelSettings as AdminIcon,
-  Refresh as RefreshIcon,
-  Warning as WarningIcon,
+  MonitorHeart as HealthIcon,
 } from '@mui/icons-material';
-import { hotelsService, adminService, authService } from '../../services';
-import { useAuth } from '../../context/AuthContext';
-import { ROUTES, USER_ROLES } from '../../constants';
-import { formatPrice } from '../../utils/helpers';
+import { useAuth } from '../../hooks/useAuth';
+import { useAdminHotels, useAdminUsers, useMicroservicesStatus } from '../../hooks/queries';
+import { useDeleteHotel, useDeleteUser } from '../../hooks/mutations';
+import AdminHotelList from '../../components/admin/AdminHotelList';
+import AdminUserList from '../../components/admin/AdminUserList';
+import ServiceHealthGrid from '../../components/admin/ServiceHealthGrid';
+import { RouteMeta } from '../../components/common';
+
+const PAGE_SIZE = 10;
 
 const Dashboard = () => {
-  const navigate = useNavigate();
-  const { isAdmin, isAuthenticated } = useAuth();
+  const { user } = useAuth();
+  const [tab, setTab] = useState('hotels');
+  const [hotelsPage, setHotelsPage] = useState(1);
+  const [usersPage, setUsersPage] = useState(1);
+  const [pendingDelete, setPendingDelete] = useState(null); // {type, item}
+  const [notice, setNotice] = useState(null);
 
-  const [tabValue, setTabValue] = useState(0);
-  const [hotels, setHotels] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [deleteDialog, setDeleteDialog] = useState({ open: false, type: '', item: null });
-  const [deleteLoading, setDeleteLoading] = useState(false);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  // Cada tab carga al visitarse; el estado de una no pisa a las otras
+  const hotelsQuery = useAdminHotels(
+    { limit: PAGE_SIZE, offset: (hotelsPage - 1) * PAGE_SIZE },
+    { enabled: tab === 'hotels' },
+  );
+  const usersQuery = useAdminUsers(
+    { limit: PAGE_SIZE, offset: (usersPage - 1) * PAGE_SIZE },
+    { enabled: tab === 'users' },
+  );
+  const servicesQuery = useMicroservicesStatus({ enabled: tab === 'services' });
 
   useEffect(() => {
-    if (!isAuthenticated || !isAdmin) {
-      navigate(ROUTES.LOGIN);
-      return;
+    if (hotelsQuery.data && !hotelsQuery.isPlaceholderData) {
+      setHotelsPage((page) => Math.min(page, Math.max(1, Math.ceil(hotelsQuery.data.total / PAGE_SIZE))));
     }
+  }, [hotelsQuery.data, hotelsQuery.isPlaceholderData]);
+  useEffect(() => {
+    if (usersQuery.data && !usersQuery.isPlaceholderData) {
+      setUsersPage((page) => Math.min(page, Math.max(1, Math.ceil(usersQuery.data.total / PAGE_SIZE))));
+    }
+  }, [usersQuery.data, usersQuery.isPlaceholderData]);
 
-    fetchData();
-  }, [isAuthenticated, isAdmin, navigate]);
+  const deleteHotel = useDeleteHotel();
+  const deleteUser = useDeleteUser();
+  const deleteMutation = pendingDelete?.type === 'hotel' ? deleteHotel : deleteUser;
 
-  const fetchData = async () => {
+  const confirmDelete = async () => {
+    const { type, item } = pendingDelete;
     try {
-      setLoading(true);
-      setError(null);
-
-      const [hotelsRes, usersRes] = await Promise.all([
-        hotelsService.search('', 0, 100),
-        authService.getAllUsers(),
-      ]);
-
-      setHotels(hotelsRes || []);
-      setUsers(usersRes || []);
-    } catch (err) {
-      console.error('Error fetching data:', err);
-      setError('Error loading data');
-    } finally {
-      setLoading(false);
+      await (type === 'hotel' ? deleteHotel.mutateAsync(item.id) : deleteUser.mutateAsync(item.id));
+      setNotice(`${type === 'hotel' ? 'Hotel' : 'User'} “${item.name || item.username}” deleted`);
+      setPendingDelete(null);
+    } catch {
+      // El error queda en la mutation y se muestra dentro del dialog
     }
   };
 
-  const handleDeleteClick = (type, item) => {
-    setDeleteDialog({ open: true, type, item });
+  const closeDeleteDialog = () => {
+    setPendingDelete(null);
+    deleteHotel.reset();
+    deleteUser.reset();
   };
-
-  const handleDeleteConfirm = async () => {
-    const { type, item } = deleteDialog;
-
-    try {
-      setDeleteLoading(true);
-
-      if (type === 'hotel') {
-        await adminService.deleteHotel(item.id);
-        setHotels(hotels.filter((h) => h.id !== item.id));
-        setSnackbar({ open: true, message: 'Hotel deleted successfully', severity: 'success' });
-      } else if (type === 'user') {
-        await authService.deleteUser(item.id);
-        setUsers(users.filter((u) => u.id !== item.id));
-        setSnackbar({ open: true, message: 'User deleted successfully', severity: 'success' });
-      }
-    } catch (err) {
-      console.error('Error deleting:', err);
-      setSnackbar({
-        open: true,
-        message: err.response?.data?.error || 'Error deleting item',
-        severity: 'error',
-      });
-    } finally {
-      setDeleteLoading(false);
-      setDeleteDialog({ open: false, type: '', item: null });
-    }
-  };
-
-  const stats = [
-    {
-      label: 'Hotels',
-      value: hotels.length,
-      icon: <HotelIcon sx={{ fontSize: 40 }} />,
-      color: 'primary.main',
-    },
-    {
-      label: 'Users',
-      value: users.length,
-      icon: <PersonIcon sx={{ fontSize: 40 }} />,
-      color: 'secondary.main',
-    },
-    {
-      label: 'Administrators',
-      value: users.filter((u) => u.tipo === USER_ROLES.ADMIN).length,
-      icon: <AdminIcon sx={{ fontSize: 40 }} />,
-      color: 'success.main',
-    },
-  ];
-
-  if (!isAuthenticated || !isAdmin) {
-    return null;
-  }
 
   return (
     <Box sx={{ bgcolor: 'background.default', minHeight: '100vh' }}>
-      {/* Header */}
-      <Box
-        sx={{
-          bgcolor: 'primary.main',
-          py: 6,
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-      >
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            opacity: 0.1,
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-          }}
-        />
-        <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <AdminIcon sx={{ fontSize: 40, color: 'secondary.main', mr: 2 }} />
-              <Box>
-                <Typography variant="h3" sx={{ color: 'white', fontWeight: 600 }}>
-                  Admin Dashboard
-                </Typography>
-                <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                  Manage hotels and users
-                </Typography>
-              </Box>
-            </Box>
-            <Button
-              startIcon={<RefreshIcon />}
-              onClick={fetchData}
-              sx={{ color: 'white', borderColor: 'rgba(255,255,255,0.5)' }}
-              variant="outlined"
-            >
-              Refresh
-            </Button>
-          </Box>
+      <RouteMeta title="Admin dashboard" description="Manage hotels, users and platform status." />
+
+      <Box sx={{ bgcolor: 'primary.main', py: { xs: 4, md: 5 } }}>
+        <Container maxWidth="lg">
+          <Typography variant="h3" component="h1" sx={{ color: 'white', fontWeight: 600 }}>
+            Admin dashboard
+          </Typography>
+          <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.75)' }}>
+            Catalog, accounts and real platform health
+          </Typography>
         </Container>
       </Box>
 
       <Container maxWidth="lg" sx={{ py: 4 }}>
-        {error && (
-          <Alert severity="error" sx={{ mb: 4 }}>
-            {error}
-          </Alert>
-        )}
-
-        {/* Stats Cards */}
-        <Grid container spacing={3} sx={{ mb: 4 }}>
-          {stats.map((stat, index) => (
-            <Grid key={index} size={{ xs: 12, sm: 4 }}>
-              <Card>
-                <CardContent sx={{ p: 3 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box>
-                      <Typography variant="overline" color="text.secondary">
-                        {stat.label}
-                      </Typography>
-                      <Typography variant="h3" sx={{ fontWeight: 700, color: stat.color }}>
-                        {loading ? <Skeleton width={60} /> : stat.value}
-                      </Typography>
-                    </Box>
-                    <Box
-                      sx={{
-                        width: 64,
-                        height: 64,
-                        borderRadius: 2,
-                        bgcolor: `${stat.color}15`,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: stat.color,
-                      }}
-                    >
-                      {stat.icon}
-                    </Box>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
-
-        {/* Tabs */}
         <Card>
           <Tabs
-            value={tabValue}
-            onChange={(e, v) => setTabValue(v)}
+            value={tab}
+            onChange={(_event, value) => setTab(value)}
+            variant="scrollable"
+            allowScrollButtonsMobile
+            aria-label="Admin sections"
             sx={{ borderBottom: 1, borderColor: 'divider', px: 2 }}
           >
-            <Tab icon={<HotelIcon />} label="Hotels" iconPosition="start" />
-            <Tab icon={<PersonIcon />} label="Users" iconPosition="start" />
+            <Tab value="hotels" icon={<HotelIcon />} label="Hotels" iconPosition="start" />
+            <Tab value="users" icon={<PersonIcon />} label="Users" iconPosition="start" />
+            <Tab value="services" icon={<HealthIcon />} label="Services" iconPosition="start" />
           </Tabs>
 
-          {/* Hotels Tab */}
-          {tabValue === 0 && (
-            <Box sx={{ p: 3 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-                <Typography variant="h6" fontWeight={600}>
-                  Hotels List
-                </Typography>
-                <Button
-                  component={Link}
-                  to={ROUTES.ADMIN_NEW_HOTEL}
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                >
-                  New Hotel
-                </Button>
-              </Box>
-
-              <TableContainer component={Paper} variant="outlined">
-                <Table>
-                  <TableHead>
-                    <TableRow sx={{ bgcolor: 'background.default' }}>
-                      <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>City</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Country</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Price/Night</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Rating</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {loading ? (
-                      Array.from({ length: 5 }).map((_, index) => (
-                        <TableRow key={index}>
-                          <TableCell><Skeleton /></TableCell>
-                          <TableCell><Skeleton /></TableCell>
-                          <TableCell><Skeleton /></TableCell>
-                          <TableCell><Skeleton /></TableCell>
-                          <TableCell><Skeleton /></TableCell>
-                          <TableCell><Skeleton /></TableCell>
-                        </TableRow>
-                      ))
-                    ) : hotels.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
-                          <Typography color="text.secondary">No hotels registered</Typography>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      hotels.map((hotel) => (
-                        <TableRow key={hotel.id} hover>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={500}>
-                              {hotel.name}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>{hotel.city}</TableCell>
-                          <TableCell>{hotel.country}</TableCell>
-                          <TableCell>{formatPrice(hotel.price_per_night || hotel.pricePerNight || 0)}</TableCell>
-                          <TableCell>
-                            <Chip
-                              label={hotel.rating?.toFixed(1) || 'N/A'}
-                              size="small"
-                              color={hotel.rating >= 4 ? 'success' : hotel.rating >= 3 ? 'warning' : 'default'}
-                            />
-                          </TableCell>
-                          <TableCell align="right">
-                            <Tooltip title="View details">
-                              <IconButton
-                                component={Link}
-                                to={`/hotels/${hotel.id}`}
-                                size="small"
-                              >
-                                <HotelIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Edit">
-                              <IconButton
-                                component={Link}
-                                to={`/admin/hotels/${hotel.id}/edit`}
-                                size="small"
-                                color="primary"
-                              >
-                                <EditIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Delete">
-                              <IconButton
-                                onClick={() => handleDeleteClick('hotel', hotel)}
-                                size="small"
-                                color="error"
-                              >
-                                <DeleteIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Box>
-          )}
-
-          {/* Users Tab */}
-          {tabValue === 1 && (
-            <Box sx={{ p: 3 }}>
-              <Typography variant="h6" fontWeight={600} sx={{ mb: 3 }}>
-                Users List
-              </Typography>
-
-              <TableContainer component={Paper} variant="outlined">
-                <Table>
-                  <TableHead>
-                    <TableRow sx={{ bgcolor: 'background.default' }}>
-                      <TableCell sx={{ fontWeight: 600 }}>ID</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Username</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Role</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {loading ? (
-                      Array.from({ length: 5 }).map((_, index) => (
-                        <TableRow key={index}>
-                          <TableCell><Skeleton /></TableCell>
-                          <TableCell><Skeleton /></TableCell>
-                          <TableCell><Skeleton /></TableCell>
-                          <TableCell><Skeleton /></TableCell>
-                        </TableRow>
-                      ))
-                    ) : users.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
-                          <Typography color="text.secondary">No users registered</Typography>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      users.map((user) => (
-                        <TableRow key={user.id} hover>
-                          <TableCell>{user.id}</TableCell>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={500}>
-                              {user.username}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              label={user.tipo === USER_ROLES.ADMIN ? 'Admin' : 'Customer'}
-                              size="small"
-                              color={user.tipo === USER_ROLES.ADMIN ? 'primary' : 'default'}
-                              icon={user.tipo === USER_ROLES.ADMIN ? <AdminIcon /> : <PersonIcon />}
-                            />
-                          </TableCell>
-                          <TableCell align="right">
-                            <Tooltip title="Delete">
-                              <IconButton
-                                onClick={() => handleDeleteClick('user', user)}
-                                size="small"
-                                color="error"
-                              >
-                                <DeleteIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Box>
-          )}
+          <Box sx={{ p: { xs: 2, md: 3 } }}>
+            {tab === 'hotels' && (
+              <AdminHotelList
+                query={hotelsQuery}
+                page={hotelsPage}
+                onPageChange={setHotelsPage}
+                pageSize={PAGE_SIZE}
+                onDelete={(item) => setPendingDelete({ type: 'hotel', item })}
+              />
+            )}
+            {tab === 'users' && (
+              <AdminUserList
+                query={usersQuery}
+                page={usersPage}
+                onPageChange={setUsersPage}
+                pageSize={PAGE_SIZE}
+                currentUserId={user?.id}
+                onDelete={(item) => setPendingDelete({ type: 'user', item })}
+              />
+            )}
+            {tab === 'services' && <ServiceHealthGrid query={servicesQuery} />}
+          </Box>
         </Card>
       </Container>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog
-        open={deleteDialog.open}
-        onClose={() => setDeleteDialog({ open: false, type: '', item: null })}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <WarningIcon color="error" />
-          Confirm Deletion
+      {/* Confirmación que nombra el recurso */}
+      <Dialog open={!!pendingDelete} onClose={closeDeleteDialog} maxWidth="sm" fullWidth aria-labelledby="delete-title">
+        <DialogTitle id="delete-title">
+          Delete {pendingDelete?.type === 'hotel' ? 'hotel' : 'user'}?
         </DialogTitle>
         <DialogContent>
           <Typography variant="body1">
-            Are you sure you want to delete{' '}
-            {deleteDialog.type === 'hotel' ? (
-              <>the hotel <strong>{deleteDialog.item?.name}</strong></>
+            {pendingDelete?.type === 'hotel' ? (
+              <>
+                The hotel <strong>{pendingDelete?.item.name}</strong> will be removed from the catalog
+                and the search index.
+              </>
             ) : (
-              <>user <strong>{deleteDialog.item?.username}</strong></>
+              <>
+                The account <strong>{pendingDelete?.item.username}</strong> will be permanently removed.
+              </>
             )}
-            ?
           </Typography>
           <Alert severity="warning" sx={{ mt: 2 }}>
             This action cannot be undone.
-            {deleteDialog.type === 'hotel' && ' All associated reservations will also be deleted.'}
           </Alert>
+          {deleteMutation?.error && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {deleteMutation.error.message}
+            </Alert>
+          )}
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button
-            onClick={() => setDeleteDialog({ open: false, type: '', item: null })}
-            variant="outlined"
-          >
-            Cancel
+          <Button onClick={closeDeleteDialog} variant="outlined" disabled={deleteMutation?.isPending}>
+            Keep it
           </Button>
-          <Button
-            onClick={handleDeleteConfirm}
-            variant="contained"
-            color="error"
-            disabled={deleteLoading}
-          >
-            {deleteLoading ? 'Deleting...' : 'Delete'}
+          <Button onClick={confirmDelete} variant="contained" color="error" disabled={deleteMutation?.isPending}>
+            {deleteMutation?.isPending ? 'Deleting…' : 'Delete'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Snackbar */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-      >
-        <Alert severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })}>
-          {snackbar.message}
+      <Snackbar open={!!notice} autoHideDuration={5000} onClose={() => setNotice(null)}>
+        <Alert severity="success" onClose={() => setNotice(null)}>
+          {notice}
         </Alert>
       </Snackbar>
     </Box>

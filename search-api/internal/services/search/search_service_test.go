@@ -3,21 +3,20 @@ package search_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
-	"time"
 
-	hotelsDAO "search-api/internal/dao/hotels"
-	hotelsDomain "search-api/internal/domain/hotels"
-	hotelsRepo "search-api/internal/repositories/hotels"
-	service "search-api/internal/services/search"
+	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
+	service "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/services/search"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-func newTestService() (service.Service, *hotelsRepo.Mock, *hotelsRepo.ExternalMock) {
-	solrRepo := hotelsRepo.NewMock()
-	hotelsAPI := hotelsRepo.NewExternalMock()
+func newTestService() (service.Service, *solrMock, *hotelsAPIMock) {
+	solrRepo := newSolrMock()
+	hotelsAPI := newHotelsAPIMock()
 
 	svc := service.NewService(solrRepo, hotelsAPI)
 	return svc, solrRepo, hotelsAPI
@@ -29,36 +28,38 @@ func TestService_Search(t *testing.T) {
 
 		mockHotels := []hotelsDAO.Hotel{
 			{
-				ID:            "hotel1",
-				Name:          "Hotel Paradise",
-				Description:   "Un hotel de lujo",
-				City:          "Buenos Aires",
-				Country:       "Argentina",
-				Rating:        4.5,
-				PricePerNight: 150.0,
-				AvaiableRooms: 10,
-				Amenities:     []string{"wifi", "pool"},
-				Images:        []string{"img1.jpg"},
+				ID:             "hotel1",
+				Name:           "Hotel Paradise",
+				Description:    "Un hotel de lujo",
+				City:           "Buenos Aires",
+				Country:        "Argentina",
+				Rating:         4.5,
+				PricePerNight:  150.0,
+				AvailableRooms: 10,
+				Amenities:      []string{"wifi", "pool"},
+				Images:         []string{"img1.jpg"},
 			},
 			{
-				ID:            "hotel2",
-				Name:          "Hotel Sunset",
-				Description:   "Vista al mar",
-				City:          "Cancun",
-				Country:       "Mexico",
-				Rating:        4.8,
-				PricePerNight: 200.0,
-				AvaiableRooms: 5,
-				Amenities:     []string{"wifi", "spa"},
-				Images:        []string{"img2.jpg"},
+				ID:             "hotel2",
+				Name:           "Hotel Sunset",
+				Description:    "Vista al mar",
+				City:           "Cancun",
+				Country:        "Mexico",
+				Rating:         4.8,
+				PricePerNight:  200.0,
+				AvailableRooms: 5,
+				Amenities:      []string{"wifi", "spa"},
+				Images:         []string{"img2.jpg"},
 			},
 		}
 
-		solrRepo.On("Search", mock.Anything, "paradise", 10, 0).Return(mockHotels, nil).Once()
+		solrRepo.On("Search", mock.Anything, "paradise", "", 10, 0).Return(mockHotels, 25, nil).Once()
 
-		result, err := svc.Search(context.Background(), "paradise", 0, 10)
+		result, total, err := svc.Search(context.Background(), "paradise", "", 0, 10)
 
 		assert.NoError(t, err)
+		// A5/RV22: el total (numFound) atraviesa el service para el meta
+		assert.Equal(t, 25, total)
 		assert.Len(t, result, 2)
 		assert.Equal(t, "hotel1", result[0].ID)
 		assert.Equal(t, "Hotel Paradise", result[0].Name)
@@ -72,11 +73,12 @@ func TestService_Search(t *testing.T) {
 	t.Run("empty results", func(t *testing.T) {
 		svc, solrRepo, _ := newTestService()
 
-		solrRepo.On("Search", mock.Anything, "nonexistent", 10, 0).Return([]hotelsDAO.Hotel{}, nil).Once()
+		solrRepo.On("Search", mock.Anything, "nonexistent", "", 10, 0).Return([]hotelsDAO.Hotel{}, 0, nil).Once()
 
-		result, err := svc.Search(context.Background(), "nonexistent", 0, 10)
+		result, total, err := svc.Search(context.Background(), "nonexistent", "", 0, 10)
 
 		assert.NoError(t, err)
+		assert.Zero(t, total)
 		assert.Empty(t, result)
 
 		solrRepo.AssertExpectations(t)
@@ -85,9 +87,9 @@ func TestService_Search(t *testing.T) {
 	t.Run("solr error", func(t *testing.T) {
 		svc, solrRepo, _ := newTestService()
 
-		solrRepo.On("Search", mock.Anything, "test", 10, 0).Return(nil, errors.New("solr connection error")).Once()
+		solrRepo.On("Search", mock.Anything, "test", "", 10, 0).Return(nil, 0, errors.New("solr connection error")).Once()
 
-		result, err := svc.Search(context.Background(), "test", 0, 10)
+		result, _, err := svc.Search(context.Background(), "test", "", 0, 10)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -103,14 +105,28 @@ func TestService_Search(t *testing.T) {
 			{ID: "hotel3", Name: "Hotel Paginated", City: "Madrid"},
 		}
 
-		solrRepo.On("Search", mock.Anything, "hotel", 5, 10).Return(mockHotels, nil).Once()
+		solrRepo.On("Search", mock.Anything, "hotel", "", 5, 10).Return(mockHotels, 1, nil).Once()
 
-		result, err := svc.Search(context.Background(), "hotel", 10, 5)
+		result, _, err := svc.Search(context.Background(), "hotel", "", 10, 5)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "hotel3", result[0].ID)
 
+		solrRepo.AssertExpectations(t)
+	})
+
+	// plan 13: el sort llega al repositorio tal cual (el controller ya lo
+	// whitelisteó; el mapping a Solr es del repo)
+	t.Run("sort passes through to the repository", func(t *testing.T) {
+		svc, solrRepo, _ := newTestService()
+
+		solrRepo.On("Search", mock.Anything, "hotel", "price_asc", 10, 0).
+			Return([]hotelsDAO.Hotel{}, 0, nil).Once()
+
+		_, _, err := svc.Search(context.Background(), "hotel", "price_asc", 0, 10)
+
+		assert.NoError(t, err)
 		solrRepo.AssertExpectations(t)
 	})
 }
@@ -120,18 +136,18 @@ func TestService_HandleHotelNew_Create(t *testing.T) {
 		svc, solrRepo, hotelsAPI := newTestService()
 
 		hotelDomain := hotelsDomain.Hotel{
-			ID:            "hotel1",
-			Name:          "New Hotel",
-			Description:   "Brand new hotel",
-			City:          "Lima",
-			Country:       "Peru",
-			Rating:        4.0,
-			PricePerNight: 100.0,
-			AvaiableRooms: 20,
-			CheckInTime:   time.Now(),
-			CheckOutTime:  time.Now().Add(24 * time.Hour),
-			Amenities:     []string{"wifi"},
-			Images:        []string{"new.jpg"},
+			ID:             "hotel1",
+			Name:           "New Hotel",
+			Description:    "Brand new hotel",
+			City:           "Lima",
+			Country:        "Peru",
+			Rating:         4.0,
+			PricePerNight:  100.0,
+			AvailableRooms: 20,
+			CheckInTime:    "14:00",
+			CheckOutTime:   "10:00",
+			Amenities:      []string{"wifi"},
+			Images:         []string{"new.jpg"},
 		}
 
 		hotelsAPI.On("GetHotelByID", mock.Anything, "hotel1").Return(hotelDomain, nil).Once()
@@ -144,8 +160,8 @@ func TestService_HandleHotelNew_Create(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		// HandleHotelNew no devuelve error, solo imprime logs
-		svc.HandleHotelNew(hotelNew)
+		// E1: procesado OK → nil (el consumer ackea)
+		assert.NoError(t, svc.HandleHotelNew(context.Background(), hotelNew))
 
 		solrRepo.AssertExpectations(t)
 		hotelsAPI.AssertExpectations(t)
@@ -161,11 +177,48 @@ func TestService_HandleHotelNew_Create(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		// Fallo transitorio → error (el consumer espera y reintenta).
+		assert.Error(t, svc.HandleHotelNew(context.Background(), hotelNew))
 
 		// Index no debería ser llamado si falla obtener el hotel
 		solrRepo.AssertNotCalled(t, "Index", mock.Anything, mock.Anything)
 		hotelsAPI.AssertExpectations(t)
+	})
+
+	// RV14: hotel inexistente en hotels-api NO es error (se descarta el
+	// evento) y se limpia el doc del índice
+	t.Run("create - hotel deleted meanwhile (404) is discarded", func(t *testing.T) {
+		svc, solrRepo, hotelsAPI := newTestService()
+
+		notFound := fmt.Errorf("fetching hotel: %w", hotelsDomain.ErrHotelNotFound)
+		hotelsAPI.On("GetHotelByID", mock.Anything, "hotel1").Return(hotelsDomain.Hotel{}, notFound).Once()
+		solrRepo.On("Delete", mock.Anything, "hotel1").Return(nil).Once()
+
+		err := svc.HandleHotelNew(context.Background(), hotelsDomain.HotelNew{
+			Operation: "CREATE",
+			HotelID:   "hotel1",
+		})
+
+		assert.NoError(t, err, "un 404 tipado se descarta, no se reintenta")
+		solrRepo.AssertExpectations(t)
+		solrRepo.AssertNotCalled(t, "Index", mock.Anything, mock.Anything)
+	})
+
+	// RV14 bis: si la limpieza del doc falla, el evento SÍ se reintenta
+	t.Run("create - 404 with solr delete failure is retried", func(t *testing.T) {
+		svc, solrRepo, hotelsAPI := newTestService()
+
+		notFound := fmt.Errorf("fetching hotel: %w", hotelsDomain.ErrHotelNotFound)
+		hotelsAPI.On("GetHotelByID", mock.Anything, "hotel1").Return(hotelsDomain.Hotel{}, notFound).Once()
+		solrRepo.On("Delete", mock.Anything, "hotel1").Return(errors.New("solr down")).Once()
+
+		err := svc.HandleHotelNew(context.Background(), hotelsDomain.HotelNew{
+			Operation: "CREATE",
+			HotelID:   "hotel1",
+		})
+
+		assert.Error(t, err)
+		solrRepo.AssertExpectations(t)
 	})
 
 	t.Run("create - solr index error", func(t *testing.T) {
@@ -184,7 +237,7 @@ func TestService_HandleHotelNew_Create(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		assert.Error(t, svc.HandleHotelNew(context.Background(), hotelNew))
 
 		solrRepo.AssertExpectations(t)
 		hotelsAPI.AssertExpectations(t)
@@ -206,16 +259,16 @@ func TestService_HandleHotelNew_Update(t *testing.T) {
 		}
 
 		hotelsAPI.On("GetHotelByID", mock.Anything, "hotel1").Return(hotelDomain, nil).Once()
-		solrRepo.On("Update", mock.Anything, mock.MatchedBy(func(h hotelsDAO.Hotel) bool {
+		solrRepo.On("Index", mock.Anything, mock.MatchedBy(func(h hotelsDAO.Hotel) bool {
 			return h.ID == "hotel1" && h.Name == "Updated Hotel"
-		})).Return(nil).Once()
+		})).Return("hotel1", nil).Once()
 
 		hotelNew := hotelsDomain.HotelNew{
 			Operation: "UPDATE",
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		assert.NoError(t, svc.HandleHotelNew(context.Background(), hotelNew))
 
 		solrRepo.AssertExpectations(t)
 		hotelsAPI.AssertExpectations(t)
@@ -230,14 +283,14 @@ func TestService_HandleHotelNew_Update(t *testing.T) {
 		}
 
 		hotelsAPI.On("GetHotelByID", mock.Anything, "hotel1").Return(hotelDomain, nil).Once()
-		solrRepo.On("Update", mock.Anything, mock.Anything).Return(errors.New("solr update error")).Once()
+		solrRepo.On("Index", mock.Anything, mock.Anything).Return("", errors.New("solr update error")).Once()
 
 		hotelNew := hotelsDomain.HotelNew{
 			Operation: "UPDATE",
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		assert.Error(t, svc.HandleHotelNew(context.Background(), hotelNew))
 
 		solrRepo.AssertExpectations(t)
 		hotelsAPI.AssertExpectations(t)
@@ -246,7 +299,8 @@ func TestService_HandleHotelNew_Update(t *testing.T) {
 
 func TestService_HandleHotelNew_Delete(t *testing.T) {
 	t.Run("delete success", func(t *testing.T) {
-		svc, solrRepo, _ := newTestService()
+		svc, solrRepo, hotelsAPI := newTestService()
+		hotelsAPI.On("GetHotelByID", mock.Anything, "hotel1").Return(hotelsDomain.Hotel{}, hotelsDomain.ErrHotelNotFound).Once()
 
 		solrRepo.On("Delete", mock.Anything, "hotel1").Return(nil).Once()
 
@@ -255,13 +309,14 @@ func TestService_HandleHotelNew_Delete(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		assert.NoError(t, svc.HandleHotelNew(context.Background(), hotelNew))
 
 		solrRepo.AssertExpectations(t)
 	})
 
 	t.Run("delete - solr error", func(t *testing.T) {
-		svc, solrRepo, _ := newTestService()
+		svc, solrRepo, hotelsAPI := newTestService()
+		hotelsAPI.On("GetHotelByID", mock.Anything, "hotel1").Return(hotelsDomain.Hotel{}, hotelsDomain.ErrHotelNotFound).Once()
 
 		solrRepo.On("Delete", mock.Anything, "hotel1").Return(errors.New("solr delete error")).Once()
 
@@ -270,7 +325,7 @@ func TestService_HandleHotelNew_Delete(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		assert.Error(t, svc.HandleHotelNew(context.Background(), hotelNew))
 
 		solrRepo.AssertExpectations(t)
 	})
@@ -285,7 +340,9 @@ func TestService_HandleHotelNew_UnknownOperation(t *testing.T) {
 			HotelID:   "hotel1",
 		}
 
-		svc.HandleHotelNew(hotelNew)
+		// Mensaje no procesable → error (el consumer lo termina mandando a la
+		// DLQ en vez de perderlo en silencio)
+		assert.Error(t, svc.HandleHotelNew(context.Background(), hotelNew))
 
 		// No debería llamar a ningún método del repositorio
 		solrRepo.AssertNotCalled(t, "Index", mock.Anything, mock.Anything)
@@ -293,4 +350,67 @@ func TestService_HandleHotelNew_UnknownOperation(t *testing.T) {
 		solrRepo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
 		hotelsAPI.AssertNotCalled(t, "GetHotelByID", mock.Anything, mock.Anything)
 	})
+}
+
+func TestService_Backfill(t *testing.T) {
+	t.Run("fresh union reconciles missing updated and orphan hotels", func(t *testing.T) {
+		svc, solrRepo, hotelsAPI := newTestService()
+		solrRepo.On("ListIDs", mock.Anything).Return([]string{"h1", "orphan"}, nil).Once()
+		// Page h1 is stale and h2 is absent from Solr. GET must win.
+		hotelsAPI.On("GetHotelsAfter", mock.Anything, 50, "").Return([]hotelsDomain.Hotel{{ID: "h1", Name: "Old"}}, nil).Once()
+		hotelsAPI.On("GetHotelsAfter", mock.Anything, 50, "h1").Return([]hotelsDomain.Hotel{{ID: "h2"}}, nil).Once()
+		hotelsAPI.On("GetHotelsAfter", mock.Anything, 50, "h2").Return([]hotelsDomain.Hotel{}, nil).Once()
+		hotelsAPI.On("GetHotelByID", mock.Anything, "h1").Return(hotelsDomain.Hotel{ID: "h1", Name: "Current"}, nil).Once()
+		hotelsAPI.On("GetHotelByID", mock.Anything, "h2").Return(hotelsDomain.Hotel{ID: "h2", Name: "Missing"}, nil).Once()
+		hotelsAPI.On("GetHotelByID", mock.Anything, "orphan").Return(hotelsDomain.Hotel{}, hotelsDomain.ErrHotelNotFound).Once()
+		solrRepo.On("Index", mock.Anything, mock.MatchedBy(func(h hotelsDAO.Hotel) bool { return h.ID == "h1" && h.Name == "Current" })).Return("h1", nil).Once()
+		solrRepo.On("Index", mock.Anything, mock.MatchedBy(func(h hotelsDAO.Hotel) bool { return h.ID == "h2" && h.Name == "Missing" })).Return("h2", nil).Once()
+		solrRepo.On("Delete", mock.Anything, "orphan").Return(nil).Once()
+		count, err := svc.Backfill(context.Background())
+		assert.NoError(t, err)
+		assert.Equal(t, 2, count)
+		solrRepo.AssertExpectations(t)
+		hotelsAPI.AssertExpectations(t)
+	})
+	t.Run("empty catalogue removes all orphans", func(t *testing.T) {
+		svc, solrRepo, hotelsAPI := newTestService()
+		solrRepo.On("ListIDs", mock.Anything).Return([]string{"orphan"}, nil).Once()
+		hotelsAPI.On("GetHotelsAfter", mock.Anything, 50, "").Return([]hotelsDomain.Hotel{}, nil).Once()
+		hotelsAPI.On("GetHotelByID", mock.Anything, "orphan").Return(hotelsDomain.Hotel{}, hotelsDomain.ErrHotelNotFound).Once()
+		solrRepo.On("Delete", mock.Anything, "orphan").Return(nil).Once()
+		count, err := svc.Backfill(context.Background())
+		assert.NoError(t, err)
+		assert.Zero(t, count)
+		solrRepo.AssertExpectations(t)
+		hotelsAPI.AssertExpectations(t)
+	})
+	for _, stage := range []string{"solr list", "catalogue", "index"} {
+		t.Run(stage+" errors propagate without deleting arbitrary docs", func(t *testing.T) {
+			svc, solrRepo, hotelsAPI := newTestService()
+			if stage == "solr list" {
+				solrRepo.On("ListIDs", mock.Anything).Return(nil, errors.New("down")).Once()
+			} else {
+				solrRepo.On("ListIDs", mock.Anything).Return([]string{}, nil).Once()
+				if stage == "catalogue" {
+					hotelsAPI.On("GetHotelsAfter", mock.Anything, 50, "").Return(nil, errors.New("down")).Once()
+				} else {
+					hotelsAPI.On("GetHotelsAfter", mock.Anything, 50, "").Return([]hotelsDomain.Hotel{{ID: "h1"}}, nil).Once()
+					hotelsAPI.On("GetHotelsAfter", mock.Anything, 50, "h1").Return([]hotelsDomain.Hotel{}, nil).Once()
+					hotelsAPI.On("GetHotelByID", mock.Anything, "h1").Return(hotelsDomain.Hotel{ID: "h1"}, nil).Once()
+					solrRepo.On("Index", mock.Anything, mock.Anything).Return("", errors.New("down")).Once()
+				}
+			}
+			_, err := svc.Backfill(context.Background())
+			assert.Error(t, err)
+			solrRepo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestService_OldDeleteUsesCurrentSource(t *testing.T) {
+	svc, solrRepo, api := newTestService()
+	api.On("GetHotelByID", mock.Anything, "h1").Return(hotelsDomain.Hotel{ID: "h1", Name: "Current"}, nil).Once()
+	solrRepo.On("Index", mock.Anything, mock.Anything).Return("h1", nil).Once()
+	assert.NoError(t, svc.HandleHotelNew(context.Background(), hotelsDomain.HotelNew{Operation: "DELETE", HotelID: "h1"}))
+	solrRepo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
 }

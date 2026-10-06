@@ -1,0 +1,59 @@
+meta {
+  name: Create Hotel (admin)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/admin/hotels
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+body:json {
+  {
+    "name": "Bruno Demo Hotel",
+    "description": "Hotel creado por la colección Bruno para demostrar el CRUD admin.",
+    "address": "Calle Falsa 123",
+    "city": "Buenos Aires",
+    "state": "CABA",
+    "country": "Argentina",
+    "phone": "+54 11 5555-0100",
+    "email": "demo@brunohotel.test",
+    "price_per_night": 199,
+    "rating": 4.2,
+    "available_rooms": 10,
+    "check_in_time": "15:00",
+    "check_out_time": "11:00",
+    "amenities": ["wifi", "pileta", "gym"],
+    "images": ["https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800"]
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("created_hotel_id", res.body.data.id);
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  Crea un hotel — SOLO admins. 201 con Location e ID asignado por el servidor.
+  Backend valida nombre, dirección, ciudad, país, capacidad 0..10000,
+  precio 0..1000000, rating 0..5 y horarios HH:mm. Rechaza antes de escribir.
+  Después de Mongo intenta publicar CREATE; un fallo de broker mantiene 201
+  y se recupera por reconciliación periódica.
+  Este hotel tendrá una reserva cancelada y queda conservado como historial.
+  Otro hotel descartable demuestra DELETE exitoso al final de la colección.
+}
+
+settings {
+  encodeUrl: true
+}

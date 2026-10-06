@@ -1,0 +1,22 @@
+docs {
+  # Users API — identidad y autenticación
+
+  Registro, login (emisión de JWT) y gestión de cuentas, contra el gateway
+  nginx (`{{baseUrl}}` = https://localhost/api/v1).
+
+  Cómo usarla:
+  - Seleccionar el environment **local**.
+  - TLS: el gateway usa certificado self-signed → desactivar la verificación
+    SSL en Bruno (Preferences → Request → SSL/TLS Certificate Verification)
+    o correr por CLI con `--insecure`.
+  - `admin_password` trae el placeholder de `.env.example`: ajustarlo al
+    ADMIN_PASSWORD de tu `.env` (en CLI: `--env-var admin_password=...`).
+  - Correr la colección EN ORDEN (Run Collection): registra un usuario fresco
+    con nombre único, se loguea, lo consulta y lo borra al final — corridas
+    repetidas no dejan residuos.
+  - `/login` está rate-limiteado a 30 req/min por IP (burst 10): corridas
+    rápidas pueden dar 429 `rate_limited`; OPTIONS no consume el presupuesto de login.
+
+  CLI (desde esta carpeta):
+  `npx -y @usebruno/cli run --env local --insecure --env-var admin_password=...`
+}

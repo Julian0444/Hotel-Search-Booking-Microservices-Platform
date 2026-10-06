@@ -1,337 +1,161 @@
 /**
- * My Reservations Page
- * Displays user's booking history with management options
+ * My Reservations (plan 13 fase 6, F13-06): historial auditable — tabs
+ * Upcoming/Past/Cancelled/All con counts, canceladas SIEMPRE visibles,
+ * status del backend, mutation con invalidación (nada de setState con la
+ * lista filtrada capturando estado viejo).
  */
 
-import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import {
-  Box,
-  Container,
-  Typography,
-  Card,
-  CardContent,
-  Grid,
-  Button,
-  Chip,
-  Skeleton,
-  Alert,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Snackbar,
-  IconButton,
-} from '@mui/material';
-import {
-  EventNote as EventNoteIcon,
-  Hotel as HotelIcon,
-  CalendarMonth as CalendarIcon,
-  Delete as DeleteIcon,
-  Visibility as ViewIcon,
-  Warning as WarningIcon,
-} from '@mui/icons-material';
-import { reservationsService } from '../services';
-import { useAuth } from '../context/AuthContext';
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
+import { Box, Button, Container, Snackbar, Alert, Grid, Skeleton, Tab, Tabs, Typography } from '@mui/material';
+import { EventNote as EventNoteIcon } from '@mui/icons-material';
+import { useAuth } from '../hooks/useAuth';
+import { useMyReservations } from '../hooks/queries';
+import { useCancelReservation } from '../hooks/mutations';
+import ReservationCard from '../components/reservations/ReservationCard';
+import CancelReservationDialog from '../components/reservations/CancelReservationDialog';
+import { EmptyState, ErrorState, RouteMeta } from '../components/common';
+import { reservationGroup, reservationCounts, RESERVATION_GROUPS } from '../utils/reservations';
+import { compareDateOnly } from '../utils/dateOnly';
 import { ROUTES } from '../constants';
-import { formatDate, calculateNights, getReservationStatus } from '../utils/helpers';
+
+const TABS = [
+  { value: 'upcoming', label: 'Upcoming' },
+  { value: 'past', label: 'Past' },
+  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'all', label: 'All' },
+];
 
 const MyReservations = () => {
   const navigate = useNavigate();
-  const { user, isAuthenticated } = useAuth();
+  const { user } = useAuth();
+  const [tab, setTab] = useState('upcoming');
+  const [pendingCancel, setPendingCancel] = useState(null);
+  const [cancelledNotice, setCancelledNotice] = useState(false);
 
-  const [reservations, setReservations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [deleteDialog, setDeleteDialog] = useState({ open: false, reservation: null });
-  const [deleteLoading, setDeleteLoading] = useState(false);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const { data, isPending, isError, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } = useMyReservations(user?.id);
+  const cancelMutation = useCancelReservation(user?.id);
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      navigate(ROUTES.LOGIN, { state: { from: { pathname: ROUTES.RESERVATIONS } } });
-      return;
-    }
+  const reservations = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
+  const counts = useMemo(() => reservationCounts(reservations), [reservations]);
 
-    const fetchReservations = async () => {
-      try {
-        setLoading(true);
-        const response = await reservationsService.getByUserId(user.id);
-        setReservations(response || []);
-      } catch (err) {
-        console.error('Error fetching reservations:', err);
-        setError('Could not load reservations');
-      } finally {
-        setLoading(false);
-      }
-    };
+  const visible = useMemo(() => {
+    const filtered =
+      tab === 'all' ? reservations : reservations.filter((r) => reservationGroup(r) === tab);
+    // Próximas primero dentro de Upcoming; el resto, más recientes primero
+    return [...filtered].sort((a, b) =>
+      tab === RESERVATION_GROUPS.UPCOMING
+        ? compareDateOnly(a.check_in, b.check_in)
+        : compareDateOnly(b.check_in, a.check_in),
+    );
+  }, [reservations, tab]);
 
-    fetchReservations();
-  }, [isAuthenticated, user, navigate]);
-
-  const handleDeleteClick = (reservation) => {
-    setDeleteDialog({ open: true, reservation });
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!deleteDialog.reservation) return;
-
+  const confirmCancel = async () => {
     try {
-      setDeleteLoading(true);
-      await reservationsService.cancel(deleteDialog.reservation.id);
-      setReservations(reservations.filter((r) => r.id !== deleteDialog.reservation.id));
-      setSnackbar({ open: true, message: 'Reservation cancelled successfully', severity: 'success' });
-    } catch (err) {
-      console.error('Error canceling reservation:', err);
-      setSnackbar({
-        open: true,
-        message: err.response?.data?.error || 'Error cancelling reservation',
-        severity: 'error',
-      });
-    } finally {
-      setDeleteLoading(false);
-      setDeleteDialog({ open: false, reservation: null });
+      await cancelMutation.mutateAsync(pendingCancel.id);
+      setPendingCancel(null);
+      setCancelledNotice(true);
+    } catch {
+      // El error queda en cancelMutation.error y lo muestra el dialog
     }
   };
-
-  if (!isAuthenticated) {
-    return null;
-  }
 
   return (
     <Box sx={{ bgcolor: 'background.default', minHeight: '100vh' }}>
-      {/* Header */}
-      <Box
-        sx={{
-          bgcolor: 'primary.main',
-          py: 6,
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-      >
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            opacity: 0.1,
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-          }}
-        />
-        <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <EventNoteIcon sx={{ fontSize: 40, color: 'secondary.main', mr: 2 }} />
-            <Box>
-              <Typography variant="h3" sx={{ color: 'white', fontWeight: 600 }}>
-                My Reservations
-              </Typography>
-              <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                Manage your hotel bookings
-              </Typography>
-            </Box>
-          </Box>
+      <RouteMeta title="My reservations" description="Your booking history, including cancelled stays." />
+
+      <Box sx={{ bgcolor: 'primary.main', py: { xs: 4, md: 6 } }}>
+        <Container maxWidth="lg">
+          <Typography variant="h3" component="h1" sx={{ color: 'white', fontWeight: 600 }}>
+            My reservations
+          </Typography>
+          <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.75)' }}>
+            Every booking you made, including cancelled ones
+          </Typography>
         </Container>
       </Box>
 
       <Container maxWidth="lg" sx={{ py: 4 }}>
-        {error && (
-          <Alert severity="error" sx={{ mb: 4 }}>
-            {error}
-          </Alert>
-        )}
-
-        {loading ? (
-          <Grid container spacing={3}>
+        {isError && !data ? (
+          <ErrorState error={error} title="We could not load your reservations" onRetry={refetch} />
+        ) : isPending ? (
+          <Grid container spacing={2} aria-busy="true">
             {Array.from({ length: 3 }).map((_, index) => (
               <Grid key={index} size={{ xs: 12 }}>
-                <Card>
-                  <CardContent sx={{ p: 3 }}>
-                    <Grid container spacing={2}>
-                      <Grid size={{ xs: 12, sm: 8 }}>
-                        <Skeleton variant="text" height={32} width="50%" />
-                        <Skeleton variant="text" height={24} width="40%" />
-                        <Skeleton variant="text" height={20} width="60%" />
-                      </Grid>
-                      <Grid size={{ xs: 12, sm: 4 }}>
-                        <Skeleton variant="rectangular" height={40} />
-                      </Grid>
-                    </Grid>
-                  </CardContent>
-                </Card>
+                <Skeleton variant="rectangular" height={140} sx={{ borderRadius: 2 }} />
               </Grid>
             ))}
           </Grid>
         ) : reservations.length === 0 ? (
-          <Box sx={{ textAlign: 'center', py: 8 }}>
-            <HotelIcon sx={{ fontSize: 80, color: 'divider', mb: 2 }} />
-            <Typography variant="h5" gutterBottom>
-              No Reservations Yet
-            </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-              Explore our hotels and make your first booking
-            </Typography>
-            <Button
-              component={Link}
-              to={ROUTES.SEARCH}
-              variant="contained"
-              size="large"
-            >
-              Search Hotels
-            </Button>
-          </Box>
+          <EmptyState
+            icon={<EventNoteIcon />}
+            title="No reservations yet"
+            description="Find a stay and your bookings will appear here."
+            actionLabel="Search stays"
+            onAction={() => navigate(ROUTES.SEARCH)}
+          />
         ) : (
-          <Grid container spacing={3}>
-            {reservations.map((reservation) => {
-              const checkIn = reservation.check_in || reservation.checkIn;
-              const checkOut = reservation.check_out || reservation.checkOut;
-              const status = getReservationStatus(checkIn, checkOut);
-              const nights = calculateNights(checkIn, checkOut);
-              const hotelId = reservation.hotel_id || reservation.hotelId;
-              const hotelName = reservation.hotel_name || reservation.hotelName || 'Hotel';
+          <>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              {reservations.length} bookings loaded. Filters and counts apply to loaded bookings.
+            </Typography>
+            <Tabs
+              value={tab}
+              onChange={(_event, value) => setTab(value)}
+              variant="scrollable"
+              allowScrollButtonsMobile
+              aria-label="Filter reservations"
+              sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}
+            >
+              {TABS.map(({ value, label }) => (
+                <Tab key={value} value={value} label={`${label} (${counts[value]})`} />
+              ))}
+            </Tabs>
 
-              return (
-                <Grid key={reservation.id} size={{ xs: 12 }}>
-                  <Card
-                    sx={{
-                      transition: 'all 0.3s ease',
-                      '&:hover': {
-                        transform: 'translateY(-2px)',
-                      },
-                    }}
-                  >
-                    <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
-                      <Grid container spacing={2} alignItems="center">
-                        <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                            <Box
-                              sx={{
-                                width: 56,
-                                height: 56,
-                                borderRadius: 2,
-                                bgcolor: 'primary.main',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}
-                            >
-                              <HotelIcon sx={{ color: 'white', fontSize: 28 }} />
-                            </Box>
-                            <Box>
-                              <Typography variant="h6" sx={{ fontWeight: 600, lineHeight: 1.2 }}>
-                                {hotelName}
-                              </Typography>
-                              <Chip
-                                label={status.label}
-                                color={status.color}
-                                size="small"
-                                sx={{ mt: 0.5 }}
-                              />
-                            </Box>
-                          </Box>
-                        </Grid>
-
-                        <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                            <CalendarIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
-                            <Typography variant="body2" color="text.secondary">
-                              {formatDate(checkIn)} - {formatDate(checkOut)}
-                            </Typography>
-                          </Box>
-                          <Typography variant="body2" color="text.secondary">
-                            {nights} night{nights !== 1 ? 's' : ''}
-                          </Typography>
-                        </Grid>
-
-                        <Grid size={{ xs: 12, md: 4 }}>
-                          <Box
-                            sx={{
-                              display: 'flex',
-                              gap: 1,
-                              justifyContent: { xs: 'flex-start', md: 'flex-end' },
-                            }}
-                          >
-                            <Button
-                              component={Link}
-                              to={`/hotels/${hotelId}`}
-                              variant="outlined"
-                              size="small"
-                              startIcon={<ViewIcon />}
-                            >
-                              View Hotel
-                            </Button>
-                            {status.canCancel && (
-                              <IconButton
-                                onClick={() => handleDeleteClick(reservation)}
-                                color="error"
-                                size="small"
-                                sx={{
-                                  border: '1px solid',
-                                  borderColor: 'error.light',
-                                }}
-                              >
-                                <DeleteIcon />
-                              </IconButton>
-                            )}
-                          </Box>
-                        </Grid>
-                      </Grid>
-                    </CardContent>
-                  </Card>
-                </Grid>
-              );
-            })}
-          </Grid>
+            {visible.length === 0 ? (
+              <EmptyState
+                title={`Nothing in ${TABS.find((t) => t.value === tab).label.toLowerCase()}`}
+                description="Bookings will show up here as their dates or status change."
+              />
+            ) : (
+              <Grid container spacing={2}>
+                {visible.map((reservation) => (
+                  <Grid key={reservation.id} size={{ xs: 12 }}>
+                    <ReservationCard reservation={reservation} onCancel={setPendingCancel} />
+                  </Grid>
+                ))}
+              </Grid>
+            )}
+            {isFetchNextPageError && <Alert severity="error" sx={{ mt: 2 }}>{error.message}</Alert>}
+            {hasNextPage && (
+              <Box sx={{ mt: 3, textAlign: 'center' }}>
+                <Button variant="outlined" disabled={isFetchingNextPage} onClick={() => fetchNextPage()}>
+                  {isFetchingNextPage ? 'Loading…' : isFetchNextPageError ? 'Retry loading more' : 'Load more bookings'}
+                </Button>
+              </Box>
+            )}
+          </>
         )}
       </Container>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog
-        open={deleteDialog.open}
-        onClose={() => setDeleteDialog({ open: false, reservation: null })}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <WarningIcon color="warning" />
-          Cancel Reservation
-        </DialogTitle>
-        <DialogContent>
-          <Typography variant="body1">
-            Are you sure you want to cancel your reservation at{' '}
-            <strong>{deleteDialog.reservation?.hotel_name || deleteDialog.reservation?.hotelName}</strong>?
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-            This action cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button
-            onClick={() => setDeleteDialog({ open: false, reservation: null })}
-            variant="outlined"
-          >
-            Keep Reservation
-          </Button>
-          <Button
-            onClick={handleDeleteConfirm}
-            variant="contained"
-            color="error"
-            disabled={deleteLoading}
-          >
-            {deleteLoading ? 'Cancelling...' : 'Yes, Cancel'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <CancelReservationDialog
+        reservation={pendingCancel}
+        isCancelling={cancelMutation.isPending}
+        error={cancelMutation.error}
+        onConfirm={confirmCancel}
+        onClose={() => {
+          setPendingCancel(null);
+          cancelMutation.reset();
+        }}
+      />
 
-      {/* Snackbar */}
       <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        open={cancelledNotice}
+        autoHideDuration={5000}
+        onClose={() => setCancelledNotice(false)}
       >
-        <Alert severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })}>
-          {snackbar.message}
+        <Alert severity="success" onClose={() => setCancelledNotice(false)}>
+          Reservation cancelled — it stays in your history.
         </Alert>
       </Snackbar>
     </Box>
