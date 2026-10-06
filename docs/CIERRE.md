@@ -54,7 +54,8 @@ volúmenes originales del proyecto. Las pruebas de integración crean y retiran
 
 Los logs se conservan en [evidence/2026-10-06](evidence/2026-10-06/).
 El [manifiesto SHA-256](evidence/2026-10-06/source-sha256.txt) identifica fuentes,
-configuración y tests del árbol entregado; los [IDs de imágenes](evidence/2026-10-06/images.json)
+configuración y tests usados en esa verificación local; las correcciones posteriores
+detectadas por CI quedan versionadas en Git. Los [IDs de imágenes](evidence/2026-10-06/images.json)
 identifican los builds locales. No son hashes de un commit nuevo.
 Los resultados siguientes son de comandos ejecutados localmente:
 

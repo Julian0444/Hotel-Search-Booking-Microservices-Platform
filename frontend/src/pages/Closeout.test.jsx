@@ -16,6 +16,10 @@ import ProtectedRoute from '../components/auth/ProtectedRoute';
 import SessionExpiredNavigator from '../components/auth/SessionExpiredNavigator';
 import { addDaysDateOnly, todayLocal } from '../utils/dateOnly';
 
+// Estos recorridos completos de MUI superan 5s con cobertura en el runner Linux.
+// El límite sólo aplica a esas dos secuencias; se conservan todos sus asserts.
+const FORM_FLOW_TIMEOUT = 15_000;
+
 for (const kind of ['hotels', 'users']) {
   it(`admin ${kind}: borrar el único elemento de página 2 vuelve a página 1`, async () => {
     seedAdminSession();
@@ -126,7 +130,7 @@ it('edición envía PUT completo con precio/capacidad/rating cero e imágenes va
   await user.click(screen.getByRole('button', { name: 'Save changes' }));
   await screen.findByRole('dialog', { name: 'Changes saved' });
   expect(saved).toMatchObject({ price_per_night: 0, available_rooms: 0, rating: 0, description: '', images: [] });
-});
+}, FORM_FLOW_TIMEOUT);
 
 it('Sign out respeta el bloqueo del formulario antes de borrar la sesión', async () => {
   seedAdminSession();
@@ -151,4 +155,4 @@ it('Sign out respeta el bloqueo del formulario antes de borrar la sesión', asyn
   await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard changes' }));
   await screen.findByRole('link', { name: 'Sign in' });
   expect(window.localStorage.getItem('token')).toBeNull();
-});
+}, FORM_FLOW_TIMEOUT);

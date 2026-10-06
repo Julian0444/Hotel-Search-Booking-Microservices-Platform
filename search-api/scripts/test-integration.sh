@@ -23,9 +23,11 @@ export TEST_SOLR_URL="http://127.0.0.1:$solr_port"
 export TEST_RABBIT_URL="amqp://verify:verify-local@127.0.0.1:$rabbit_port/"
 export TEST_SOLR_CONFIGSET=hotels
 ready=false
+# El CLI también crea .erlang.cookie: usar el mismo usuario que el broker evita
+# que un diagnóstico temprano la deje propiedad de root y rompa su arranque.
 for ((attempt=0; attempt<90; attempt++)); do
   if curl --fail --silent "$TEST_SOLR_URL/solr/admin/info/system" >/dev/null && \
-      docker exec "$rabbit_name" rabbitmq-diagnostics -q check_port_connectivity >/dev/null 2>&1; then
+      docker exec --user rabbitmq "$rabbit_name" rabbitmq-diagnostics -q check_port_connectivity >/dev/null 2>&1; then
     ready=true
     break
   fi
