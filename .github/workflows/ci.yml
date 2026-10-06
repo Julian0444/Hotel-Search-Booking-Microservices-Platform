@@ -63,7 +63,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # jsdom 30 / undici 8 exigen Node ≥22 (engines); con Node 20 los
           # forks workers de vitest mueren al cargar jsdom (markAsUncloneable)
@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # jsdom 30 / undici 8 exigen Node ≥22 (engines); con Node 20 los
           # forks workers de vitest mueren al cargar jsdom (markAsUncloneable)
