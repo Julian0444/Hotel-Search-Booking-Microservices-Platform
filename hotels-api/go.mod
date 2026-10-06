@@ -97,7 +97,7 @@ require (
 
 require (
 	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/platform-contracts v0.0.0
-	github.com/rabbitmq/amqp091-go v1.13.0
+	github.com/rabbitmq/amqp091-go v1.15.0
 	github.com/testcontainers/testcontainers-go v0.43.0
 )
 
