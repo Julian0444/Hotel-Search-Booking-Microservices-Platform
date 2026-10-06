@@ -1,0 +1,21 @@
+{
+  "status": "passed",
+  "project": "hotel-closure",
+  "durable": {
+    "reservations": 1,
+    "keys": 1,
+    "booked": [
+      0,
+      0
+    ],
+    "created": 1,
+    "deleted": 0,
+    "capacity": 0
+  },
+  "latency_measurements": {
+    "book_ms_broker_down": 8.0,
+    "cancel_ms_broker_down": 8.1
+  },
+  "retained_audit_hotel": "6ac487240249c83eb6e0e56f",
+  "retained_cancelled_reservation": "6ac487260249c83eb6e0e572"
+}

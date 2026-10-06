@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-### Backend (Docker Compose — 12 containers: 11 long-running + one-shot migrate)
+### Backend (Docker Compose — Mongo rs0; migrate + mongo-init one-shot)
 
 ```bash
-cp .env.example .env          # required: compose uses ${VAR:?} and fails without it
+test -f .env || cp .env.example .env # preserve existing credentials
 docker compose up -d --build
 docker compose ps             # wait until healthy (Solr takes ~90s)
 docker compose --profile frontend up -d   # optional: built SPA on http://localhost:5173 (I8)
@@ -30,7 +30,7 @@ cd users-api && go test ./internal/services/users/ -run TestLogin -v   # single 
 ```bash
 cd frontend
 npm install
-npm run dev      # port 5173; proxies /api/* → nginx gateway on localhost:80, stripping the /api prefix
+npm run dev      # port 5173; proxies /api/v1 unchanged → TLS nginx gateway
 npm run lint     # eslint
 npm run build
 ```
@@ -40,7 +40,7 @@ npm run build
 Three independent Go microservices + React SPA, orchestrated by `docker-compose.yml` with nginx (`nginx.conf`) as the API gateway on port 443 (TLS; port 80 only redirects) — routing, rate limiting, and load balancing of 3 users-api replicas (`least_conn`). All client traffic goes through the gateway; see the endpoint table in README.md.
 
 - **users-api** (Go, port 8082 ×3): registration/login, issues JWTs. Read-through cache: L1 ccache (in-process) → L2 Memcached → MySQL (GORM).
-- **hotels-api** (Go, port 8081): hotel CRUD + reservations. Cache-aside ccache → MongoDB. Publishes `CREATE`/`UPDATE`/`DELETE` events to the RabbitMQ `hotels-news` queue.
+- **hotels-api** (Go, port 8081): hotel CRUD + reservations. MongoDB rs0 transactions for reservation/inventory/idempotency; no hotel or reservation cache. Publishes `CREATE`/`UPDATE`/`DELETE` events to the RabbitMQ `hotels-news` queue.
 - **search-api** (Go, port 8082): consumes `hotels-news`, fetches the full hotel from hotels-api over HTTP, syncs the Solr `hotels` core; serves `GET /search`.
 
 Each Go service has the same layered layout, wired in `cmd/main.go`: `internal/config` (env vars) → `controllers` (Gin handlers) → `services` (business logic) → `repositories` (DB + cache) → `dao`/`domain` (models), plus service-specific `clients/queues` (RabbitMQ), `middlewares`, `tokenizers`.
@@ -52,7 +52,7 @@ Each Go service has the same layered layout, wired in `cmd/main.go`: `internal/c
 ### Test conventions
 
 - Controller tests: Gin + `httptest` with real JWTs in headers, covering 401/403/400/200.
-- Service tests: mock repositories (main + cache + queue) validating cache-aside behavior.
+- Service tests: mock repositories/queues for domain behavior; Mongo rs0 integration for transaction invariants.
 
 ## The plans/ workflow (how work is organized here)
 
@@ -62,10 +62,19 @@ This repo is being hardened as a portfolio piece via a fixed sequence of plans:
 - `plans/README.md` — **source of truth**: execution order, dependency graph, checkbox status, and the ID→plan traceability table.
 - `plans/NN-*.md` — 13 self-contained plans, each executable in a fresh session.
 
-When executing a plan: validate its code snippets against the current code first (earlier plans may have moved things), run its **Verificar** block when done, tick its checkbox in `plans/README.md`, and commit. Plan 01 (security/auth) is complete.
+When executing a plan: validate its code snippets against the current code first (earlier plans may have moved things), run its **Verificar** block when done, tick its checkbox in `plans/README.md`, and commit. The original 13 plans are complete. The current portfolio closure is tracked in `docs/CIERRE.md`; do not restart the plans.
 
 ## Known deliberate quirks — do not "fix" in passing
 
 - The historical misspelling of `AvailableRooms`/`available_rooms` was renamed in plan 11 (C11) as one atomic coordinated change (contracts, BSON, Solr schema, frontend, seeds, goldens). Existing Mongo data needs the one-off migration `hotels-api/seed/rename-available-rooms.js` (the only file that still carries the old field name, on purpose).
 - search-api's module path and Go version were unified with the other services in plan 02 (full GitHub path, shared toolchain via `go.work`).
 - Plans and much of the documentation are in Spanish; code comments mix Spanish and English. Keep that style.
+
+## Current closure rules
+
+- Preserve user changes. No push, PR, merge to main or external deployment without explicit authorization; user reviews the branch manually.
+- Never use `docker compose down -v` on existing data. `make down` now preserves volumes.
+- Mongo must be a replica set (`rs0` locally); standalone cannot run reservation transactions. Audit/migrate existing data using README steps before serving it.
+- Search runs as one writer. Reconciliation and events share a local lock; do not scale search-api or overlap maintenance writers.
+- `make test-integration` exercises real Mongo, Solr and RabbitMQ; `make e2e` exercises the Docker-built SPA. A green unit suite is not full-stack evidence.
+- Kubernetes files are historical optional material, not a validated deployment of this closure.

@@ -331,7 +331,7 @@ func TestAdminCreateHotel_ForbiddenForNonAdmin(t *testing.T) {
 	r := setupRouter(ctrl)
 
 	token := makeJWT(t, "cliente", int64(1))
-	req := httptest.NewRequest(http.MethodPost, "/admin/hotels", strings.NewReader(`{"name":"New Hotel"}`))
+	req := httptest.NewRequest(http.MethodPost, "/admin/hotels", strings.NewReader(`{"name":"New Hotel","address":"Main 1","city":"Córdoba","country":"Argentina","check_in_time":"15:00","check_out_time":"11:00"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", authBearer(token))
 
@@ -357,7 +357,7 @@ func TestAdminCreateHotel_Created(t *testing.T) {
 	r := setupRouter(ctrl)
 
 	token := makeJWT(t, "administrador", int64(999))
-	req := httptest.NewRequest(http.MethodPost, "/admin/hotels", strings.NewReader(`{"name":"New Hotel"}`))
+	req := httptest.NewRequest(http.MethodPost, "/admin/hotels", strings.NewReader(`{"name":"New Hotel","address":"Main 1","city":"Córdoba","country":"Argentina","check_in_time":"15:00","check_out_time":"11:00"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", authBearer(token))
 
@@ -393,7 +393,7 @@ func TestAdminUpdateHotel_ReturnsUpdatedRepresentation(t *testing.T) {
 	r := setupRouter(ctrl)
 
 	token := makeJWT(t, "administrador", int64(999))
-	req := httptest.NewRequest(http.MethodPut, "/admin/hotels/h1", strings.NewReader(`{"name":"Renamed"}`))
+	req := httptest.NewRequest(http.MethodPut, "/admin/hotels/h1", strings.NewReader(`{"name":"Renamed","address":"Main 1","city":"Córdoba","country":"Argentina","check_in_time":"15:00","check_out_time":"11:00"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", authBearer(token))
 
@@ -872,4 +872,9 @@ func TestRequireJSON_NotAcceptable(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("code=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())
 	}
+}
+
+func (m mockService) GetHotelsAfter(ctx context.Context, afterID string, limit int64) ([]hotelsDomain.Hotel, error) {
+	rows, _, err := m.GetHotels(ctx, limit, 0)
+	return rows, err
 }

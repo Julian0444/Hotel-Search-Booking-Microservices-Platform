@@ -6,8 +6,9 @@
  *   verificación manual de fase 8).
  * - Degradación: search-api / hotels-api caídos producen estado útil con
  *   retry y trace_id — no pantalla blanca ni HTML de nginx. Se usa
- *   stop/start (no down/up: recrear contenedores cambia IPs y el gateway
- *   las cachea) y queries únicas (el cache de /search serviría stale).
+ *   stop/start para aislar la caída de cada API; el DNS dinámico del gateway
+ *   también soporta cambios de IP al recrear. Las pruebas operan en el
+ *   proyecto Compose seleccionado por entorno.
  * - Screenshots de superficies estables (evidencia para el plan 12),
  *   enmascarando fechas dinámicas.
  */
@@ -16,7 +17,7 @@ import { execSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { REPO_ROOT, API_BASE } from './helpers/env.js';
-import { newApiContext, waitForGateway200, searchProbe } from './helpers/api.js';
+import { newApiContext, waitForGateway200, searchCatalog } from './helpers/api.js';
 import { readAuthState, injectSession } from './helpers/session.js';
 import { dateOnlyFromToday, fillBookingDates, isMobileProject, openBookingForm } from './helpers/ui.js';
 
@@ -119,15 +120,14 @@ test.describe('degradación: estado útil, retry y trace_id @desktop-only', () =
     compose('start search-api hotels-api');
     const api = await newApiContext();
     await waitForGateway200(api, `${API_BASE}/hotels?limit=1&offset=0`);
-    const probe = await searchProbe(api, '', `recovery-${Date.now()}`);
-    expect(probe.ok()).toBe(true);
+    const recovered = await searchCatalog(api, '');
+    expect(recovered.ok()).toBe(true);
     await api.dispose();
   });
 
   test('search-api caído: envelope 502 del gateway, no pantalla blanca', async ({ page }) => {
     test.setTimeout(180_000);
-    // Query única: una URI cacheada serviría stale 200 y no probaría nada
-    const q = `e2e-degraded-${Date.now()}`;
+    const q = 'zzzzunmatchableresiliencetestzzzz';
     try {
       compose('stop search-api');
       await page.goto(`/search?q=${q}`);
@@ -143,7 +143,7 @@ test.describe('degradación: estado útil, retry y trace_id @desktop-only', () =
     }
 
     const api = await newApiContext();
-    await waitForGateway200(api, `${API_BASE}/search?q=${q}&limit=12&offset=0&recovered=1`);
+    await waitForGateway200(api, `${API_BASE}/search?q=${q}&limit=12&offset=0`);
     await api.dispose();
     await page.getByRole('button', { name: 'Try again' }).click();
     // Recuperado: la misma query rara ahora responde con el empty state real
@@ -186,7 +186,7 @@ test.describe('evidencia visual para el plan 12 (superficies estables)', () => {
     if (mobile) await page.setViewportSize({ width: 390, height: 844 });
     const dir = `e2e-evidence/${testInfo.project.name}`;
     const shoot = (name, options = {}) =>
-      page.screenshot({ path: `${dir}/${name}.png`, fullPage: true, ...options });
+      page.screenshot({ path: `${dir}/${name}.png`, fullPage: true, animations: 'disabled', ...options });
 
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Featured stays' })).toBeVisible();

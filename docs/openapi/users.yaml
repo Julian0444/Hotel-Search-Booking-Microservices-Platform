@@ -14,7 +14,7 @@ info:
     - Errors always have the shape `{"error": {"code", "message", "trace_id"}}` with stable codes.
     - The canonical `user_id` is a **string** in every response (the numeric PK is internal).
     - An `Accept` header that cannot take `application/json` yields `406 not_acceptable`.
-    - The gateway adds rate limiting: 10 req/s general, **5 req/min on `/login`**; exceeding
+    - The gateway adds rate limiting: 10 req/s general, **30 req/min on `/login`, burst 10**; exceeding
       a limit returns `429` with the same error envelope.
 
     Issued JWTs are HS256 with claims `user_id`, `username`, `tipo`
@@ -176,7 +176,8 @@ paths:
       description: |
         Returns a signed HS256 JWT valid for all three services (each one
         validates its own audience). The gateway rate-limits this endpoint to
-        **5 requests/min per IP** as brute-force mitigation.
+        **30 requests/min per IP, burst 10** as brute-force mitigation.
+        CORS OPTIONS preflight does not consume the login budget.
       security: []
       requestBody:
         required: true

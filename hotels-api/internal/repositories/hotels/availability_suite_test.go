@@ -1,3 +1,5 @@
+//go:build integration
+
 package hotels
 
 import (
@@ -6,14 +8,9 @@ import (
 	"time"
 
 	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
-
-	"github.com/google/uuid"
 )
 
-// availabilityRepo es el subconjunto de Repository que ejercita la suite de
-// solapamiento de fechas (C10). La corren la caché (acá) y Mongo (en la suite
-// `integration`) para garantizar la MISMA semántica en ambas (D4): por noche,
-// checkout excluido, canceladas salteadas.
+// availabilityRepo exercises civil-date overlap against the real Mongo replica set.
 type availabilityRepo interface {
 	CreateReservation(ctx context.Context, reservation hotelsDAO.Reservation) (string, error)
 	CancelReservation(ctx context.Context, id string) (hotelsDAO.Reservation, error)
@@ -44,6 +41,7 @@ func runAvailabilitySuite(t *testing.T, repo availabilityRepo, hotelID string) {
 		CheckOut:  mustParseDay(t, "2030-06-13"),
 		Status:    hotelsDAO.StatusConfirmed,
 		NumRooms:  1,
+		NumGuests: 1,
 		CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("creating base reservation: %v", err)
@@ -92,6 +90,7 @@ func runAvailabilitySuite(t *testing.T, repo availabilityRepo, hotelID string) {
 			CheckOut:  mustParseDay(t, "2030-07-03"),
 			Status:    hotelsDAO.StatusConfirmed,
 			NumRooms:  1,
+			NumGuests: 1,
 			CreatedAt: time.Now().UTC(),
 		})
 		if err != nil {
@@ -113,79 +112,4 @@ func runAvailabilitySuite(t *testing.T, repo availabilityRepo, hotelID string) {
 			t.Error("cancelled reservation must not occupy rooms")
 		}
 	})
-}
-
-// cacheSuiteHarness adapta la caché real a la suite compartida: con la
-// semántica F1 las escrituras INVALIDAN las listas agregadas (nunca las
-// editan), así que el harness re-publica la lista completa del hotel tras
-// cada escritura — exactamente lo que hace el service al repoblar desde
-// Mongo. Así IsHotelAvailable cuenta desde una lista presente y la suite
-// ejercita el conteo real (incluido el salteo de canceladas).
-type cacheSuiteHarness struct {
-	cache        Cache
-	hotelID      string
-	reservations []hotelsDAO.Reservation
-}
-
-func (h *cacheSuiteHarness) CreateReservation(ctx context.Context, reservation hotelsDAO.Reservation) (string, error) {
-	if reservation.ID == "" {
-		reservation.ID = uuid.New().String() // Mongo asigna el ID en producción
-	}
-	if _, err := h.cache.CreateReservation(ctx, reservation); err != nil {
-		return "", err
-	}
-	h.reservations = append(h.reservations, reservation)
-	h.cache.SetReservationsByHotelID(ctx, h.hotelID, h.reservations)
-	return reservation.ID, nil
-}
-
-func (h *cacheSuiteHarness) CancelReservation(ctx context.Context, id string) (hotelsDAO.Reservation, error) {
-	cancelled, err := h.cache.CancelReservation(ctx, id)
-	if err != nil {
-		return hotelsDAO.Reservation{}, err
-	}
-	for i := range h.reservations {
-		if h.reservations[i].ID == id {
-			h.reservations[i] = cancelled
-		}
-	}
-	h.cache.SetReservationsByHotelID(ctx, h.hotelID, h.reservations)
-	return cancelled, nil
-}
-
-func (h *cacheSuiteHarness) IsHotelAvailable(ctx context.Context, hotelID, checkIn, checkOut string) (bool, error) {
-	return h.cache.IsHotelAvailable(ctx, hotelID, checkIn, checkOut)
-}
-
-// La suite contra la implementación de caché real (ccache), con el hotel y las
-// reservas inyectados vía el harness.
-func TestCacheAvailabilitySuite(t *testing.T) {
-	cache := NewCache(CacheConfig{MaxSize: 1000, ItemsToPrune: 10, Duration: time.Minute})
-	ctx := context.Background()
-
-	hotelID := "suite-hotel-1"
-	if _, err := cache.Create(ctx, hotelsDAO.Hotel{ID: hotelID, Name: "Suite Hotel", AvailableRooms: 1}); err != nil {
-		t.Fatalf("creating hotel in cache: %v", err)
-	}
-
-	runAvailabilitySuite(t, &cacheSuiteHarness{cache: cache, hotelID: hotelID}, hotelID)
-}
-
-// D3: lista de reservas ausente en caché = cero reservas = disponible
-func TestCacheAvailability_NoReservationsListIsAvailable(t *testing.T) {
-	cache := NewCache(CacheConfig{MaxSize: 1000, ItemsToPrune: 10, Duration: time.Minute})
-	ctx := context.Background()
-
-	hotelID := "fresh-hotel"
-	if _, err := cache.Create(ctx, hotelsDAO.Hotel{ID: hotelID, Name: "Fresh", AvailableRooms: 2}); err != nil {
-		t.Fatalf("creating hotel in cache: %v", err)
-	}
-
-	available, err := cache.IsHotelAvailable(ctx, hotelID, "2030-06-10", "2030-06-12")
-	if err != nil {
-		t.Fatalf("IsHotelAvailable: %v", err)
-	}
-	if !available {
-		t.Error("hotel with no cached reservations list must be available (D3)")
-	}
 }

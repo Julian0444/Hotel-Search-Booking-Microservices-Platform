@@ -2,7 +2,7 @@
  * Global setup de los E2E (plan 13 fase 10). Corre UNA vez por run:
  * 1. Espera gateway + índice de Solr poblado (el backfill es asíncrono al
  *    /readyz — "healthy" no implica "indexado").
- * 2. Un solo login por rol (login_limit del gateway: 5 r/m burst 3):
+ * 2. Un solo login de setup por rol:
  *    admin env-driven + un cliente FRESCO registrado por run (historial de
  *    reservas determinístico; no se ensucia al usuario demo seedeado).
  * 3. Persiste tokens y el hotel seed de referencia en e2e/.auth/state.json.
@@ -17,8 +17,10 @@ import { AUTH_STATE_FILE } from './helpers/session.js';
 export default async function globalSetup() {
   const api = await newApiContext();
   try {
-    const hotels = await waitForSearchIndexed(api, { timeoutMs: 120_000 });
-    const seedHotel = hotels.find((h) => h.name === 'Hotel Sierras de Córdoba') || hotels[0];
+    const hotels = await waitForSearchIndexed(api, {
+      q: 'Sierras', matchName: 'Hotel Sierras de Córdoba', timeoutMs: 120_000,
+    });
+    const seedHotel = hotels.find((h) => h.name === 'Hotel Sierras de Córdoba');
 
     const admin = await apiLogin(api, adminCredentials());
 

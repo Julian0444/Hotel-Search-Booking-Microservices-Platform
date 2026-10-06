@@ -3,6 +3,7 @@ package queues
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -37,10 +38,10 @@ func TestHandleDelivery_AckOnSuccess(t *testing.T) {
 	acker := &fakeAcker{}
 
 	called := false
-	queue.handleDelivery(delivery(acker, `{"operation":"CREATE","hotel_id":"h1"}`, false),
+	queue.handleDelivery(delivery(acker, `{"operation":"CREATE","hotel_id":"000000000000000000000001"}`, false),
 		func(_ context.Context, hotelNew hotels.HotelNew) error {
 			called = true
-			if hotelNew.Operation != "CREATE" || hotelNew.HotelID != "h1" {
+			if hotelNew.Operation != "CREATE" || hotelNew.HotelID != "000000000000000000000001" {
 				t.Fatalf("unexpected event: %+v", hotelNew)
 			}
 			return nil
@@ -54,29 +55,51 @@ func TestHandleDelivery_AckOnSuccess(t *testing.T) {
 	}
 }
 
-// E1: primer fallo → nack con requeue (reintento)
-func TestHandleDelivery_RequeueOnFirstFailure(t *testing.T) {
-	queue := &Rabbit{}
-	acker := &fakeAcker{}
-
-	queue.handleDelivery(delivery(acker, `{"operation":"CREATE","hotel_id":"h1"}`, false),
-		func(_ context.Context, _ hotels.HotelNew) error { return errors.New("solr down") })
-
-	if acker.nacks != 1 || !acker.lastRequeue {
-		t.Fatalf("expected 1 nack with requeue=true, got nacks=%d requeue=%v", acker.nacks, acker.lastRequeue)
+func TestHandleDelivery_TransientFailuresWaitAndRecoverEvenWhenRedelivered(t *testing.T) {
+	for _, redelivered := range []bool{false, true} {
+		t.Run(fmt.Sprint(redelivered), func(t *testing.T) {
+			queue := &Rabbit{retryDelay: 10 * time.Millisecond}
+			acker := &fakeAcker{}
+			calls := 0
+			start := time.Now()
+			queue.handleDelivery(delivery(acker, `{"operation":"UPDATE","hotel_id":"000000000000000000000001"}`, redelivered), func(ctx context.Context, _ hotels.HotelNew) error {
+				calls++
+				if calls < 4 {
+					return errors.New("dependency down")
+				}
+				return nil
+			})
+			if calls != 4 || acker.acks != 1 || acker.nacks != 0 {
+				t.Fatalf("calls=%d acks=%d nacks=%d", calls, acker.acks, acker.nacks)
+			}
+			if elapsed := time.Since(start); elapsed < 70*time.Millisecond {
+				t.Fatalf("busy retry loop: %s", elapsed)
+			}
+		})
 	}
 }
 
-// E1: segundo fallo (Redelivered) → nack sin requeue (va a la DLQ)
-func TestHandleDelivery_DLQOnRedeliveredFailure(t *testing.T) {
-	queue := &Rabbit{}
+func TestHandleDelivery_ShutdownRequeuesPendingAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	queue := &Rabbit{ctx: ctx, retryDelay: time.Hour}
 	acker := &fakeAcker{}
+	queue.handleDelivery(delivery(acker, `{"operation":"DELETE","hotel_id":"000000000000000000000001"}`, false), func(context.Context, hotels.HotelNew) error {
+		cancel()
+		return errors.New("Solr down")
+	})
+	if acker.acks != 0 || acker.nacks != 1 || !acker.lastRequeue {
+		t.Fatalf("pending delivery must requeue: %+v", acker)
+	}
+}
 
-	queue.handleDelivery(delivery(acker, `{"operation":"CREATE","hotel_id":"h1"}`, true),
-		func(_ context.Context, _ hotels.HotelNew) error { return errors.New("solr down") })
-
-	if acker.nacks != 1 || acker.lastRequeue {
-		t.Fatalf("expected 1 nack with requeue=false, got nacks=%d requeue=%v", acker.nacks, acker.lastRequeue)
+func TestHandleDelivery_InvalidFieldsGoDirectlyToDLQ(t *testing.T) {
+	for _, body := range []string{`{}`, `{"operation":"CREATE"}`, `{"operation":"UNKNOWN","hotel_id":"000000000000000000000001"}`, `{"operation":"UPDATE","hotel_id":"../h1"}`} {
+		queue := &Rabbit{}
+		acker := &fakeAcker{}
+		queue.handleDelivery(delivery(acker, body, false), func(context.Context, hotels.HotelNew) error { t.Fatal("invalid event reached handler"); return nil })
+		if acker.nacks != 1 || acker.lastRequeue || acker.acks != 0 {
+			t.Fatalf("invalid message: %+v", acker)
+		}
 	}
 }
 
@@ -105,7 +128,7 @@ func TestHandleDelivery_ContextHasDeadlineAndRequestID(t *testing.T) {
 	queue := &Rabbit{}
 	acker := &fakeAcker{}
 
-	queue.handleDelivery(delivery(acker, `{"operation":"CREATE","hotel_id":"h1"}`, false),
+	queue.handleDelivery(delivery(acker, `{"operation":"CREATE","hotel_id":"000000000000000000000001"}`, false),
 		func(ctx context.Context, _ hotels.HotelNew) error {
 			deadline, ok := ctx.Deadline()
 			if !ok {

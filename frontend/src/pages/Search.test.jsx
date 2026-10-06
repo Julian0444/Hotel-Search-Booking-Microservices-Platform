@@ -4,8 +4,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
-import { http, HttpResponse } from 'msw';
+import { act, screen, waitFor } from '@testing-library/react';
+import { http, HttpResponse, delay } from 'msw';
 import { server } from '../test/server';
 import { renderWithProviders } from '../test/render';
 import { hotelFixtures, errorEnvelope, listEnvelope } from '../test/fixtures';
@@ -102,4 +102,18 @@ describe('Search page', () => {
 
     await waitFor(() => expect(seenSort).toBeNull());
   });
+});
+
+it('no corrige la página usando placeholderData de otra búsqueda', async () => {
+  server.use(http.get('/api/v1/search', async ({ request }) => {
+    const url = new URL(request.url);
+    if (url.searchParams.get('q') === 'small') return HttpResponse.json(listEnvelope(hotelFixtures.slice(0, 1), { total: 1 }));
+    await delay(50);
+    return HttpResponse.json(listEnvelope(hotelFixtures, { total: 45, limit: 12, offset: Number(url.searchParams.get('offset')) }));
+  }));
+  const { router } = renderWithProviders(<Search />, { route: '/search?q=small' });
+  await screen.findByText(hotelFixtures[0].name);
+  await act(() => router.navigate('/search?q=large&page=2'));
+  await screen.findByText('45');
+  expect(screen.getByTestId('location-probe').dataset.search).toContain('page=2');
 });

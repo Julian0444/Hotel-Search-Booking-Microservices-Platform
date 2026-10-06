@@ -32,7 +32,7 @@ import { SORT_OPTIONS } from '../constants';
 const Search = () => {
   const { q, page, sort, limit, offset, setQuery, setPage, setSort } = useHotelSearchParams();
 
-  const { data, isPending, isFetching, isError, error, refetch } = useHotelSearch({
+  const { data, isPending, isFetching, isPlaceholderData, isError, error, refetch } = useHotelSearch({
     q,
     offset,
     limit,
@@ -46,10 +46,10 @@ const Search = () => {
   // Si el total bajó (hotel borrado, query cambiada por URL editada) y la
   // página quedó fuera de rango, corregir la URL en vez de mostrar vacío
   useEffect(() => {
-    if (data && page > totalPages) {
+    if (data && !isPlaceholderData && page > totalPages) {
       setPage(totalPages);
     }
-  }, [data, page, totalPages, setPage]);
+  }, [data, isPlaceholderData, page, totalPages, setPage]);
 
   const handlePageChange = (_event, value) => {
     setPage(value);
@@ -60,7 +60,7 @@ const Search = () => {
     <Box sx={{ bgcolor: 'background.default', minHeight: '100vh' }}>
       <RouteMeta
         title={q ? `“${q}” stays` : 'Search stays'}
-        description="Search the indexed hotel catalog by city, country or name."
+        description="Find hotels by city, country or name."
       />
 
       {/* Header */}
@@ -70,7 +70,7 @@ const Search = () => {
             Search stays
           </Typography>
           <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.75)', mb: 3 }}>
-            Full-text search over the indexed catalog
+            Find your next stay by city, country or hotel name
           </Typography>
           <SearchBar onSearch={setQuery} initialQuery={q} />
         </Container>

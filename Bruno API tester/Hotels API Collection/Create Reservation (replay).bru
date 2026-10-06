@@ -44,8 +44,11 @@ docs {
   devuelve la respuesta guardada sin re-ejecutar (header
   `Idempotency-Replayed: true`, mismo id, una sola reserva en el historial).
 
-  Si el original siguiera en vuelo → 409 `request_in_flight`; si hubiera
-  terminado en 5xx, la key se libera para permitir el reintento real.
+  La clave y su payload canónico se confirman junto con reserva e inventario.
+  Un payload distinto devuelve 409 idempotency_conflict. Los concurrentes se
+  coordinan en Mongo; no existe un registro separado permanentemente en vuelo.
+  Ante timeout, reintentar con la MISMA key y body recupera el mismo ID si se
+  confirmó. TTL 24h (limpieza asíncrona); no promete deduplicación indefinida.
 }
 
 settings {

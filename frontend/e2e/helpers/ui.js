@@ -40,45 +40,10 @@ export const pickSelectOption = async (page, scope, name, value) => {
   await page.getByRole('option', { name: value, exact: true }).click();
 };
 
-/**
- * Login por UI resiliente al login_limit del gateway (5 r/m burst 3).
- * Un login de UI consume DOS tokens (preflight OPTIONS + POST). Cuando el 429
- * le toca al POST, la UI muestra el mensaje del envelope; cuando le toca al
- * PREFLIGHT, el browser lo trata como fallo CORS y la UI muestra el mensaje
- * de red caída (status 0). Ambos casos son throttling → esperar la ventana
- * (2 tokens ≈ 26s) y reintentar.
- */
-export const signInViaUi = async (page, { username, password }, { attempts = 5 } = {}) => {
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    await page.getByLabel('Username').fill(username);
-    await page.getByLabel('Password', { exact: true }).fill(password);
-    await page.getByRole('button', { name: 'Sign in' }).click();
-
-    const outcome = await Promise.race([
-      page
-        .waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 15_000 })
-        .then(() => 'ok')
-        .catch(() => 'timeout'),
-      page
-        .getByRole('alert')
-        .filter({ hasText: /too many requests|could not reach the server/i })
-        .first()
-        .waitFor({ timeout: 15_000 })
-        .then(() => 'throttled')
-        .catch(() => 'timeout'),
-    ]);
-
-    if (outcome === 'ok') return;
-    if (outcome === 'throttled') {
-      await page.waitForTimeout(26_000);
-      continue;
-    }
-    const alertText = await page
-      .getByRole('alert')
-      .first()
-      .textContent()
-      .catch(() => '(sin alert visible)');
-    throw new Error(`login por UI sin navegación ni rate-limit (intento ${attempt}): ${alertText}`);
-  }
-  throw new Error('login por UI: rate-limited tras todos los reintentos');
+/** Un login normal: cualquier fallo se informa, sin encubrir errores del gateway. */
+export const signInViaUi = async (page, { username, password }) => {
+  await page.getByLabel('Username').fill(username);
+  await page.getByLabel('Password', { exact: true }).fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).not.toHaveURL(/\/login(?:[?#]|$)/, { timeout: 15_000 });
 };

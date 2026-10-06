@@ -44,7 +44,7 @@ spec:
                 command: ["sleep", "3"]
           readinessProbe:
             httpGet:
-              path: /readyz # pinguea Mongo + RabbitMQ (plan 05)
+              path: /readyz # Mongo requerido; RabbitMQ secundario
               port: 8081
             periodSeconds: 10
           livenessProbe:

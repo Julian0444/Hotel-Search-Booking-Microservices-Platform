@@ -22,7 +22,7 @@ export const BookingSidebar = ({ hotel, booking }) => (
         </Typography>
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {hotel.available_rooms} room{hotel.available_rooms === 1 ? '' : 's'} available
+        {hotel.available_rooms} room{hotel.available_rooms === 1 ? '' : 's'} in this property
       </Typography>
       <BookingForm hotel={hotel} booking={booking} idPrefix="panel" />
     </CardContent>
@@ -60,7 +60,7 @@ export const BookingMobileBar = ({ hotel, booking }) => {
             </Typography>
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            {hotel.available_rooms} room{hotel.available_rooms === 1 ? '' : 's'} left
+            {hotel.available_rooms} room{hotel.available_rooms === 1 ? '' : 's'} in this property
           </Typography>
         </Box>
         <Button variant="contained" size="large" onClick={() => setOpen(true)} sx={{ minWidth: 140 }}>

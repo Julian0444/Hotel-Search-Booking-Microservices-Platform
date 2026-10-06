@@ -6,7 +6,7 @@
  * en la lista; confirmaciones que nombran el recurso.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Box,
@@ -55,6 +55,17 @@ const Dashboard = () => {
     { enabled: tab === 'users' },
   );
   const servicesQuery = useMicroservicesStatus({ enabled: tab === 'services' });
+
+  useEffect(() => {
+    if (hotelsQuery.data && !hotelsQuery.isPlaceholderData) {
+      setHotelsPage((page) => Math.min(page, Math.max(1, Math.ceil(hotelsQuery.data.total / PAGE_SIZE))));
+    }
+  }, [hotelsQuery.data, hotelsQuery.isPlaceholderData]);
+  useEffect(() => {
+    if (usersQuery.data && !usersQuery.isPlaceholderData) {
+      setUsersPage((page) => Math.min(page, Math.max(1, Math.ceil(usersQuery.data.total / PAGE_SIZE))));
+    }
+  }, [usersQuery.data, usersQuery.isPlaceholderData]);
 
   const deleteHotel = useDeleteHotel();
   const deleteUser = useDeleteUser();

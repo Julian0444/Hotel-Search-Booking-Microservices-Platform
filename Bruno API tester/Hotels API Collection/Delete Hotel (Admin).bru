@@ -1,11 +1,11 @@
 meta {
   name: Delete Hotel (admin)
   type: http
-  seq: 16
+  seq: 18
 }
 
 delete {
-  url: {{baseUrl}}/admin/hotels/{{created_hotel_id}}
+  url: {{baseUrl}}/admin/hotels/{{disposable_hotel_id}}
   body: none
   auth: bearer
 }
@@ -19,10 +19,10 @@ assert {
 }
 
 docs {
-  Borra el hotel creado en esta corrida (cleanup) — SOLO admins. 204 sin
-  body; publica un evento DELETE en `hotels-news` y search-api lo saca del
-  índice poco después. Las reservas existentes se conservan (historial
-  auditable). Inexistente → 404 `hotel_not_found`.
+  Borra el hotel descartable SIN historial creado en esta corrida. Debe
+  responder 204 y publicar DELETE; si el broker falla, mantiene éxito y
+  la reconciliación elimina el documento huérfano de búsqueda.
+  Un hotel con historial devuelve 409; el caso anterior lo comprueba.
 }
 
 settings {

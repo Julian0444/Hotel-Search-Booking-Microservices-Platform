@@ -121,8 +121,8 @@ describe('HotelDetail', () => {
     const panel = document.getElementById('panel-check-in').closest('form');
     await user.click(within(panel).getByRole('button', { name: /confirm reservation/i }));
 
-    expect(await screen.findByText(/just sold out/i)).toBeInTheDocument();
-    expect(screen.getByText(/nothing was charged/i)).toBeInTheDocument();
+    expect(await screen.findByText(/those dates are unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/try different dates or fewer rooms/i)).toBeInTheDocument();
   });
 
   it('un retry de red del MISMO intento conserva la Idempotency-Key', async () => {

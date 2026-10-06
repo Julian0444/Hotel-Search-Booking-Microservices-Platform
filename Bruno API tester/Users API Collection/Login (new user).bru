@@ -32,7 +32,7 @@ docs {
   `username`, `tipo`, `iss: users-api`, `aud` con las tres audiencias).
 
   - Credenciales inválidas → 401 `invalid_credentials`.
-  - Rate limit del gateway: 5 req/min por IP (burst 3) → 429 `rate_limited`.
+  - Rate limit del gateway: 30 req/min por IP (burst 10) → 429 `rate_limited`.
 
   El post-response guarda el token para las requests autenticadas.
 }

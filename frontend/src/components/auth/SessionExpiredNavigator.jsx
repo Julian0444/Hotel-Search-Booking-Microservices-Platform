@@ -8,10 +8,21 @@ import { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { onSessionExpired } from '../../services/authEvents';
 import { ROUTES } from '../../constants';
+import { useAuth } from '../../hooks/useAuth';
 
 const SessionExpiredNavigator = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { logout } = useAuth();
+
+  // Sign out primero solicita una navegación normal. Sólo después de que
+  // useBlocker permite salir se limpia la sesión; así no desmonta un form sucio.
+  useEffect(() => {
+    if (location.state?.signOut) {
+      logout();
+      navigate(ROUTES.HOME, { replace: true, state: null });
+    }
+  }, [location.state, logout, navigate]);
 
   useEffect(
     () =>

@@ -1,13 +1,10 @@
 package config
 
-import (
-	"os"
-	"strconv"
-	"time"
-)
+import "os"
 
 var (
 	// MongoDB
+	MongoReplicaSet             = getEnv("MONGO_REPLICA_SET", "rs0")
 	MongoHost                   = getEnv("MONGO_HOST", "localhost")
 	MongoPort                   = getEnv("MONGO_PORT", "27017")
 	MongoUsername               = getEnv("MONGO_USERNAME", "root")
@@ -19,20 +16,12 @@ var (
 	// Registros de Idempotency-Key (A3): índice único {key, user_id} + TTL 24h
 	MongoCollectionIdempotency = getEnv("MONGO_COLLECTION_IDEMPOTENCY", "idempotency_keys")
 
-	// Cache
-	CacheMaxSize      = getInt64Env("CACHE_MAX_SIZE", 100000)
-	CacheItemsToPrune = getUint32Env("CACHE_ITEMS_TO_PRUNE", 100)
-	CacheDuration     = getDurationEnv("CACHE_DURATION", 30*time.Second)
-
 	// RabbitMQ
 	RabbitHost      = getEnv("RABBIT_HOST", "localhost")
 	RabbitPort      = getEnv("RABBIT_PORT", "5672")
 	RabbitUsername  = getEnv("RABBIT_USERNAME", "root")
 	RabbitPassword  = getEnv("RABBIT_PASSWORD", "root")
 	RabbitQueueName = getEnv("RABBIT_QUEUE_NAME", "hotels-news")
-	// Cola separada para eventos de reservas: search-api consume hotels-news
-	// esperando HotelNew, mezclar tipos rompería su Unmarshal (DM5).
-	RabbitReservationsQueueName = getEnv("RABBIT_RESERVATIONS_QUEUE_NAME", "reservations-news")
 
 	// JWT - debe coincidir con users-api
 	JWTSecret = getEnv("JWT_SECRET", "your-secret-key-change-in-production")
@@ -46,39 +35,12 @@ var (
 	MicroservicesTargets = getEnv("MICROSERVICES_TARGETS",
 		"users-api=http://users-api-1:8082,http://users-api-2:8082,http://users-api-3:8082;"+
 			"hotels-api=http://127.0.0.1:8081;"+
-			"search-api=http://search-api-container:8082")
+			"search-api=http://search-api:8082")
 )
 
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
-	}
-	return defaultValue
-}
-
-func getInt64Env(key string, defaultValue int64) int64 {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.ParseInt(value, 10, 64); err == nil {
-			return intValue
-		}
-	}
-	return defaultValue
-}
-
-func getUint32Env(key string, defaultValue uint32) uint32 {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.ParseUint(value, 10, 32); err == nil {
-			return uint32(intValue)
-		}
-	}
-	return defaultValue
-}
-
-func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		if duration, err := time.ParseDuration(value); err == nil {
-			return duration
-		}
 	}
 	return defaultValue
 }

@@ -33,6 +33,8 @@
     <!-- DB7: los campos buscables alimentan el catch-all _text_ -->
     <copyField source="name" dest="_text_"/>
     <copyField source="description" dest="_text_"/>
+    <copyField source="city" dest="_text_"/>
+    <copyField source="country" dest="_text_"/>
 
     <!-- Tipos de campo -->
     <!-- DB7: docValues en los strings (id/phone/email/amenities) para facetar
@@ -42,10 +44,12 @@
         <analyzer type="index">
             <tokenizer class="solr.StandardTokenizerFactory"/>
             <filter class="solr.LowerCaseFilterFactory"/>
+            <filter class="solr.ASCIIFoldingFilterFactory"/>
         </analyzer>
         <analyzer type="query">
             <tokenizer class="solr.StandardTokenizerFactory"/>
             <filter class="solr.LowerCaseFilterFactory"/>
+            <filter class="solr.ASCIIFoldingFilterFactory"/>
         </analyzer>
     </fieldType>
     <fieldType name="pfloat" class="solr.FloatPointField" docValues="true"/>

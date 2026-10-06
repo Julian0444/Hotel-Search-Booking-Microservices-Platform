@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -26,6 +27,8 @@ import (
 )
 
 func main() {
+	reindexOnly := flag.Bool("reindex-once", false, "reconcile once without HTTP or RabbitMQ consumer; requires sole writer")
+	flag.Parse()
 	// Logging estructurado JSON (O2): un logger por proceso con el nombre del
 	// servicio; los log.* del stdlib quedan puenteados al mismo handler.
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})).
@@ -65,6 +68,17 @@ func main() {
 
 	// Services
 	service := services.NewService(solrRepo, hotelsAPI)
+	if *reindexOnly {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		count, err := service.Backfill(ctx)
+		if err != nil {
+			slog.Error("reconciliation failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("reconciliation finished", "hotels_indexed", count)
+		return
+	}
 
 	// Controllers
 	controller := controllers.NewController(service)
@@ -73,24 +87,30 @@ func main() {
 	// — ya no aborta el proceso si RabbitMQ tarda en estar listo.
 	eventsQueue.StartConsumer(service.HandleHotelNew)
 
-	// Backfill del índice al arranque (E3): Solr es un índice derivado y se
-	// reconstruye desde hotels-api (fuente de verdad). En un arranque en frío
-	// hotels-api puede tardar: reintentos con backoff antes de rendirse
-	// (queda POST /reindex como rescate manual).
+	// La misma exclusión cubre startup, reconciliación manual y eventos.
+	// La pasada periódica recupera publicaciones perdidas sin intervención.
+	lifecycle, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	reconcileDone := make(chan struct{})
 	go func() {
-		backoff := 2 * time.Second
-		for attempt := 1; attempt <= 5; attempt++ {
-			ctx := utils.WithRequestID(context.Background(), uuid.NewString())
+		defer close(reconcileDone)
+		for lifecycle.Err() == nil {
+			ctx, cancel := context.WithTimeout(utils.WithRequestID(lifecycle, uuid.NewString()), 2*time.Minute)
 			indexed, err := service.Backfill(ctx)
-			if err == nil {
-				slog.Info("startup backfill completed", "hotels_indexed", indexed, "attempt", attempt)
-				return
+			cancel()
+			delay := time.Minute
+			if err != nil {
+				slog.Warn("catalogue reconciliation failed; will retry", "error", err)
+				delay = 5 * time.Second
+			} else {
+				slog.Info("catalogue reconciled", "hotels_indexed", indexed)
 			}
-			slog.Warn("startup backfill attempt failed", "attempt", attempt, "error", err)
-			time.Sleep(backoff)
-			backoff *= 2
+			select {
+			case <-lifecycle.Done():
+				return
+			case <-time.After(delay):
+			}
 		}
-		slog.Error("startup backfill failed after retries; index may be stale until POST /reindex")
 	}()
 
 	// Gin en release salvo override explícito (O4): GIN_MODE=debug lo
@@ -121,9 +141,10 @@ func main() {
 	v1.POST("/reindex", jwtMiddleware.Authenticate(), middlewares.AdminOnly(), controller.Reindex)
 
 	// Health endpoints (O3): /livez barato, /readyz pinguea las deps propias
-	// (Solr + RabbitMQ); /health queda como alias de /livez por compat.
+	// (Solr requerido, RabbitMQ informativo); /health es alias de /livez.
 	healthController := healthControllers.NewController("search-api", map[string]healthControllers.CheckFunc{
 		"solr": solrRepo.Ping,
+	}, map[string]healthControllers.CheckFunc{
 		"rabbitmq": func(_ context.Context) error {
 			// IsConnected ahora exige el consumer vivo, no solo la conexión (RV17)
 			if !eventsQueue.IsConnected() {
@@ -153,9 +174,7 @@ func main() {
 		}
 	}()
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	<-ctx.Done()
+	<-lifecycle.Done()
 
 	slog.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -164,5 +183,6 @@ func main() {
 		slog.Warn("server shutdown incomplete", "error", err)
 	}
 	eventsQueue.Close()
+	<-reconcileDone
 	slog.Info("shutdown complete")
 }

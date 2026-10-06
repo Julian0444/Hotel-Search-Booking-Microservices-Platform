@@ -1,11 +1,4 @@
-/**
- * Helpers de API contra el gateway real (plan 13 fase 10).
- * Dos gotchas de infra que gobiernan el diseño:
- * - login_limit de nginx: 5 req/min burst 3 por IP → un solo login por rol
- *   por run (global-setup) y retry con espera ante 429.
- * - /api/v1/search se cachea 5 min por URI exacta → todo poll usa un query
- *   param único (probe) para no leer ni envenenar el cache.
- */
+/** Helpers del gateway real: sin cache-busters ni reintentos de autenticación. */
 
 import { request } from '@playwright/test';
 import { API_BASE } from './env.js';
@@ -15,19 +8,9 @@ export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const newApiContext = () => request.newContext({ ignoreHTTPSErrors: true });
 
 export const apiLogin = async (api, { username, password }) => {
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    const res = await api.post(`${API_BASE}/login`, { data: { username, password } });
-    if (res.status() === 429) {
-      await sleep(13_000); // ventana del login_limit (5 r/m ≈ 1 cada 12s)
-      continue;
-    }
-    if (!res.ok()) {
-      throw new Error(`login de ${username} falló: ${res.status()} ${await res.text()}`);
-    }
-    const body = await res.json();
-    return body.data; // { user_id (string), username, token, tipo }
-  }
-  throw new Error(`login de ${username}: rate-limited tras 5 intentos`);
+  const res = await api.post(`${API_BASE}/login`, { data: { username, password } });
+  if (!res.ok()) throw new Error(`login de ${username} falló: ${res.status()} ${await res.text()}`);
+  return (await res.json()).data;
 };
 
 export const apiRegister = async (api, { username, password }) => {
@@ -38,9 +21,9 @@ export const apiRegister = async (api, { username, password }) => {
   return (await res.json()).data; // { id }
 };
 
-/** GET /search con URI única (nunca cacheada por el gateway). */
-export const searchProbe = (api, q, probe) =>
-  api.get(`${API_BASE}/search`, { params: { q, limit: 12, offset: 0, probe } });
+/** La misma URL que usa el navegador, sin parámetros para eludir cachés. */
+export const searchCatalog = (api, q, offset = 0) =>
+  api.get(`${API_BASE}/search`, { params: { q, limit: 12, offset } });
 
 /**
  * El backfill de Solr corre en goroutine DESPUÉS del /readyz de search-api:
@@ -49,14 +32,16 @@ export const searchProbe = (api, q, probe) =>
  */
 export const waitForSearchIndexed = async (api, { q = '', matchName, timeoutMs = 60_000 } = {}) => {
   const startedAt = Date.now();
-  let attempt = 0;
   while (Date.now() - startedAt < timeoutMs) {
-    const res = await searchProbe(api, q, `probe-${startedAt}-${attempt++}`);
-    if (res.ok()) {
-      const { data } = await res.json();
-      if (Array.isArray(data) && data.length > 0 && (!matchName || data.some((h) => h.name === matchName))) {
-        return data;
-      }
+    let offset = 0;
+    while (Date.now() - startedAt < timeoutMs) {
+      const res = await searchCatalog(api, q, offset);
+      if (!res.ok()) break;
+      const { data, meta } = await res.json();
+      if (!Array.isArray(data) || data.length === 0) break;
+      if (!matchName || data.some((h) => h.name === matchName)) return data;
+      offset += data.length;
+      if (offset >= meta.total) break;
     }
     await sleep(1500);
   }
@@ -79,17 +64,26 @@ export const waitForGateway200 = async (api, url, { timeoutMs = 90_000 } = {}) =
 };
 
 export const listHotels = async (api) => {
-  const res = await api.get(`${API_BASE}/hotels`, { params: { limit: 50, offset: 0 } });
-  if (!res.ok()) throw new Error(`GET /hotels falló: ${res.status()}`);
-  return (await res.json()).data;
+  const hotels = [];
+  for (;;) {
+    const res = await api.get(`${API_BASE}/hotels`, { params: { limit: 100, offset: hotels.length } });
+    if (!res.ok()) throw new Error(`GET /hotels falló: ${res.status()}`);
+    const { data, meta } = await res.json();
+    hotels.push(...data);
+    if (hotels.length >= meta.total) return hotels;
+    if (!data.length) throw new Error('GET /hotels devolvió una página vacía antes del total');
+  }
 };
 
 /** Limpieza de hoteles creados por los E2E (belt & suspenders del spec admin). */
 export const deleteHotelsByPrefix = async (api, adminToken, prefix) => {
   const hotels = await listHotels(api);
   for (const hotel of hotels.filter((h) => h.name.startsWith(prefix))) {
-    await api.delete(`${API_BASE}/admin/hotels/${hotel.id}`, {
+    const response = await api.delete(`${API_BASE}/admin/hotels/${hotel.id}`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });
+    if (![204, 404].includes(response.status())) {
+      throw new Error(`DELETE fixture ${hotel.id} falló: ${response.status()} ${await response.text()}`);
+    }
   }
 };

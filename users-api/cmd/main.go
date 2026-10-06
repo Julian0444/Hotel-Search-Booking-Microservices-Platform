@@ -119,9 +119,10 @@ func main() {
 	}
 
 	// Health endpoints (O3): /livez barato, /readyz pinguea las deps propias
-	// (MySQL + Memcached); /health queda como alias de /livez por compat.
+	// MySQL obligatorio; Memcached opcional con fallback a DB.
 	healthController := healthControllers.NewController("users-api", map[string]healthControllers.CheckFunc{
-		"mysql":     mySQLRepo.Ping,
+		"mysql": mySQLRepo.Ping,
+	}, map[string]healthControllers.CheckFunc{
 		"memcached": memcachedRepo.Ping,
 	})
 	router.GET("/livez", healthController.Livez)

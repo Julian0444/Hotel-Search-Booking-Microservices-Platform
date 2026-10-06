@@ -1,0 +1,3 @@
+/ 200
+/api/v1/hotels 200
+/api/v1/search?q=cordoba 200

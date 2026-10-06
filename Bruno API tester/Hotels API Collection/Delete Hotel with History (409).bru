@@ -1,0 +1,34 @@
+meta {
+  name: Delete Hotel with History (409)
+  type: http
+  seq: 17
+}
+
+delete {
+  url: {{baseUrl}}/admin/hotels/{{created_hotel_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+assert {
+  res.status: eq 409
+}
+
+tests {
+  test("el historial impide borrar el hotel aunque la reserva esté cancelada", function() {
+    expect(res.body.error.code).to.equal("hotel_has_reservations");
+  });
+}
+
+docs {
+  El hotel reservado conserva historial tras cancelar. DELETE debe responder
+  409 hotel_has_reservations y preservar el hotel y sus reservas.
+}
+
+settings {
+  encodeUrl: true
+}

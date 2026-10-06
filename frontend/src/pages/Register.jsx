@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate, useLocation } from 'react-router';
 import {
   Box,
   Container,
@@ -28,6 +28,10 @@ import RouteMeta from '../components/common/RouteMeta';
 
 const Register = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from
+    ? `${location.state.from.pathname || ''}${location.state.from.search || ''}` || ROUTES.HOME
+    : ROUTES.HOME;
   const { register: registerUser, isSubmitting } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState(null);
@@ -46,7 +50,7 @@ const Register = () => {
     setFormError(null);
     const result = await registerUser(data.username.trim(), data.password);
     if (result.success) {
-      navigate(ROUTES.HOME);
+      navigate(from, { replace: true, state: location.state?.from?.state });
     } else {
       setFormError(result.error);
       setFocus('username');
@@ -177,7 +181,7 @@ const Register = () => {
             </Typography>
           </Divider>
 
-          <Button component={Link} to={ROUTES.LOGIN} fullWidth variant="outlined" size="large">
+          <Button component={Link} to={ROUTES.LOGIN} state={location.state} fullWidth variant="outlined" size="large">
             Sign in
           </Button>
         </Paper>

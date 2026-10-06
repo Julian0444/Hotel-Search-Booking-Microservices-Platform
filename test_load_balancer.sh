@@ -62,11 +62,11 @@ print_section() {
 check_containers() {
     print_section "🐳 Docker Containers Status"
 
-    containers="api-gateway users-api-1 users-api-2 users-api-3 hotels-api-container search-api-container users-mysql hotels-mongo hotels-rabbit search-solr"
+    containers="nginx users-api-1 users-api-2 users-api-3 hotels-api search-api mysql mongo rabbitmq solr"
 
     running=0
     total=0
-    running_names=$(docker ps --format "{{.Names}}" 2>/dev/null || true)
+    running_names=$(docker compose ps --status running --services 2>/dev/null || true)
 
     for container in $containers; do
         total=$((total + 1))
@@ -109,31 +109,17 @@ check_tls() {
     done
 }
 
-# Cache de /search (plan 10: I3)
+# La misma URI debe llegar siempre al índice; no hay caché HTTP de búsqueda.
 check_search_cache() {
-    print_section "🗄️  Search Cache (/api/v1/search)"
-
-    # Query única por corrida: la 1ª pegada debe ser MISS y la 2ª HIT
-    q="cachecheck-$$-$RANDOM"
-    cache_status() {
-        curl -sk -D - -o /dev/null --max-time 10 "$BASE_URL/api/v1/search?q=$1&limit=5" 2>/dev/null \
-            | awk 'tolower($1) == "x-cache-status:" {print toupper($2)}' | tr -d '\r'
-    }
-    c1=$(cache_status "$q")
-    c2=$(cache_status "$q")
-    if [ "$c1" = "MISS" ] && [ "$c2" = "HIT" ]; then
-        pass "misma query: 1ª=MISS, 2ª=HIT"
-    else
-        fail "misma query: 1ª=$c1, 2ª=$c2 (esperado MISS→HIT)"
-    fi
-
-    # Una query distinta no comparte entrada de cache
-    c3=$(cache_status "$q-otra")
-    if [ "$c3" = "MISS" ]; then
-        pass "query distinta: MISS (no comparte cache)"
-    else
-        fail "query distinta: $c3 (esperado MISS)"
-    fi
+    print_section "Search freshness headers"
+    for attempt in 1 2; do
+        headers=$(curl -sk -D - -o /dev/null --max-time 10 "$BASE_URL/api/v1/search?q=cordoba&limit=5")
+        if echo "$headers" | grep -qi '^cache-control:.*no-store' && ! echo "$headers" | grep -qi '^x-cache-status:.*HIT'; then
+            pass "misma URI intento $attempt: no-store sin cache HIT"
+        else
+            fail "búsqueda conserva una caché HTTP inesperada"
+        fi
+    done
 }
 
 # Función para verificar health endpoints
@@ -273,8 +259,8 @@ GET|/users|404|Unversioned route removed (A2)"
 test_rate_limiting() {
     print_section "🚦 Rate Limiting Test"
 
-    echo "  Testing /api/v1/login rate limit (5 req/min, burst=3)..."
-    echo "  Sending 10 rapid requests..."
+    echo "  Testing /api/v1/login rate limit (30 req/min, burst=10)..."
+    echo "  Sending 20 rapid requests..."
     echo ""
 
     success=0
@@ -282,7 +268,7 @@ test_rate_limiting() {
     wrong_status=0
 
     i=1
-    while [ "$i" -le 10 ]; do
+    while [ "$i" -le 20 ]; do
         response=$(http_code -X POST "$BASE_URL/api/v1/login" -H "Content-Type: application/json" -d '{}')
         if [ "$response" = "429" ]; then
             limited=$((limited + 1))
@@ -303,11 +289,11 @@ test_rate_limiting() {
     echo -e "  ${GREEN}Passed through: $success${NC} | ${RED}Rate Limited (429): $limited${NC} | 503s: $wrong_status"
 
     if [ "$limited" -gt 0 ] && [ "$wrong_status" -eq 0 ]; then
-        pass "rate limiting activo con 429 ($limited/10 limitados, cero 503)"
+        pass "rate limiting activo con 429 ($limited/20 limitados, cero 503)"
     elif [ "$wrong_status" -gt 0 ]; then
         fail "el rate limit devolvió $wrong_status respuestas 503 (esperado solo 429 — I7)"
     else
-        fail "rate limiting no se disparó (0/10 limitados con burst=3)"
+        fail "rate limiting no se disparó (0/20 limitados con burst=10)"
     fi
 
     # El 429 debe traer el envelope JSON estándar (a esta altura el budget de
@@ -320,6 +306,23 @@ test_rate_limiting() {
     else
         fail "el 429 no trae el envelope JSON estándar con trace_id"
     fi
+
+    preflight=$(http_code -X OPTIONS "$BASE_URL/api/v1/login" \
+        -H 'Origin: http://localhost:5173' -H 'Access-Control-Request-Method: POST' \
+        -H 'Access-Control-Request-Headers: content-type')
+    if [ "$preflight" = "204" ]; then
+        pass "OPTIONS no consume el presupuesto de login agotado"
+    else
+        fail "OPTIONS penalizado por login_limit: $preflight"
+    fi
+    # Prueba dedicada de recuperación; no es un retry oculto del login normal.
+    sleep 3
+    recovered=$(http_code -X POST "$BASE_URL/api/v1/login" -H 'Content-Type: application/json' -d '{}')
+    if [ "$recovered" = "400" ]; then
+        pass "el presupuesto se recupera y vuelve a validar el body"
+    else
+        fail "login_limit no se recuperó: $recovered"
+    fi
 }
 
 # Función para mostrar logs recientes de Nginx (informativo)
@@ -327,7 +330,7 @@ show_nginx_logs() {
     print_section "📝 Recent Nginx Logs"
 
     echo "  Last 10 access log entries:"
-    docker logs --tail 10 api-gateway 2>/dev/null | grep -v "^\s*$" | sed 's/^/    /' || echo "    No logs available"
+    docker compose logs --tail 10 nginx 2>/dev/null | grep -v '^$' | sed 's/^/    /' || echo "    No logs available"
 }
 
 # Main execution

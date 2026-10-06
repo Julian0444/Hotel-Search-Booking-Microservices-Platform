@@ -8,7 +8,7 @@ import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ThemeProvider, CssBaseline } from '@mui/material';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
+import { createMemoryRouter, createRoutesFromElements, RouterProvider, Outlet, Route, useLocation } from 'react-router';
 import theme from '../theme/theme';
 import { AuthProvider } from '../context/AuthContext';
 import { STORAGE_KEYS } from '../constants';
@@ -48,25 +48,21 @@ export function renderWithProviders(
   ui,
   { route = '/', routes = null, queryClient = createTestQueryClient() } = {},
 ) {
+  const router = createMemoryRouter(createRoutesFromElements(
+    <Route element={<><Outlet /><LocationProbe /></>}>
+      {routes}
+      <Route path="*" element={ui} />
+    </Route>,
+  ), { initialEntries: [route] });
   const utils = render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <MemoryRouter initialEntries={[route]}>
-            {routes ? (
-              <Routes>
-                {routes}
-                <Route path="*" element={ui} />
-              </Routes>
-            ) : (
-              ui
-            )}
-            <LocationProbe />
-          </MemoryRouter>
+          <RouterProvider router={router} />
         </AuthProvider>
       </QueryClientProvider>
     </ThemeProvider>,
   );
-  return { ...utils, user: userEvent.setup(), queryClient };
+  return { ...utils, router, user: userEvent.setup(), queryClient };
 }

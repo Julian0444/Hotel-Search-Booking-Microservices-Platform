@@ -1,3 +1,4 @@
+# HISTÓRICO: regenerar configuración desde search-api antes de un despliegue.
 # Solr como StatefulSet dev con PVC chico (CN1, paso 4).
 # Mismo arranque que el compose: solr-precreate crea el core `hotels` con el
 # configset montado. Límite de memoria ≥1G o hace OOM (CN3).

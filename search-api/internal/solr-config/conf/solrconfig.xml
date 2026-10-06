@@ -51,7 +51,7 @@
     </requestDispatcher>
 
     <!-- df = _text_ (DB7): el campo default es el catch-all alimentado por
-         copyField (name + description), no un campo suelto -->
+         copyField (name + description + city + country), no un campo suelto -->
     <requestHandler name="/select" class="solr.SearchHandler">
         <lst name="defaults">
             <str name="echoParams">explicit</str>

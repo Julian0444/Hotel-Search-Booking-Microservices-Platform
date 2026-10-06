@@ -46,7 +46,7 @@ const reservationsService = {
    * @param {{ signal?: AbortSignal }} [options]
    * @returns {Promise<import('../types').ListPage<Reservation>>}
    */
-  listByUser: async (userId, { limit = 100, offset = 0 } = {}, { signal } = {}) => {
+  listByUser: async (userId, { limit = 20, offset = 0 } = {}, { signal } = {}) => {
     const response = await api.get(`/users/${userId}/reservations?limit=${limit}&offset=${offset}`, { signal });
     return unwrapList(response.data);
   },

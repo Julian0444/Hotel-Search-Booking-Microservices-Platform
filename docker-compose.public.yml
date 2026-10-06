@@ -1,0 +1,17 @@
+# Optional ports overlay for docs/public-domain.nginx.conf (host nginx owns TLS).
+# Requires Docker Compose >= 2.24.4 for !override/!reset. Does not deploy anything.
+services:
+  nginx:
+    ports: !reset []
+  frontend:
+    ports: !override ["127.0.0.1:5173:80"]
+  mysql:
+    ports: !reset []
+  mongo:
+    ports: !reset []
+  rabbitmq:
+    ports: !reset []
+  solr:
+    ports: !reset []
+  memcached:
+    ports: !reset []

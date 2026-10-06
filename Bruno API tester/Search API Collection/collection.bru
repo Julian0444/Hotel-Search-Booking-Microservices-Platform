@@ -11,9 +11,12 @@ docs {
     `--insecure` en CLI.
   - `admin_password` trae el placeholder de `.env.example`: ajustarlo al
     ADMIN_PASSWORD de tu `.env` (en CLI: `--env-var admin_password=...`).
-  - El gateway CACHEA los 200 de GET /search por 5 minutos, keyed por URI
-    completa (header `X-Cache-Status`: MISS|HIT|...). Coherente con un índice
-    eventualmente consistente — para ver datos frescos, variar la query.
+  - El gateway no cachea búsqueda. Consultar la MISMA URI permite verificar
+    convergencia de Solr; no agregar parámetros para esquivar cachés.
+  - Se busca nombre, descripción, ciudad y país, con folding de tildes y
+    mayúsculas sin cambiar los textos visibles.
+  - Una instancia search-api coordina eventos y reconciliación de huérfanos:
+    al arrancar, cada minuto tras éxito y mediante POST /reindex.
   - Solo `POST /reindex` requiere token (admin).
 
   CLI (desde esta carpeta):

@@ -119,7 +119,7 @@ const HotelCard = ({ hotel, headingComponent = 'h3' }) => {
 
         <Box sx={{ mt: 'auto', pt: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
           <Typography variant="caption" color="text.secondary">
-            {hotel.available_rooms} room{hotel.available_rooms === 1 ? '' : 's'} available
+            {hotel.available_rooms} room{hotel.available_rooms === 1 ? '' : 's'} in this property
           </Typography>
         </Box>
       </CardContent>

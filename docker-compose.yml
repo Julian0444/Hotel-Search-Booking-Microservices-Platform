@@ -4,7 +4,6 @@ services:
   # ===========================================
   nginx:
     image: nginx:alpine
-    container_name: api-gateway
     ports:
       - "80:80"    # redirect 301 → https (SD4)
       - "443:443"  # TLS
@@ -47,7 +46,6 @@ services:
   # ===========================================
   mysql:
     image: mysql:8
-    container_name: users-mysql
     ports:
       - "3307:3306"
     environment:
@@ -75,7 +73,6 @@ services:
   # contiende por el advisory lock de golang-migrate (schema "dirty").
   migrate:
     image: migrate/migrate:v4.18.3
-    container_name: users-migrate
     volumes:
       - ./users-api/migrations:/migrations:ro
     command:
@@ -93,7 +90,6 @@ services:
 
   memcached:
     image: memcached:1.6-alpine
-    container_name: users-memcached
     ports:
       - "11211:11211"
     networks:
@@ -106,7 +102,7 @@ services:
 
   mongo:
     image: mongo:6
-    container_name: hotels-mongo
+    entrypoint: ["sh", "/opt/mongo-start.sh"]
     ports:
       - "27017:27017"
     environment:
@@ -115,8 +111,8 @@ services:
       MONGO_INITDB_DATABASE: hotels-api
     volumes:
       - mongo_data:/data/db
-      # Seed de hoteles demo + índices: solo corre con un volumen NUEVO
-      # (docker compose down -v para re-sembrar).
+      - ./docker/mongo-start.sh:/opt/mongo-start.sh:ro
+      # Seed de hoteles demo + índices: solo corre con un volumen NUEVO.
       - ./hotels-api/seed/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     networks:
       - app-network
@@ -131,9 +127,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # Inicializa rs0 también sobre un volumen standalone existente, sin borrarlo.
+  mongo-init:
+    image: mongo:6
+    environment:
+      MONGO_PASSWORD: ${MONGO_PASSWORD:?set in .env (cp .env.example .env)}
+    volumes:
+      - ./docker/mongo-replica-init.js:/opt/replica-init.js:ro
+    entrypoint: ["mongosh", "--nodb", "--quiet", "/opt/replica-init.js"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks: [app-network]
+    restart: "no"
+
   rabbitmq:
     image: rabbitmq:3-management
-    container_name: hotels-rabbit
+    hostname: rabbitmq
+    volumes:
+      - rabbit_data:/var/lib/rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -155,7 +167,6 @@ services:
 
   solr:
     image: solr:9
-    container_name: search-solr
     ports:
       - "8983:8983"
     volumes:
@@ -192,7 +203,6 @@ services:
       context: .
       dockerfile: users-api/Dockerfile
     image: users-api:latest
-    container_name: users-api-1
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
@@ -215,8 +225,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      memcached:
-        condition: service_started
     networks:
       - app-network
     restart: unless-stopped
@@ -233,7 +241,6 @@ services:
 
   users-api-2:
     image: users-api:latest
-    container_name: users-api-2
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
@@ -258,8 +265,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      memcached:
-        condition: service_started
     networks:
       - app-network
     restart: unless-stopped
@@ -276,7 +281,6 @@ services:
 
   users-api-3:
     image: users-api:latest
-    container_name: users-api-3
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
@@ -301,8 +305,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      memcached:
-        condition: service_started
     networks:
       - app-network
     restart: unless-stopped
@@ -326,8 +328,8 @@ services:
       context: .
       dockerfile: hotels-api/Dockerfile
     image: hotels-api:latest
-    container_name: hotels-api-container
     environment:
+      MONGO_REPLICA_SET: rs0
       MONGO_HOST: mongo
       MONGO_PORT: "27017"
       MONGO_USERNAME: root
@@ -337,23 +339,17 @@ services:
       MONGO_COLLECTION_RESERVATIONS: reservations
       MONGO_COLLECTION_INVENTORY: reservation_inventory
       MONGO_COLLECTION_IDEMPOTENCY: idempotency_keys
-      CACHE_MAX_SIZE: "100000"
-      CACHE_ITEMS_TO_PRUNE: "100"
-      CACHE_DURATION: "30s"
       RABBIT_HOST: rabbitmq
       RABBIT_PORT: "5672"
       RABBIT_USERNAME: root
       RABBIT_PASSWORD: ${RABBIT_PASSWORD:?set in .env (cp .env.example .env)}
       RABBIT_QUEUE_NAME: hotels-news
-      RABBIT_RESERVATIONS_QUEUE_NAME: reservations-news
       JWT_SECRET: ${JWT_SECRET:?set in .env (cp .env.example .env)}
       PORT: "8081"
       CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
-      mongo:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
     networks:
       - app-network
     restart: unless-stopped
@@ -377,7 +373,6 @@ services:
       context: .
       dockerfile: search-api/Dockerfile
     image: search-api:latest
-    container_name: search-api-container
     environment:
       SOLR_HOST: solr
       SOLR_PORT: "8983"
@@ -387,15 +382,13 @@ services:
       RABBIT_USERNAME: root
       RABBIT_PASSWORD: ${RABBIT_PASSWORD:?set in .env (cp .env.example .env)}
       RABBIT_QUEUE_NAME: hotels-news
-      HOTELS_API_HOST: hotels-api-container
+      HOTELS_API_HOST: hotels-api
       HOTELS_API_PORT: "8081"
       JWT_SECRET: ${JWT_SECRET:?set in .env (cp .env.example .env)}  # valida el admin de POST /reindex
       PORT: "8082"
       CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"
     depends_on:
       solr:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       hotels-api:
         condition: service_started
@@ -419,8 +412,7 @@ services:
   # FRONTEND (I8): opcional bajo profile — el flujo de desarrollo usual sigue
   # siendo `npm run dev` (Vite). Para el SPA buildeado en Docker:
   #   docker compose --profile frontend up -d
-  # Sirve en http://localhost:5173 y le pega al gateway en https://localhost
-  # (origin permitido por CORS_ALLOWED_ORIGINS de los servicios).
+  # Sirve SPA + /api/v1 en http://localhost:5173; proxy interno al gateway TLS.
   # ===========================================
   frontend:
     profiles: ["frontend"]
@@ -428,7 +420,6 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     image: staylux-frontend:latest
-    container_name: staylux-frontend
     ports:
       - "5173:80"
     depends_on:
@@ -445,3 +436,4 @@ volumes:
   mongo_data:
   mysql_data:
   solr_data:
+  rabbit_data:

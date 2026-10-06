@@ -12,7 +12,8 @@ test:
 	go test -race $(GO_PACKAGES)
 
 test-integration:
-	cd hotels-api && go test -tags=integration ./...
+	cd hotels-api && go test -race -count=1 -tags=integration ./internal/repositories/...
+	bash search-api/scripts/test-integration.sh
 
 lint:
 	@for m in $(GO_MODULES); do \
@@ -30,7 +31,7 @@ up-frontend:
 	docker compose --profile frontend up -d --build
 
 down:
-	docker compose down -v
+	docker compose down
 
 # Frontend (plan 13): lint + unit/component con coverage + build de producción
 frontend-check:
@@ -45,4 +46,4 @@ e2e: up-frontend
 seed:
 	docker compose run --rm migrate
 	@echo "Usuarios demo -> cliente: demo/DemoCliente123 (migración 0002) · admin: ADMIN_USERNAME/ADMIN_PASSWORD del .env (seed al arranque)"
-	@echo "Hoteles demo -> mongo-init.js corre solo con volumen nuevo: make down && make up para re-sembrar"
+	@echo "Hoteles demo -> mongo-init.js corre solo con volumen nuevo: no borre volúmenes para re-sembrar datos existentes"

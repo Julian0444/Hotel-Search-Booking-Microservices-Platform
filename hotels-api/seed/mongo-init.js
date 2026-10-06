@@ -1,5 +1,5 @@
 // Seed de hoteles demo (P7). Corre UNA sola vez, cuando el volumen de Mongo es
-// nuevo (docker-entrypoint-initdb.d). Para re-sembrar: docker compose down -v.
+// nuevo (docker-entrypoint-initdb.d). No borre volúmenes para actualizar datos.
 //
 // Los nombres de campo son los bson tags reales de hotels_dao.go — incluido el
 // available_rooms ya con el nombre corregido (rename C11, plan 11).

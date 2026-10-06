@@ -1,0 +1,54 @@
+meta {
+  name: Create Disposable Hotel (admin)
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/admin/hotels
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{admin_token}}
+}
+
+body:json {
+  {
+    "name": "Bruno Disposable Hotel",
+    "description": "Hotel creado por la colección Bruno para demostrar el CRUD admin.",
+    "address": "Calle Falsa 123",
+    "city": "Buenos Aires",
+    "state": "CABA",
+    "country": "Argentina",
+    "phone": "+54 11 5555-0100",
+    "email": "demo@brunohotel.test",
+    "price_per_night": 199,
+    "rating": 4.2,
+    "available_rooms": 10,
+    "check_in_time": "15:00",
+    "check_out_time": "11:00",
+    "amenities": ["wifi", "pileta", "gym"],
+    "images": ["https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800"]
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("disposable_hotel_id", res.body.data.id);
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  Crea un hotel separado sin reservas para demostrar DELETE 204 sin borrar
+  historial. La request siguiente de borrado exitoso elimina esta entidad.
+}
+
+settings {
+  encodeUrl: true
+}

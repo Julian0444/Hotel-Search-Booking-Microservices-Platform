@@ -28,6 +28,7 @@ export const useCancelReservation = (userId) => {
     mutationFn: (reservationId) => reservationsService.cancel(reservationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.reservations(userId) });
+      queryClient.invalidateQueries({ queryKey: ['availability'] });
     },
   });
 };
@@ -41,6 +42,7 @@ export const useSaveHotel = () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'hotels'] });
       queryClient.invalidateQueries({ queryKey: ['hotels', 'search'] });
       queryClient.invalidateQueries({ queryKey: ['hotel'] });
+      queryClient.invalidateQueries({ queryKey: ['availability'] });
     },
   });
 };

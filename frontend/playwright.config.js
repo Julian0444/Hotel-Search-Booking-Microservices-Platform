@@ -1,8 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 // E2E contra el stack real (plan 13 fase 10): compose con --profile frontend
-// sirve el SPA buildeado en :5173 y el SPA le pega al gateway en
-// https://localhost — cert self-signed local, por eso ignoreHTTPSErrors.
+// sirve el SPA buildeado en :5173, con /api en el mismo origen.
+// Los helpers de setup acceden al gateway TLS local con ignoreHTTPSErrors.
 // Los recorridos Anonymous y Customer corren en desktop + mobile; Admin solo
 // desktop (la tabla admin es una superficie desktop-first).
 export default defineConfig({

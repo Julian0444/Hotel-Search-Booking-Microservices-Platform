@@ -43,6 +43,7 @@ func main() {
 	// Configuración de Repositorios
 	hotelsRepo := repositoriesHotels.NewMongo(repositoriesHotels.MongoConfig{
 		Host:                    config.MongoHost,
+		ReplicaSet:              config.MongoReplicaSet,
 		Port:                    config.MongoPort,
 		Username:                config.MongoUsername,
 		Password:                config.MongoPassword,
@@ -53,23 +54,16 @@ func main() {
 		Collection_idempotency:  config.MongoCollectionIdempotency,
 	})
 
-	cacheRepo := repositoriesHotels.NewCache(repositoriesHotels.CacheConfig{
-		MaxSize:      config.CacheMaxSize,
-		ItemsToPrune: config.CacheItemsToPrune,
-		Duration:     config.CacheDuration,
-	})
-
 	eventsQueue := queues.NewRabbit(queues.RabbitConfig{
-		Host:                  config.RabbitHost,
-		Port:                  config.RabbitPort,
-		Username:              config.RabbitUsername,
-		Password:              config.RabbitPassword,
-		QueueName:             config.RabbitQueueName,
-		ReservationsQueueName: config.RabbitReservationsQueueName,
+		Host:      config.RabbitHost,
+		Port:      config.RabbitPort,
+		Username:  config.RabbitUsername,
+		Password:  config.RabbitPassword,
+		QueueName: config.RabbitQueueName,
 	})
 
 	// Configuración de Servicios
-	hotelsService := servicesHotels.NewService(hotelsRepo, cacheRepo, eventsQueue)
+	hotelsService := servicesHotels.NewService(hotelsRepo, eventsQueue)
 
 	// Configuración de Controladores
 	hotelsController := controllersHotels.NewController(hotelsService)
@@ -115,7 +109,7 @@ func main() {
 	{
 		// POST de reservas con Idempotency-Key (A3): mismo key+user → misma
 		// respuesta, una sola reserva
-		userRoutes.POST("/reservations", middlewares.Idempotency(hotelsRepo), hotelsController.CreateReservation)
+		userRoutes.POST("/reservations", middlewares.Idempotency(), hotelsController.CreateReservation)
 		userRoutes.GET("/reservations/:id", hotelsController.GetReservationByID)
 		userRoutes.DELETE("/reservations/:id", hotelsController.CancelReservation)
 		userRoutes.GET("/users/:user_id/reservations", hotelsController.GetReservationsByUserID)
@@ -137,9 +131,10 @@ func main() {
 	}
 
 	// Health endpoints (O3): /livez barato, /readyz pinguea las deps propias
-	// (Mongo + RabbitMQ); /health queda como alias de /livez por compat.
+	// Mongo es obligatorio; RabbitMQ es secundario y se informa sin retirar reservas.
 	healthController := controllersHealth.NewController("hotels-api", map[string]controllersHealth.CheckFunc{
 		"mongo": hotelsRepo.Ping,
+	}, map[string]controllersHealth.CheckFunc{
 		"rabbitmq": func(_ context.Context) error {
 			if !eventsQueue.IsConnected() {
 				return errors.New("rabbitmq not connected")

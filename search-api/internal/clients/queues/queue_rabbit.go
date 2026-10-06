@@ -2,7 +2,9 @@ package queues
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -10,110 +12,61 @@ import (
 
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
 	"github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils"
-
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 const (
-	// Configuración de reintentos de conexión (mismo patrón que el productor
-	// de hotels-api)
-	maxRetries     = 5
-	initialBackoff = 1 * time.Second
+	initialBackoff = time.Second
 	maxBackoff     = 30 * time.Second
-	backoffFactor  = 2.0
-
-	// consumerTag identifica el Consume registrado: Close() lo cancela para
-	// drenar el mensaje en vuelo antes de cerrar la conexión (C12).
-	consumerTag = "search-api-consumer"
-	// messageTimeout acota el procesamiento de cada mensaje (R2): antes el
-	// handler corría sobre context.Background() sin deadline. Holgado a
-	// propósito: contiene los reintentos del cliente HTTP (E4, hasta ~16s) —
-	// un tope menor los truncaría y mandaría eventos a la DLQ durante
-	// reinicios cortos de hotels-api.
-	messageTimeout = 30 * time.Second
-	// drainTimeout es cuánto espera Close() a que el loop termine el mensaje
-	// en vuelo antes de cerrar igual (C12).
-	drainTimeout = 5 * time.Second
+	consumerTag    = "search-api-consumer"
+	// Dos hops de hasta 5s más espera cancelable por reindex. El intento
+	// vence a los 15s; reintentarlo nunca descarta un evento válido.
+	messageTimeout = 15 * time.Second
+	drainTimeout   = 6 * time.Second
 )
 
-type RabbitConfig struct {
-	Host      string
-	Port      string
-	Username  string
-	Password  string
-	QueueName string
-}
+type RabbitConfig struct{ Host, Port, Username, Password, QueueName string }
 
-// Rabbit es el consumidor de hotels-news con reconexión automática (E5):
-// si la conexión o el canal AMQP mueren, el loop del consumer se re-arma solo
-// (backoff exponencial) y vuelve a registrar el Consume.
 type Rabbit struct {
-	config RabbitConfig
-
-	mu         sync.RWMutex
-	connection *amqp.Connection
-	channel    *amqp.Channel
-	// consuming refleja "consumer vivo" (RV17): hay un Consume registrado y su
-	// canal de deliveries sigue abierto. Si solo muere el channel AMQP, la
-	// conexión puede seguir abierta pero el servicio NO está procesando eventos.
-	consuming bool
-	closed    bool
-	// loopDone se cierra cuando consumeLoop termina: Close() lo espera para
-	// no cortar un mensaje a mitad de procesamiento (C12).
-	loopDone chan struct{}
+	config            RabbitConfig
+	mu                sync.RWMutex
+	connection        *amqp.Connection
+	channel           *amqp.Channel
+	consuming, closed bool
+	loopDone          chan struct{}
+	ctx               context.Context
+	cancel            context.CancelFunc
+	// Opciones internas inyectables para probar tiempos sin esperas largas.
+	retryDelay     time.Duration
+	attemptTimeout time.Duration
 }
 
-// NewRabbit crea el consumidor. La conexión inicial es best-effort con
-// reintentos: si RabbitMQ todavía no está listo NO se aborta el arranque
-// (antes: log.Fatalf) — el loop del consumer sigue reintentando.
+// La conexión sucede en el loop: un broker caído no bloquea el HTTP de búsqueda.
 func NewRabbit(config RabbitConfig) *Rabbit {
-	rabbit := &Rabbit{config: config}
-	if err := rabbit.connectWithRetry(); err != nil {
-		slog.Warn("initial RabbitMQ connection failed, consumer loop will keep retrying", "error", err)
-	}
-	return rabbit
-}
-
-// connectWithRetry intenta conectar con backoff exponencial (espejo de hotels-api).
-func (queue *Rabbit) connectWithRetry() error {
-	var lastErr error
-	backoff := initialBackoff
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		slog.Info("RabbitMQ connection attempt", "attempt", attempt, "max_retries", maxRetries)
-
-		if err := queue.connect(); err != nil {
-			lastErr = err
-			slog.Warn("RabbitMQ connection attempt failed", "attempt", attempt, "error", err)
-
-			if attempt < maxRetries {
-				slog.Info("retrying RabbitMQ connection", "backoff", backoff.String())
-				time.Sleep(backoff)
-
-				backoff = time.Duration(float64(backoff) * backoffFactor)
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
-			}
-		} else {
-			slog.Info("connected to RabbitMQ", "attempt", attempt)
-			return nil
-		}
-	}
-
-	return fmt.Errorf("failed to connect after %d attempts: %w", maxRetries, lastErr)
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Rabbit{config: config, ctx: ctx, cancel: cancel}
 }
 
 // connect abre conexión y canal, y declara la topología de la cola.
 func (queue *Rabbit) connect() error {
 	queue.mu.Lock()
-	defer queue.mu.Unlock()
+	oldChannel, oldConnection := queue.channel, queue.connection
+	queue.channel, queue.connection, queue.consuming = nil, nil, false
+	closed := queue.closed
+	queue.mu.Unlock()
+	if oldChannel != nil {
+		_ = oldChannel.Close()
+	}
+	if oldConnection != nil {
+		_ = oldConnection.Close()
+	}
+	if closed {
+		return context.Canceled
+	}
 
-	queue.closeUnsafe()
-
-	conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%s/",
-		queue.config.Username, queue.config.Password, queue.config.Host, queue.config.Port))
+	conn, err := amqp.DialConfig(fmt.Sprintf("amqp://%s:%s@%s:%s/",
+		queue.config.Username, queue.config.Password, queue.config.Host, queue.config.Port), amqp.Config{Dial: amqp.DefaultDial(5 * time.Second)})
 	if err != nil {
 		return fmt.Errorf("error getting Rabbit connection: %w", err)
 	}
@@ -155,33 +108,21 @@ func (queue *Rabbit) connect() error {
 		return fail(fmt.Errorf("error setting channel QoS: %w", err))
 	}
 
+	queue.mu.Lock()
+	if queue.closed {
+		queue.mu.Unlock()
+		return fail(context.Canceled)
+	}
 	queue.connection = conn
 	queue.channel = ch
+	queue.mu.Unlock()
 	return nil
 }
 
-// connectionAlive es el chequeo interno de conexión (sin exigir un consumer
-// activo — se usa justo antes de registrar el Consume).
-func (queue *Rabbit) connectionAlive() bool {
-	queue.mu.RLock()
-	defer queue.mu.RUnlock()
-	return queue.connection != nil && !queue.connection.IsClosed() && queue.channel != nil
-}
-
-// IsConnected informa si el CONSUMER está vivo (lo usa el /readyz, O3/RV17):
-// conexión abierta Y loop de consumo activo. Si el canal AMQP muere en
-// silencio, deliveries se cierra, consuming pasa a false y el readyz degrada
-// aunque la conexión TCP siga abierta.
 func (queue *Rabbit) IsConnected() bool {
 	queue.mu.RLock()
 	defer queue.mu.RUnlock()
-	return queue.connection != nil && !queue.connection.IsClosed() && queue.consuming
-}
-
-func (queue *Rabbit) setConsuming(value bool) {
-	queue.mu.Lock()
-	queue.consuming = value
-	queue.mu.Unlock()
+	return queue.connection != nil && !queue.connection.IsClosed() && queue.channel != nil && !queue.channel.IsClosed() && queue.consuming
 }
 
 func (queue *Rabbit) isClosed() bool {
@@ -190,111 +131,139 @@ func (queue *Rabbit) isClosed() bool {
 	return queue.closed
 }
 
-// StartConsumer lanza el loop del consumidor en background. El handler recibe
-// un context con un request_id generado por mensaje (O1) y devuelve error si
-// el evento debe reintentarse (E1): 1er fallo → requeue, 2º → DLQ.
-func (queue *Rabbit) StartConsumer(handler func(context.Context, hotels.HotelNew) error) {
-	queue.mu.Lock()
-	queue.loopDone = make(chan struct{})
-	queue.mu.Unlock()
-
-	go func() {
-		defer close(queue.loopDone)
-		queue.consumeLoop(handler)
-	}()
+func (queue *Rabbit) context() context.Context {
+	if queue.ctx != nil {
+		return queue.ctx
+	}
+	return context.Background()
 }
 
-// consumeLoop mantiene un Consume registrado para siempre: si el canal de
-// deliveries se cierra (conexión/canal caído), reconecta con backoff y vuelve
-// a consumir (E5). Solo termina con Close().
+func wait(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (queue *Rabbit) StartConsumer(handler func(context.Context, hotels.HotelNew) error) {
+	queue.mu.Lock()
+	if queue.closed || queue.loopDone != nil {
+		queue.mu.Unlock()
+		return
+	}
+	queue.loopDone = make(chan struct{})
+	done := queue.loopDone
+	queue.mu.Unlock()
+	go func() { defer close(done); queue.consumeLoop(handler) }()
+}
+
 func (queue *Rabbit) consumeLoop(handler func(context.Context, hotels.HotelNew) error) {
-	for {
-		if queue.isClosed() {
-			return
-		}
-
-		if !queue.connectionAlive() {
-			if err := queue.connectWithRetry(); err != nil {
-				// connectWithRetry ya durmió ~1 min de backoff: loguear y
-				// seguir intentando — un consumer no tiene "próximo publish"
-				// que dispare la reconexión, así que nunca se rinde.
-				slog.Error("RabbitMQ still unreachable, consumer keeps retrying", "error", err)
-				continue
+	backoff := initialBackoff
+	for !queue.isClosed() {
+		err := queue.connect()
+		if err != nil {
+			slog.Warn("RabbitMQ connection failed; retrying", "error", err, "delay", backoff)
+			if !wait(queue.context(), backoff) {
+				return
 			}
+			backoff = min(backoff*2, maxBackoff)
+			continue
 		}
-
 		queue.mu.RLock()
 		channel := queue.channel
 		queue.mu.RUnlock()
-
-		messages, err := channel.Consume(
-			queue.config.QueueName,
-			consumerTag, // tag conocido: Close() lo cancela para drenar (C12)
-			false,       // autoAck=false: ack manual tras procesar OK (E1)
-			false,
-			false,
-			false,
-			nil,
-		)
+		// Exclusivo: un segundo consumer accidental falla, no comparte eventos.
+		messages, err := channel.Consume(queue.config.QueueName, consumerTag, false, true, false, false, nil)
 		if err != nil {
-			slog.Error("error registering consumer, reconnecting", "error", err)
-			queue.setConsuming(false)
-			if err := queue.connectWithRetry(); err != nil {
-				slog.Error("RabbitMQ reconnection failed, retrying", "error", err)
+			slog.Warn("registering consumer failed", "error", err)
+			if !wait(queue.context(), backoff) {
+				return
 			}
+			backoff = min(backoff*2, maxBackoff)
 			continue
 		}
-
-		queue.setConsuming(true)
-		slog.Info("rabbitmq consumer started", "queue", queue.config.QueueName)
-
+		backoff = initialBackoff
+		queue.mu.Lock()
+		queue.consuming = true
+		queue.mu.Unlock()
 		for msg := range messages {
 			queue.handleDelivery(msg, handler)
+			if queue.isClosed() {
+				break
+			}
 		}
-
-		// El canal de deliveries se cerró: shutdown ordenado o conexión caída
-		queue.setConsuming(false)
-		if queue.isClosed() {
-			return
-		}
-		slog.Warn("rabbitmq deliveries channel closed, reconnecting")
+		queue.mu.Lock()
+		queue.consuming = false
+		queue.mu.Unlock()
 	}
 }
 
-// handleDelivery procesa un mensaje con la política de acks de E1:
-//   - unmarshal inválido → DLQ directo (mensaje veneno, requeue jamás lo arregla)
-//   - handler falla la 1ª vez → requeue (transitorio: Solr/hotels-api caídos)
-//   - handler falla la 2ª vez (Redelivered) → DLQ para inspección/replay
-//   - OK → ack
+func validHotelID(id string) bool {
+	if len(id) != 24 {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil
+}
+
+// Mantiene el mensaje sin ack mientras una dependencia falla, con prefetch=1.
+// Reintentos indefinidos 1,2,4,8,16,30s; un reinicio conserva el mensaje en
+// RabbitMQ. Solo datos inválidos van a DLQ. No hay requeue ocupado ni cola extra.
 func (queue *Rabbit) handleDelivery(msg amqp.Delivery, handler func(context.Context, hotels.HotelNew) error) {
-	var hotelUpdate hotels.HotelNew
-	if err := json.Unmarshal(msg.Body, &hotelUpdate); err != nil {
-		slog.Error("error unmarshaling message, sending to DLQ", "error", err)
+	var event hotels.HotelNew
+	if err := json.Unmarshal(msg.Body, &event); err != nil || !validHotelID(event.HotelID) ||
+		(event.Operation != "CREATE" && event.Operation != "UPDATE" && event.Operation != "DELETE") {
+		slog.Warn("invalid hotel event, sending to DLQ")
 		_ = msg.Nack(false, false)
 		return
 	}
-
-	// Deadline por mensaje (R2): un Solr/hotels-api colgado no puede frenar el
-	// consumer para siempre — al vencer, el error sigue la política retry/DLQ.
-	ctx, cancel := context.WithTimeout(utils.WithRequestID(context.Background(), uuid.NewString()), messageTimeout)
-	defer cancel()
-	if err := handler(ctx, hotelUpdate); err != nil {
-		if msg.Redelivered {
-			slog.Error("handler failed on redelivery, sending to DLQ",
-				"operation", hotelUpdate.Operation, "hotel_id", hotelUpdate.HotelID, "error", err)
-			_ = msg.Nack(false, false)
-		} else {
-			slog.Warn("handler failed, requeueing once",
-				"operation", hotelUpdate.Operation, "hotel_id", hotelUpdate.HotelID, "error", err)
-			_ = msg.Nack(false, true)
-		}
-		return
+	delay := queue.retryDelay
+	if delay <= 0 {
+		delay = initialBackoff
 	}
-
-	_ = msg.Ack(false)
+	timeout := queue.attemptTimeout
+	if timeout <= 0 {
+		timeout = messageTimeout
+	}
+	requestCtx := utils.WithRequestID(queue.context(), uuid.NewString())
+	for {
+		if queue.isClosed() || requestCtx.Err() != nil {
+			_ = msg.Nack(false, true)
+			return
+		}
+		queue.mu.RLock()
+		channel := queue.channel
+		queue.mu.RUnlock()
+		if channel != nil && channel.IsClosed() {
+			return
+		} // broker reentrega al reconectar
+		ctx, cancel := context.WithTimeout(requestCtx, timeout)
+		err := handler(ctx, event)
+		cancel()
+		if err == nil {
+			if err := msg.Ack(false); err != nil {
+				slog.Warn("ack failed; broker may redeliver", "error", err)
+			}
+			return
+		}
+		if errors.Is(err, hotels.ErrInvalidEvent) {
+			_ = msg.Nack(false, false)
+			return
+		}
+		slog.Warn("hotel event temporarily failed; retaining unacked delivery", "hotel_id", event.HotelID, "error", err, "delay", delay)
+		if !wait(requestCtx, delay) {
+			_ = msg.Nack(false, true)
+			return
+		}
+		delay = min(delay*2, maxBackoff)
+	}
 }
 
-// closeUnsafe cierra conexión y canal (llamar con mu tomado).
+// closeUnsafe requiere mu tomado.
 func (queue *Rabbit) closeUnsafe() {
 	if queue.channel != nil {
 		_ = queue.channel.Close()
@@ -307,32 +276,24 @@ func (queue *Rabbit) closeUnsafe() {
 	queue.consuming = false
 }
 
-// Close termina el consumer y cierra la conexión a RabbitMQ. Drenaje (C12):
-// primero cancela el Consume — el broker deja de entregar, el canal de
-// deliveries se cierra después del mensaje en vuelo y consumeLoop termina
-// solo — y recién entonces cierra canal y conexión. Cortar sin drenar no
-// pierde mensajes (manual ack ⇒ re-entrega) pero obliga al retrabajo.
 func (queue *Rabbit) Close() {
 	queue.mu.Lock()
 	queue.closed = true
-	channel := queue.channel
-	consuming := queue.consuming
-	loopDone := queue.loopDone
+	if queue.cancel != nil {
+		queue.cancel()
+	}
+	channel, done := queue.channel, queue.loopDone
 	queue.mu.Unlock()
-
-	if channel != nil && consuming {
-		if err := channel.Cancel(consumerTag, false); err != nil {
-			slog.Warn("error cancelling consumer", "error", err)
-		}
+	if channel != nil {
+		_ = channel.Cancel(consumerTag, false)
 	}
-	if loopDone != nil {
+	if done != nil {
 		select {
-		case <-loopDone:
+		case <-done:
 		case <-time.After(drainTimeout):
-			slog.Warn("consumer did not drain in time, closing anyway")
+			slog.Warn("consumer shutdown timed out")
 		}
 	}
-
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 	queue.closeUnsafe()

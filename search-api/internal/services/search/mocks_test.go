@@ -59,11 +59,19 @@ func (m *hotelsAPIMock) GetHotelByID(ctx context.Context, id string) (hotelsDoma
 	return args.Get(0).(hotelsDomain.Hotel), args.Error(1)
 }
 
-func (m *hotelsAPIMock) GetHotels(ctx context.Context, limit, offset int) ([]hotelsDomain.Hotel, int, error) {
-	args := m.Called(ctx, limit, offset)
+func (m *hotelsAPIMock) GetHotelsAfter(ctx context.Context, limit int, after string) ([]hotelsDomain.Hotel, error) {
+	args := m.Called(ctx, limit, after)
 	var hotels []hotelsDomain.Hotel
 	if args.Get(0) != nil {
 		hotels = args.Get(0).([]hotelsDomain.Hotel)
 	}
-	return hotels, args.Int(1), args.Error(2)
+	return hotels, args.Error(1)
+}
+func (m *solrMock) ListIDs(ctx context.Context) ([]string, error) {
+	args := m.Called(ctx)
+	var ids []string
+	if args.Get(0) != nil {
+		ids = args.Get(0).([]string)
+	}
+	return ids, args.Error(1)
 }

@@ -12,12 +12,14 @@ import (
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels"
 
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // Estas son las funciones que se encargan de interactuar con el servicio, se encargan de recibir las peticiones y enviar las respuestas (Vienen del service)
 type Service interface {
 	GetHotelByID(ctx context.Context, id string) (hotelsDomain.Hotel, error)
 	GetHotels(ctx context.Context, limit, offset int64) ([]hotelsDomain.Hotel, int64, error)
+	GetHotelsAfter(ctx context.Context, afterID string, limit int64) ([]hotelsDomain.Hotel, error)
 	Create(ctx context.Context, hotel hotelsDomain.Hotel) (string, error)
 	Update(ctx context.Context, hotel hotelsDomain.Hotel) error
 	Delete(ctx context.Context, id string) error
@@ -63,16 +65,6 @@ func paginationParams(ctx *gin.Context) (int64, int64) {
 	}
 
 	return limit, offset
-}
-
-// validTimeOfDay valida el formato "HH:mm" de check_in_time/check_out_time
-// (RV21). Vacío es válido: el campo es opcional en create/update.
-func validTimeOfDay(value string) bool {
-	if value == "" {
-		return true
-	}
-	_, err := time.Parse("15:04", value)
-	return err == nil
 }
 
 // userFromToken saca userID y userType del contexto que dejó el middleware
@@ -130,6 +122,21 @@ func (controller Controller) GetHotelByID(ctx *gin.Context) {
 // consumen el backfill/reindex de search-api y el frontend.
 func (controller Controller) GetHotels(ctx *gin.Context) {
 	limit, offset := paginationParams(ctx)
+	if afterID, present := ctx.GetQuery("after_id"); present || ctx.Request.URL.Query().Has("after_id") {
+		if afterID != "" {
+			if _, err := primitive.ObjectIDFromHex(afterID); err != nil {
+				apperr.Abort(ctx, http.StatusBadRequest, "invalid_cursor", "after_id must be a Mongo ObjectID", nil)
+				return
+			}
+		}
+		rows, err := controller.service.GetHotelsAfter(ctx.Request.Context(), afterID, limit)
+		if err != nil {
+			apperr.Abort(ctx, http.StatusInternalServerError, "internal", "error getting hotels", err)
+			return
+		}
+		ctx.JSON(http.StatusOK, gin.H{"data": rows, "meta": gin.H{"limit": limit, "after_id": afterID}})
+		return
+	}
 	hotels, total, err := controller.service.GetHotels(ctx.Request.Context(), limit, offset)
 	if err != nil {
 		apperr.Abort(ctx, http.StatusInternalServerError, "internal", "error getting hotels", err)
@@ -150,9 +157,8 @@ func (controller Controller) Create(ctx *gin.Context) {
 		apperr.Abort(ctx, http.StatusBadRequest, "invalid_body", "invalid request body", err)
 		return
 	}
-	if !validTimeOfDay(hotel.CheckInTime) || !validTimeOfDay(hotel.CheckOutTime) {
-		apperr.Abort(ctx, http.StatusBadRequest, "invalid_body",
-			"check_in_time and check_out_time must be in HH:mm format", nil)
+	if err := hotelsDomain.ValidateHotel(hotel); err != nil {
+		apperr.Abort(ctx, http.StatusBadRequest, "invalid_hotel", err.Error(), nil)
 		return
 	}
 
@@ -179,9 +185,8 @@ func (controller Controller) Update(ctx *gin.Context) {
 		apperr.Abort(ctx, http.StatusBadRequest, "invalid_body", "invalid request body", err)
 		return
 	}
-	if !validTimeOfDay(hotel.CheckInTime) || !validTimeOfDay(hotel.CheckOutTime) {
-		apperr.Abort(ctx, http.StatusBadRequest, "invalid_body",
-			"check_in_time and check_out_time must be in HH:mm format", nil)
+	if err := hotelsDomain.ValidateHotel(hotel); err != nil {
+		apperr.Abort(ctx, http.StatusBadRequest, "invalid_hotel", err.Error(), nil)
 		return
 	}
 
@@ -190,6 +195,10 @@ func (controller Controller) Update(ctx *gin.Context) {
 
 	// Actualiza el hotel
 	if err := controller.service.Update(ctx.Request.Context(), hotel); err != nil {
+		if errors.Is(err, hotelsDomain.ErrCapacityConflict) {
+			apperr.Abort(ctx, http.StatusConflict, "capacity_conflict", err.Error(), nil)
+			return
+		}
 		if errors.Is(err, hotelsDomain.ErrHotelNotFound) {
 			apperr.Abort(ctx, http.StatusNotFound, "hotel_not_found", "hotel not found", err)
 			return
@@ -214,6 +223,10 @@ func (controller Controller) Delete(ctx *gin.Context) {
 
 	// Elimina el hotel
 	if err := controller.service.Delete(ctx.Request.Context(), id); err != nil {
+		if errors.Is(err, hotelsDomain.ErrHotelHasReservations) {
+			apperr.Abort(ctx, http.StatusConflict, "hotel_has_reservations", err.Error(), nil)
+			return
+		}
 		if errors.Is(err, hotelsDomain.ErrHotelNotFound) {
 			apperr.Abort(ctx, http.StatusNotFound, "hotel_not_found", "hotel not found", err)
 			return
@@ -297,6 +310,10 @@ func (controller Controller) CreateReservation(ctx *gin.Context) {
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, hotelsDomain.ErrIdempotencyConflict):
+			apperr.Abort(ctx, http.StatusConflict, "idempotency_conflict", hotelsDomain.ErrIdempotencyConflict.Error(), nil)
+		case errors.Is(err, hotelsDomain.ErrLegacyIdempotency):
+			apperr.Abort(ctx, http.StatusConflict, "idempotency_migration_required", hotelsDomain.ErrLegacyIdempotency.Error(), nil)
 		// Reservar sobre un hotel que no existe → 404, no 500 (RV19)
 		case errors.Is(err, hotelsDomain.ErrHotelNotFound):
 			apperr.Abort(ctx, http.StatusNotFound, "hotel_not_found", "hotel not found", err)
@@ -315,6 +332,9 @@ func (controller Controller) CreateReservation(ctx *gin.Context) {
 	}
 
 	// 201 con Location del recurso creado (A6)
+	if operation := hotelsDomain.IdempotencyFromContext(ctx.Request.Context()); operation != nil && operation.Replayed {
+		ctx.Header("Idempotency-Replayed", "true")
+	}
 	ctx.Header("Location", "/api/v1/reservations/"+id)
 	ctx.JSON(http.StatusCreated, gin.H{"data": gin.H{"id": id}})
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 
 // solrOpTimeout acota cada llamada a Solr (R2): ni el consumer ni el backfill
 // pueden quedar colgados en un índice que no responde — con deadline, un
-// mensaje falla rápido y sigue la política retry/DLQ (E1).
+// mensaje válido espera y reintenta; nunca se descarta por una caída de Solr.
 const solrOpTimeout = 5 * time.Second
 
 // solrOpCtx deriva el deadline por operación de Solr (R2).
@@ -206,7 +207,7 @@ func sortClause(sort string) string {
 }
 
 // buildSearchQuery arma el request JSON de búsqueda (E2): edismax sobre
-// name/description con el input del usuario como parámetro dereferenciado
+// name/description/city/country con el input del usuario como parámetro dereferenciado
 // ($qq) — nunca interpolado en la query — y limit/offset reales (rows/start:
 // antes la paginación se ignoraba). Query vacía = match-all (antes: 500 de
 // sintaxis). sort global sobre el índice (plan 13), ver sortClause.
@@ -216,7 +217,7 @@ func buildSearchQuery(query string, sort string, limit int, offset int) *solr.Qu
 	if trimmed == "" {
 		solrQuery = solr.NewQuery("*:*").Limit(limit).Offset(offset)
 	} else {
-		solrQuery = solr.NewQuery("{!edismax qf='name description' v=$qq}").
+		solrQuery = solr.NewQuery("{!edismax qf='name description city country' v=$qq}").
 			Params(solr.M{"qq": escapeSolrQuery(trimmed)}).
 			Limit(limit).
 			Offset(offset)
@@ -319,4 +320,60 @@ func getFloatField(doc map[string]interface{}, field string) float64 {
 	}
 	// Devuelve 0.0 si no se encuentra el campo
 	return 0.0
+}
+
+// ListIDs incluye escrituras aún pendientes de soft-commit y recorre por id.
+// Se llama bajo el mismo lock que las mutaciones; no usa offset que se desplaza
+// al borrar documentos. La demo admite un solo escritor search-api.
+func (searchEngine Solr) ListIDs(ctx context.Context) ([]string, error) {
+	commitCtx, cancel := solrOpCtx(ctx)
+	resp, err := searchEngine.Client.Update(commitCtx, searchEngine.Collection, solr.JSON,
+		strings.NewReader(`{"commit":{"softCommit":true,"waitSearcher":true}}`))
+	cancel()
+	if err != nil {
+		return nil, fmt.Errorf("refreshing Solr before reconciliation: %w", err)
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("refreshing Solr: %v", resp.Error)
+	}
+	ids := []string{}
+	cursor := "*"
+	for {
+		values := url.Values{"q": {"*:*"}, "sort": {"id asc"}, "fl": {"id"}, "rows": {"100"}, "cursorMark": {cursor}, "wt": {"json"}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			fmt.Sprintf("%s/solr/%s/select?%s", searchEngine.baseURL, searchEngine.Collection, values.Encode()), nil)
+		if err != nil {
+			return nil, err
+		}
+		response, err := searchEngine.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			NextCursor string `json:"nextCursorMark"`
+			Response   struct {
+				Docs []struct {
+					ID string `json:"id"`
+				} `json:"docs"`
+			} `json:"response"`
+		}
+		decodeErr := json.NewDecoder(response.Body).Decode(&page)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("listing Solr IDs: status %d", response.StatusCode)
+		}
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		for _, doc := range page.Response.Docs {
+			ids = append(ids, doc.ID)
+		}
+		if page.NextCursor == "" {
+			return nil, fmt.Errorf("Solr omitted cursorMark")
+		}
+		if page.NextCursor == cursor {
+			return ids, nil
+		}
+		cursor = page.NextCursor
+	}
 }

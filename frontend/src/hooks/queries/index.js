@@ -4,7 +4,7 @@
  * Axios para cancelar búsquedas viejas (sin carreras de respuestas lentas).
  */
 
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { hotelsService, authService, adminService, reservationsService, queryKeys } from '../../services';
 
 /** Búsqueda global (Solr): pagina y ordena el índice completo. */
@@ -42,9 +42,12 @@ export const useAvailability = (hotelId, checkIn, checkOut, options = {}) =>
 
 /** Historial del usuario, canceladas incluidas (F13-06). */
 export const useMyReservations = (userId, options = {}) =>
-  useQuery({
+  useInfiniteQuery({
     queryKey: queryKeys.reservations(userId),
-    queryFn: ({ signal }) => reservationsService.listByUser(userId, {}, { signal }),
+    initialPageParam: 0,
+    queryFn: ({ signal, pageParam }) => reservationsService.listByUser(userId, { limit: 20, offset: pageParam }, { signal }),
+    getNextPageParam: (lastPage, _pages, lastOffset) =>
+      lastPage.items.length === 20 ? lastOffset + 20 : undefined,
     enabled: !!userId,
     ...options,
   });

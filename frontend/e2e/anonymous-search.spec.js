@@ -1,13 +1,13 @@
 /**
  * Recorrido Anonymous (plan 13 fase 10): Home → search → ordenar → abrir
  * hotel → intentar reservar → login con retorno. Corre en desktop + mobile.
- * La paginación real no se cubre acá: el seed (5 hoteles) no supera una
- * página de 12 — queda cubierta por los tests unitarios con MSW, como
- * contempla el plan.
+ * El orden se compara contra el catálogo persistido completo: las pruebas
+ * conservan hoteles con historial y no asumen que sólo existen los seeds.
  */
 
 import { test, expect } from '@playwright/test';
 import { DEMO_CUSTOMER } from './helpers/env.js';
+import { listHotels, newApiContext } from './helpers/api.js';
 import { readAuthState } from './helpers/session.js';
 import { attachConsoleGuard } from './helpers/console-guard.js';
 import {
@@ -15,20 +15,24 @@ import {
   fillBookingDates,
   isMobileProject,
   openBookingForm,
+  pickSelectOption,
   signInViaUi,
 } from './helpers/ui.js';
 
 test.describe('anonymous: search, sort y login con retorno', () => {
   test('recorrido completo', async ({ page }, testInfo) => {
-    test.setTimeout(240_000); // absorbe esperas de rate-limit del login
+    test.setTimeout(120_000);
     const mobile = isMobileProject(testInfo);
     const { seedHotel } = readAuthState();
-    // El 429 del login_limit es comportamiento deliberado del gateway y el
-    // helper de login lo maneja con espera. Un 429 en el PREFLIGHT aparece
-    // como error CORS/red en consola — mismo throttling, no debe tirar el guard.
-    const consoleErrors = attachConsoleGuard(page, {
-      allow: [/status of 429/, /ERR_FAILED/, /blocked by CORS policy/],
-    });
+    const consoleErrors = attachConsoleGuard(page);
+    const api = await newApiContext();
+    let catalog;
+    try {
+      catalog = await listHotels(api);
+    } finally { await api.dispose(); }
+    const sortedNames = (field, direction) => [...catalog]
+      .sort((a, b) => direction * (a[field] - b[field]) || a.id.localeCompare(b.id))
+      .slice(0, 12).map((hotel) => hotel.name);
 
     // Home: hero honesto con búsqueda y catálogo real
     await page.goto('/');
@@ -43,24 +47,35 @@ test.describe('anonymous: search, sort y login con retorno', () => {
     // Count real desde meta.total, no del largo de la página
     await expect(page.getByText(/\d+ stays?/)).toBeVisible();
 
-    // Sort global (backend/Solr, no orden local): el más barato primero
+    // Sort global: la página debe coincidir con los primeros 12 del catálogo
+    // completo, incluso si un hotel más barato comenzó en otra página.
     await page.getByRole('combobox', { name: 'Sort by' }).click();
     await page.getByRole('option', { name: 'Price: low to high' }).click();
     await expect(page).toHaveURL(/sort=price_asc/);
     const cardHeadings = page.locator('#main-content h2 a');
-    await expect(cardHeadings.first()).toHaveText('Hostal de la Quebrada');
+    // El catálogo incluye escrituras recientes de otros casos. Si se perdió
+    // su evento al recuperar RabbitMQ, el periódico debe converger en la misma
+    // URI normal. Esperar un locator no vuelve a consultar React Query.
+    const expectCatalogOrder = async (names) => expect(async () => {
+      await page.reload();
+      await expect(cardHeadings).toHaveText(names, { timeout: 2000 });
+    }).toPass({ timeout: 85_000, intervals: [2000] });
+    await expectCatalogOrder(sortedNames('price_per_night', 1));
 
-    // Top rated: el mejor rating del seed primero
+    // Top rated y desempate estable por ID sobre la misma fuente persistente.
     await page.getByRole('combobox', { name: 'Sort by' }).click();
     await page.getByRole('option', { name: 'Top rated' }).click();
     await expect(page).toHaveURL(/sort=rating_desc/);
-    await expect(cardHeadings.first()).toHaveText('Refugio del Lago');
+    await expectCatalogOrder(sortedNames('rating', -1));
 
     // Back restaura el estado anterior desde la URL (fuente de verdad)
     await page.goBack();
     await expect(page).toHaveURL(/sort=price_asc/);
     await expect(page.getByRole('combobox', { name: 'Sort by' })).toHaveText('Price: low to high');
 
+    // Buscar el hotel de referencia si fixtures extra lo dejan fuera de página1.
+    await page.getByRole('search').getByLabel('Search stays').fill('Sierras');
+    await page.getByRole('search').getByRole('button', { name: 'Search', exact: true }).click();
     // Abrir el hotel de referencia
     await page.getByRole('link', { name: seedHotel.name }).click();
     await expect(page.getByRole('heading', { level: 1, name: seedHotel.name })).toBeVisible();
@@ -74,6 +89,8 @@ test.describe('anonymous: search, sort y login con retorno', () => {
       checkIn: dateOnlyFromToday(30),
       checkOut: dateOnlyFromToday(33),
     });
+    await pickSelectOption(page, scope, 'Rooms', '2');
+    await pickSelectOption(page, scope, 'Guests', '3');
     await expect(scope.getByText('You will come right back here after signing in.')).toBeVisible();
     await scope.getByRole('button', { name: 'Sign in to reserve' }).click();
 
@@ -87,6 +104,10 @@ test.describe('anonymous: search, sort y login con retorno', () => {
     // Con sesión, el CTA pasa a confirmar de verdad
     const after = await openBookingForm(page, mobile);
     await expect(after.scope.getByRole('button', { name: 'Confirm reservation' })).toBeVisible();
+    await expect(page.locator(`#${after.prefix}-check-in`)).toHaveValue(dateOnlyFromToday(30));
+    await expect(page.locator(`#${after.prefix}-check-out`)).toHaveValue(dateOnlyFromToday(33));
+    await expect(after.scope.getByRole('combobox', { name: 'Rooms' })).toHaveText('2');
+    await expect(after.scope.getByRole('combobox', { name: 'Guests' })).toHaveText('3');
 
     expect(consoleErrors).toEqual([]);
   });

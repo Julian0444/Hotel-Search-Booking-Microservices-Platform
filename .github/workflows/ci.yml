@@ -1,6 +1,9 @@
 name: ci
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   go:
@@ -38,21 +41,20 @@ jobs:
           GOWORK=off go install golang.org/x/vuln/cmd/govulncheck@latest
           GOWORK=off govulncheck ./...
 
-  # Tests de integración (testcontainers): solo en PRs para no encarecer cada push
+  # Tests de integración (testcontainers): en PRs y ejecución manual para no encarecer cada push
   integration:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: hotels-api
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: stable
           check-latest: true
-          cache-dependency-path: hotels-api/go.sum
-      - run: go test -tags=integration ./...
+          cache-dependency-path: |
+            hotels-api/go.sum
+            search-api/go.sum
+      - run: make test-integration
 
   frontend:
     runs-on: ubuntu-latest
@@ -76,11 +78,11 @@ jobs:
       - run: npm run build
       - run: npm audit --audit-level=high
 
-  # E2E Playwright contra el stack completo (plan 13 fase 10): solo en PRs,
+  # E2E Playwright contra el stack completo (plan 13 fase 10): en PRs y ejecución manual,
   # mismo criterio que integration — levanta compose con el profile frontend
   # (SPA buildeado en :5173 + gateway TLS self-signed) y corre los recorridos.
   frontend-e2e:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

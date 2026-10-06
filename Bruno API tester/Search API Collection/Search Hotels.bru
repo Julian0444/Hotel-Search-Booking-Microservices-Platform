@@ -19,13 +19,13 @@ assert {
 }
 
 docs {
-  Full-text sobre name y description (Solr edismax; el input viaja como
+  Full-text sobre name, description, city y country (Solr edismax; el input viaja como
   parámetro dereferenciado, nunca interpolado en la query). q vacío/ausente
   = todo el catálogo.
 
   Envelope de listas con `meta.total` = total REAL de matches en el índice.
-  limit default 20, tope 100. Respuesta cacheada 5 min por el gateway
-  (mirar `X-Cache-Status`).
+  limit default 20, tope 100. Sin caché del gateway. Córdoba, cordoba y
+  CORDOBA son equivalentes; el resultado conserva los acentos originales.
 }
 
 settings {

@@ -18,15 +18,20 @@ type CheckFunc func(ctx context.Context) error
 const checkTimeout = 3 * time.Second
 
 type Controller struct {
-	service string
-	checks  map[string]CheckFunc
+	service  string
+	checks   map[string]CheckFunc
+	optional map[string]CheckFunc
 }
 
-func NewController(service string, checks map[string]CheckFunc) Controller {
-	return Controller{
+func NewController(service string, checks map[string]CheckFunc, optional ...map[string]CheckFunc) Controller {
+	c := Controller{
 		service: service,
 		checks:  checks,
 	}
+	if len(optional) > 0 {
+		c.optional = optional[0]
+	}
+	return c
 }
 
 // Livez responde 200 sin tocar dependencias: solo indica que el proceso está
@@ -39,18 +44,26 @@ func (controller Controller) Livez(c *gin.Context) {
 }
 
 // Readyz pinguea las dependencias del servicio en paralelo y devuelve 503 con
-// el mapa de estado si alguna está caída (O3).
+// el mapa de estado. Sólo las dependencias obligatorias afectan el código HTTP.
 func (controller Controller) Readyz(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), checkTimeout)
 	defer cancel()
 
 	var (
-		mu      sync.Mutex
-		wg      sync.WaitGroup
-		results = make(map[string]string, len(controller.checks))
-		healthy = true
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		results  = make(map[string]string, len(controller.checks))
+		healthy  = true
+		degraded = false
 	)
+	all := make(map[string]CheckFunc, len(controller.checks)+len(controller.optional))
+	for name, check := range controller.optional {
+		all[name] = check
+	}
 	for name, check := range controller.checks {
+		all[name] = check
+	}
+	for name, check := range all {
 		wg.Add(1)
 		go func(name string, check CheckFunc) {
 			defer wg.Done()
@@ -61,7 +74,9 @@ func (controller Controller) Readyz(c *gin.Context) {
 			}
 			mu.Lock()
 			results[name] = status
-			healthy = healthy && status == "ok"
+			_, required := controller.checks[name]
+			healthy = healthy && (!required || status == "ok")
+			degraded = degraded || status != "ok"
 			mu.Unlock()
 		}(name, check)
 	}
@@ -69,9 +84,11 @@ func (controller Controller) Readyz(c *gin.Context) {
 
 	statusCode := http.StatusOK
 	statusText := "ok"
+	if degraded {
+		statusText = "degraded"
+	}
 	if !healthy {
 		statusCode = http.StatusServiceUnavailable
-		statusText = "degraded"
 	}
 	c.JSON(statusCode, gin.H{
 		"status":  statusText,

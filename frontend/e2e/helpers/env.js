@@ -1,7 +1,7 @@
 /**
  * Entorno de los E2E (plan 13 fase 10).
- * - El SPA buildeado corre en http://localhost:5173 y pega al gateway TLS
- *   self-signed en https://localhost (por eso ignoreHTTPSErrors en la config).
+ * - El SPA buildeado corre en http://localhost:5173 con /api en el mismo origen.
+ *   Los helpers llaman al gateway TLS (E2E_GATEWAY_URL) con certificado local.
  * - Las credenciales admin son env-driven (seed al arranque de users-api):
  *   en CI vienen por env vars; local se leen del .env de la raíz del repo
  *   (ADMIN_PASSWORD local difiere del .env.example — no hardcodear).

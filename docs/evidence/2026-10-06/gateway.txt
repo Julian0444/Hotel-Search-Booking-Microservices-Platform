@@ -1,0 +1,174 @@
+
+═══════════════════════════════════════════════════════════════
+  🚀 LOAD BALANCER TEST SUITE
+═══════════════════════════════════════════════════════════════
+
+  Platform: Hotel Search & Booking Microservices
+  Gateway: https://localhost
+  Monitor: http://localhost:8090
+
+───────────────────────────────────────────────────────────────
+  🐳 Docker Containers Status
+───────────────────────────────────────────────────────────────
+
+  ✓ nginx running
+  ✓ users-api-1 running
+  ✓ users-api-2 running
+  ✓ users-api-3 running
+  ✓ hotels-api running
+  ✓ search-api running
+  ✓ mysql running
+  ✓ mongo running
+  ✓ rabbitmq running
+  ✓ solr running
+
+  ✓ PASS containers: 10/10 running
+
+───────────────────────────────────────────────────────────────
+  🔐 TLS / Redirect / Security Headers
+───────────────────────────────────────────────────────────────
+
+  ✓ PASS HTTP → 301 redirect a https
+  ✓ PASS header x-frame-options presente en /api/v1/hotels
+  ✓ PASS header x-content-type-options presente en /api/v1/hotels
+  ✓ PASS header strict-transport-security presente en /api/v1/hotels
+
+───────────────────────────────────────────────────────────────
+  🏥 Health Check Endpoints
+───────────────────────────────────────────────────────────────
+
+  ✓ PASS API Gateway /health → 200
+  ✓ PASS Users API via gateway → HTTP 401 (reachable)
+  ✓ PASS Hotels API via gateway → HTTP 200 (reachable)
+  ✓ PASS Search API via gateway → 200
+
+───────────────────────────────────────────────────────────────
+  Search freshness headers
+───────────────────────────────────────────────────────────────
+
+  ✓ PASS misma URI intento 1: no-store sin cache HIT
+  ✓ PASS misma URI intento 2: no-store sin cache HIT
+
+───────────────────────────────────────────────────────────────
+  ⚖️  Load Balancing Test (Users API)
+───────────────────────────────────────────────────────────────
+
+  Sending 12 requests to /api/v1/users endpoint...
+  Observing which upstream server handles each request...
+
+  Request  1: → 172.21.0.8:8082
+  Request  2: → 172.21.0.11:8082
+  Request  3: → 172.21.0.10:8082
+  Request  4: → 172.21.0.8:8082
+  Request  5: → 172.21.0.11:8082
+  Request  6: → 172.21.0.10:8082
+  Request  7: → 172.21.0.8:8082
+  Request  8: → 172.21.0.11:8082
+  Request  9: → 172.21.0.10:8082
+  Request 10: → 172.21.0.8:8082
+  Request 11: → 172.21.0.11:8082
+  Request 12: → 172.21.0.10:8082
+
+  Load Distribution:
+    172.21.0.10:8082    :   4 requests ( 33%)
+    172.21.0.11:8082    :   4 requests ( 33%)
+    172.21.0.8:8082     :   4 requests ( 33%)
+
+  ✓ PASS load balancing: 12/12 respondidos por 3 upstreams distintos
+
+───────────────────────────────────────────────────────────────
+  📊 Nginx Monitoring (Port 8090)
+───────────────────────────────────────────────────────────────
+
+  Nginx Status:
+    Active connections: 1
+    server accepts handled requests
+     560 560 621
+    Reading: 0 Writing: 1 Waiting: 0
+
+  Load Balancer Configuration:
+    {
+      "status": "healthy",
+      "timestamp": "2026-10-06T05:30:55+00:00",
+      "load_balancer": {
+        "algorithm": "least_conn",
+        "upstreams": {
+          "users_api": {
+            "instances": 3,
+            "servers": [
+              "users-api-1:8082",
+              "users-api-2:8082",
+              "users-api-3:8082"
+            ]
+          },
+          "hotels_api": {
+            "instances": 1,
+            "servers": [
+              "hotels-api:8081"
+            ]
+          },
+          "search_api": {
+            "instances": 1,
+            "servers": [
+              "search-api:8082"
+            ]
+          }
+        }
+      },
+      "rate_limiting": {
+        "api_limit": "10 req/sec",
+        "login_limit": "30 req/min"
+      }
+    }
+
+───────────────────────────────────────────────────────────────
+  🔗 API Endpoints Test
+───────────────────────────────────────────────────────────────
+
+  ✓ PASS GET /health → 200 (API Gateway Health)
+  ✓ PASS GET /api/v1/users → 401 (List Users (Auth required))
+  ✓ PASS GET /api/v1/hotels → 200 (List Hotels)
+  ✓ PASS GET /api/v1/search?q=test&offset=0&limit=10 → 200 (Search Hotels)
+  ✓ PASS GET /api/v1/admin/microservices → 401 (Admin (Auth required))
+  ✓ PASS GET /users → 404 (Unversioned route removed (A2))
+
+───────────────────────────────────────────────────────────────
+  🚦 Rate Limiting Test
+───────────────────────────────────────────────────────────────
+
+  Testing /api/v1/login rate limit (30 req/min, burst=10)...
+  Sending 20 rapid requests...
+
+...........XXXXXXXXX
+
+  Passed through: 11 | Rate Limited (429): 9 | 503s: 0
+  ✓ PASS rate limiting activo con 429 (9/20 limitados, cero 503)
+  ✓ PASS 429 con Content-Type JSON, envelope estándar y trace_id
+  ✓ PASS OPTIONS no consume el presupuesto de login agotado
+  ✓ PASS el presupuesto se recupera y vuelve a validar el body
+
+───────────────────────────────────────────────────────────────
+  📝 Recent Nginx Logs
+───────────────────────────────────────────────────────────────
+
+  Last 10 access log entries:
+    nginx-1  | {"time_local":"06/Oct/2026:05:30:55 +0000","remote_addr":"142.251.218.81","request":"POST /api/v1/login HTTP/1.1","status":429,"body_bytes_sent":120,"request_time":0.000,"upstream_addr":"","upstream_response_time":"","request_id":"0282934e4c67b8e43ae0a0f5def6325b"}
+    nginx-1  | 2026/10/06 05:30:55 [error] 878#878: *636 limiting requests, excess: 10.887 by zone "login_limit", client: 142.251.218.81, server: localhost, request: "POST /api/v1/login HTTP/1.1", host: "localhost"
+    nginx-1  | 2026/10/06 05:30:55 [error] 878#878: *637 limiting requests, excess: 10.880 by zone "login_limit", client: 142.251.218.81, server: localhost, request: "POST /api/v1/login HTTP/1.1", host: "localhost"
+    nginx-1  | {"time_local":"06/Oct/2026:05:30:55 +0000","remote_addr":"142.251.218.81","request":"POST /api/v1/login HTTP/1.1","status":429,"body_bytes_sent":120,"request_time":0.000,"upstream_addr":"","upstream_response_time":"","request_id":"7a12a9ce28f7324ac494da022aca0ebb"}
+    nginx-1  | 2026/10/06 05:30:55 [error] 878#878: *638 limiting requests, excess: 10.873 by zone "login_limit", client: 142.251.218.81, server: localhost, request: "POST /api/v1/login HTTP/1.1", host: "localhost"
+    nginx-1  | {"time_local":"06/Oct/2026:05:30:55 +0000","remote_addr":"142.251.218.81","request":"POST /api/v1/login HTTP/1.1","status":429,"body_bytes_sent":120,"request_time":0.000,"upstream_addr":"","upstream_response_time":"","request_id":"959401435fb23cb6e654f6f20b2c114c"}
+    nginx-1  | {"time_local":"06/Oct/2026:05:30:55 +0000","remote_addr":"142.251.218.81","request":"POST /api/v1/login HTTP/1.1","status":429,"body_bytes_sent":120,"request_time":0.000,"upstream_addr":"","upstream_response_time":"","request_id":"5de17b88028b58caae34d06fadb308c9"}
+    nginx-1  | 2026/10/06 05:30:55 [error] 878#878: *639 limiting requests, excess: 10.866 by zone "login_limit", client: 142.251.218.81, server: localhost, request: "POST /api/v1/login HTTP/1.1", host: "localhost"
+    nginx-1  | {"time_local":"06/Oct/2026:05:30:55 +0000","remote_addr":"142.251.218.81","request":"OPTIONS /api/v1/login HTTP/1.1","status":204,"body_bytes_sent":0,"request_time":0.001,"upstream_addr":"172.21.0.8:8082","upstream_response_time":"0.001","request_id":"5c1f450661b0a544f186e5f6f199b0cd"}
+    nginx-1  | {"time_local":"06/Oct/2026:05:30:58 +0000","remote_addr":"142.251.218.81","request":"POST /api/v1/login HTTP/1.1","status":400,"body_bytes_sent":112,"request_time":0.001,"upstream_addr":"172.21.0.11:8082","upstream_response_time":"0.001","request_id":"d8da6624b122e64bcf1abf0b53a41f0d"}
+
+═══════════════════════════════════════════════════════════════
+  ✅ TEST SUITE PASSED
+═══════════════════════════════════════════════════════════════
+
+  Direct Service URLs (for debugging):
+  • API Gateway:    https://localhost (self-signed: curl -k / aceptar en el browser)
+  • Nginx Monitor:  http://localhost:8090/nginx_status (solo loopback — RV26)
+  • RabbitMQ:       http://localhost:15672
+  • Solr Admin:     http://localhost:8983

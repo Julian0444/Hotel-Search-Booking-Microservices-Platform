@@ -82,3 +82,19 @@ func TestReadyz_DependencyDown(t *testing.T) {
 	assert.Equal(t, "degraded", body.Status)
 	assert.Equal(t, map[string]string{"db": "ok", "queue": "down"}, body.Checks)
 }
+
+func TestReadyz_OptionalBrokerDownKeepsSearchReady(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controller := NewController("search-api", map[string]CheckFunc{"solr": func(context.Context) error { return nil }}, map[string]CheckFunc{"rabbitmq": func(context.Context) error { return errors.New("down") }})
+	router := gin.New()
+	router.GET("/readyz", controller.Readyz)
+	response := doRequest(router, "/readyz")
+	assert.Equal(t, http.StatusOK, response.Code)
+	var body struct {
+		Status   string            `json:"status"`
+		Optional map[string]string `json:"optional_checks"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	assert.Equal(t, "degraded", body.Status)
+	assert.Equal(t, "down", body.Optional["rabbitmq"])
+}

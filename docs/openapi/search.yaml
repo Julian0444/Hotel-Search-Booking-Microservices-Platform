@@ -8,18 +8,20 @@ info:
     Consumes `CREATE`/`UPDATE`/`DELETE` events from the RabbitMQ `hotels-news`
     queue (thin event + lookup: it fetches the full hotel from hotels-api over
     HTTP) and keeps the Solr `hotels` core in sync. The index is **derived and
-    eventually consistent**: it is rebuilt from hotels-api at startup
-    (backfill) and on demand via `POST /reindex`.
+    eventually consistent**: startup, periodic and manual `POST /reindex`
+    reconciliation all add/update current hotels and remove orphaned documents.
+    This deployment has one search-api writer. Valid events retain manual ack
+    and retry with bounded delays after transient failures; invalid events
+    go to DLQ. RabbitMQ failure does not remove working search from readiness.
 
     Conventions (platform-wide):
     - Success responses use `{"data": ...}`; lists add `"meta": {"total", "limit", "offset"}`
       — `total` is the real index total, not the page size.
     - Errors always have the shape `{"error": {"code", "message", "trace_id"}}` with stable codes.
     - An `Accept` header that cannot take `application/json` yields `406 not_acceptable`.
-    - The gateway adds rate limiting (10 req/s per IP, burst 30 on `/search`)
-      and **caches `GET /search` 200s for 5 minutes keyed by full URI**
-      (`X-Cache-Status` response header) — coherent with an eventually
-      consistent index. Exceeding a limit returns `429` with the error envelope.
+    - The gateway adds rate limiting (10 req/s per IP, burst 30 on `/search`).
+      It does not cache search responses. Exceeding a limit returns `429`
+      with the error envelope.
 
     Auth: only `POST /reindex` requires a JWT (users-api issues it; this
     service validates the `search-api` audience and the `administrador` role).
@@ -47,13 +49,17 @@ paths:
       tags: [search]
       summary: Search hotels
       description: |
-        Full-text search over `name` and `description` (Solr edismax; the user
+        Full-text search over `name`, `description`, `city` and `country`
+        with equivalent upper/lower case and accent folding (`Córdoba`,
+        `cordoba`, `CORDOBA`). Stored text keeps its original spelling.
+        Solr edismax escapes and parameterizes input: the user
         input is passed as a dereferenced parameter, never interpolated into
         the query). An empty/absent `q` matches the whole catalog.
 
         `sort` orders **globally over the index**, not over the returned page,
-        with `id` as tie-breaker so pagination is stable. Anything outside the
-        whitelist is `400 invalid_sort`.
+        with `id` as tie-breaker for price/rating sorts. Anything outside the
+        whitelist is `400 invalid_sort`. The gateway does not cache search
+        responses: the same URI reflects Solr convergence without a cache bypass.
       security: []
       parameters:
         - name: q
@@ -77,10 +83,6 @@ paths:
       responses:
         '200':
           description: Page of matching hotels; `meta.total` is the real number of matches in the index.
-          headers:
-            X-Cache-Status:
-              schema: { type: string, example: HIT }
-              description: nginx cache result for this URI (`MISS`, `HIT`, `STALE`, …). Cached 200s live 5 minutes.
           content:
             application/json:
               schema:
@@ -104,16 +106,23 @@ paths:
     post:
       operationId: reindexHotels
       tags: [admin]
-      summary: Rebuild the index from hotels-api (admin only)
+      summary: Reconcile the index with hotels-api (admin only)
       description: |
-        Runs the same full backfill as startup: pages through hotels-api's
-        `GET /hotels` (the source of truth) and re-indexes every hotel into
-        Solr. Synchronous on purpose — the `200` confirms the index is
-        rebuilt. Manual rescue for the rare case the event pipeline and the
-        index drift apart.
+        Enumerates the union of Mongo catalogue IDs (keyset pages) and Solr
+        IDs (cursor), fetches each current hotel, upserts existing hotels and
+        deletes orphans. It never empties the core. A single search-api instance
+        serializes reconciliation and event processing; queued events read fresh
+        state after reconciliation. This is eventual consistency, not a shared
+        Mongo/Solr snapshot: concurrent changes with a lost event may require
+        the next periodic pass (one minute after success; five seconds after failure).
+        `200` confirms this pass finished. The response `indexed` counts existing
+        hotels; logs additionally report `checked`, including orphan IDs.
+        Solr soft-commit visibility is normally within one second.
+        Updating an existing schema first requires the documented maintenance
+        script; editing the config mount alone does not alter an existing core.
       responses:
         '200':
-          description: Index rebuilt.
+          description: Reconciliation pass completed; orphan deletions included.
           content:
             application/json:
               schema:
@@ -178,10 +187,12 @@ components:
         check_out_time: { type: string, description: 'Time of day `"HH:mm"`.', example: '10:00' }
         amenities:
           type: array
+          nullable: true
           items: { type: string }
           example: [wifi, pileta, desayuno]
         images:
           type: array
+          nullable: true
           items: { type: string }
           description: Image URLs. May be empty — clients render a local fallback.
     ListMeta:

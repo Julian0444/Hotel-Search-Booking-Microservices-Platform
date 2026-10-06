@@ -82,3 +82,24 @@ func TestReadyz_DependencyDown(t *testing.T) {
 	assert.Equal(t, "degraded", body.Status)
 	assert.Equal(t, map[string]string{"db": "ok", "queue": "down"}, body.Checks)
 }
+
+func TestReadyzOptionalDependencyDownKeepsServing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controller := NewController("test", map[string]CheckFunc{
+		"database": func(context.Context) error { return nil },
+	}, map[string]CheckFunc{
+		"memcached": func(context.Context) error { return errors.New("offline") },
+	})
+	router := gin.New()
+	router.GET("/readyz", controller.Readyz)
+	response := doRequest(router, "/readyz")
+	require.Equal(t, http.StatusOK, response.Code)
+	var body struct {
+		Status string
+		Checks map[string]string
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	assert.Equal(t, "degraded", body.Status)
+	assert.Equal(t, "down", body.Checks["memcached"])
+	assert.Equal(t, "ok", body.Checks["database"])
+}

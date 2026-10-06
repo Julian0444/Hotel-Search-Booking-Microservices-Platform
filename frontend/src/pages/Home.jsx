@@ -24,12 +24,12 @@ const steps = [
   {
     icon: <SearchIcon sx={{ fontSize: 32 }} />,
     title: 'Search',
-    description: 'Full-text search over a Solr index that stays in sync with the catalog through events.',
+    description: 'Find stays by hotel name, city or country.',
   },
   {
     icon: <ReserveIcon sx={{ fontSize: 32 }} />,
     title: 'Reserve',
-    description: 'Per-night availability is claimed atomically — no overbooking, and retries never double-book.',
+    description: 'Choose your dates and rooms, check availability and confirm your stay.',
   },
   {
     icon: <ManageIcon sx={{ fontSize: 32 }} />,
@@ -51,7 +51,7 @@ const Home = () => {
     <Box>
       <RouteMeta
         title="Stays worth returning to"
-        description="Search indexed stays, reserve with protected availability, and manage your bookings."
+        description="Find your next stay, check availability and manage your bookings."
       />
 
       {/* Acto 1 — hero editorial */}

@@ -34,7 +34,7 @@ const Footer = () => (
               StayLux
             </Typography>
             <Typography variant="caption" sx={{ opacity: 0.7 }}>
-              Indexed search · protected availability · idempotent booking
+              Find a stay · check availability · manage your bookings
             </Typography>
           </Box>
         </Box>

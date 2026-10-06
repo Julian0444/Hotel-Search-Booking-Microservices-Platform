@@ -48,7 +48,7 @@ const Login = () => {
   // Sesión ya activa (p. ej. Back hasta /login): a la home, no otro login
   useEffect(() => {
     if (isAuthenticated && !isSubmitting) {
-      navigate(from, { replace: true });
+      navigate(from, { replace: true, state: location.state?.from?.state });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -57,7 +57,7 @@ const Login = () => {
     setFormError(null);
     const result = await login(data.username.trim(), data.password);
     if (result.success) {
-      navigate(from, { replace: true });
+      navigate(from, { replace: true, state: location.state?.from?.state });
     } else {
       setFormError(result.error);
       setFocus('username');
@@ -172,7 +172,7 @@ const Login = () => {
             </Typography>
           </Divider>
 
-          <Button component={Link} to={ROUTES.REGISTER} fullWidth variant="outlined" size="large">
+          <Button component={Link} to={ROUTES.REGISTER} state={location.state} fullWidth variant="outlined" size="large">
             Create an account
           </Button>
 

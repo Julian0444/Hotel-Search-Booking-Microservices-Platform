@@ -56,7 +56,7 @@ func TestBuildSearchQuery(t *testing.T) {
 	t.Run("multi-word query goes as dereferenced param", func(t *testing.T) {
 		qm := buildSearchQuery("hotel spa", "", 10, 20).BuildQuery()
 
-		if got := qm["query"]; got != "{!edismax qf='name description' v=$qq}" {
+		if got := qm["query"]; got != "{!edismax qf='name description city country' v=$qq}" {
 			t.Errorf("query: got %v", got)
 		}
 		params, ok := qm["params"].(solr.M)

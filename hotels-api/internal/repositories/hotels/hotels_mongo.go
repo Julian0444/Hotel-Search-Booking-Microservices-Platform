@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math"
 	"time"
 
 	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
@@ -15,9 +16,13 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readconcern"
+	"go.mongodb.org/mongo-driver/mongo/writeconcern"
 )
 
 type MongoConfig struct {
+	ReplicaSet              string
+	Direct                  bool
 	Host                    string
 	Port                    string
 	Username                string
@@ -48,11 +53,6 @@ const (
 	// (R2); holgado a propósito: el deadline fino lo pone opCtx por operación.
 	socketTimeout = 10 * time.Second
 
-	// Reintentos de la liberación de noches (RV23): un fallo transitorio no
-	// puede dejar inventario bloqueado para siempre.
-	releaseMaxAttempts  = 3
-	releaseRetryBackoff = 200 * time.Millisecond
-
 	// availabilityMaxConcurrency limita el fan-out del batch de disponibilidad
 	// (R4, bulkhead): antes cada ID lanzaba su goroutine sin tope y un body
 	// grande multiplicaba queries concurrentes contra Mongo.
@@ -77,11 +77,14 @@ func NewMongo(config MongoConfig) Mongo {
 	//Crea la URI de conexion
 	uri := fmt.Sprintf(connectionURI, config.Host, config.Port)
 	//Crea la configuracion de conexion con pool y timeout de driver (DB3)
-	cfg := options.Client().ApplyURI(uri).SetAuth(credentials).
+	cfg := options.Client().ApplyURI(uri).SetReplicaSet(config.ReplicaSet).SetDirect(config.Direct).
 		SetMaxPoolSize(50).
 		SetServerSelectionTimeout(5 * time.Second).
 		SetSocketTimeout(socketTimeout)
 
+	if config.Username != "" {
+		cfg.SetAuth(credentials)
+	}
 	//Crea la conexion a MongoDB
 	client, err := mongo.Connect(ctx, cfg)
 	if err != nil {
@@ -107,6 +110,15 @@ func NewMongo(config MongoConfig) Mongo {
 		log.Panicf("error ensuring mongo indexes: %v", err)
 	}
 
+	var hello struct {
+		SetName string `bson:"setName"`
+	}
+	if err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "hello", Value: 1}}).Decode(&hello); err != nil || hello.SetName == "" {
+		log.Panicf("Mongo replica set required for reservation transactions: set=%q err=%v", hello.SetName, err)
+	}
+	if err := repository.AuditInventory(ctx); err != nil {
+		log.Panicf("existing reservation data requires inspection: %v", err)
+	}
 	return repository
 }
 
@@ -228,6 +240,8 @@ func (repository Mongo) CountHotels(ctx context.Context) (int64, error) {
 
 // Crea un nuevo hotel en MongoDB
 func (repository Mongo) Create(ctx context.Context, hotel hotelsDAO.Hotel) (string, error) {
+	// The server owns identity. Never persist a client-supplied string _id.
+	hotel.ID = ""
 	// Insertar el documento en MongoDB (deadline por operación, R2)
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
@@ -246,105 +260,103 @@ func (repository Mongo) Create(ctx context.Context, hotel hotelsDAO.Hotel) (stri
 	return objectID.Hex(), nil
 }
 
-// Actualiza un hotel en MongoDB
-func (repository Mongo) Update(ctx context.Context, hotel hotelsDAO.Hotel) error {
-	// Convert hotel ID to MongoDB ObjectID (hex inválido = not-found tipado, RV14)
-	objectID, err := primitive.ObjectIDFromHex(hotel.ID)
-	if err != nil {
-		return fmt.Errorf("invalid hotel id %q: %w", hotel.ID, hotelsDomain.ErrHotelNotFound)
-	}
-
-	// Crea un mapa con los campos a actualizar
-	update := bson.M{}
-
-	// Actualiza solo los campos que no son cero o vacios
-	if hotel.Name != "" {
-		update["name"] = hotel.Name
-	}
-	if hotel.Address != "" {
-		update["address"] = hotel.Address
-	}
-	if hotel.Description != "" {
-		update["description"] = hotel.Description
-	}
-	if hotel.City != "" {
-		update["city"] = hotel.City
-	}
-	if hotel.State != "" {
-		update["state"] = hotel.State
-	}
-	if hotel.Country != "" {
-		update["country"] = hotel.Country
-	}
-	if hotel.Phone != "" {
-		update["phone"] = hotel.Phone
-	}
-	if hotel.Email != "" {
-		update["email"] = hotel.Email
-	}
-	if hotel.PricePerNight != 0 { // Asumiendo que 0 es el valor por defecto para PricePerNight
-		update["price_per_night"] = hotel.PricePerNight
-	}
-	if hotel.AvailableRooms != 0 { // Asumiendo que 0 es el valor por defecto para AvailableRooms
-		update["available_rooms"] = hotel.AvailableRooms
-	}
-	if hotel.CheckInTime != "" { // Asumiendo que "" es el valor por defecto para CheckInTime
-		update["check_in_time"] = hotel.CheckInTime
-	}
-	if hotel.CheckOutTime != "" { // Asumiendo que "" es el valor por defecto para CheckOutTime
-		update["check_out_time"] = hotel.CheckOutTime
-	}
-	if hotel.Rating != 0 { // Asumiendo que 0 es el valor por defecto para Rating
-		update["rating"] = hotel.Rating
-	}
-	if len(hotel.Amenities) > 0 { // Asumiendo que un slice vacio es el valor por defecto para Amenities
-		update["amenities"] = hotel.Amenities
-	}
-	if len(hotel.Images) > 0 { // Asumiendo que un slice vacio es el valor por defecto para Images
-		update["images"] = hotel.Images
-	}
-
-	// Actualiza el documento en MongoDB
-	if len(update) == 0 {
-		return fmt.Errorf("no fields to update for hotel ID %s", hotel.ID)
-	}
-
-	// Saca el objectID del documento y actualiza los campos en MongoDB
-	ctx, cancel := opCtx(ctx)
+// transaction usa los reintentos del driver para TransientTransactionError y
+// UnknownTransactionCommitResult. Nunca compensa un commit ambiguo. El ID y la
+// clave de reserva viven fuera del callback y no hay efectos externos en él.
+func (repository Mongo) transaction(ctx context.Context, fn func(mongo.SessionContext) (interface{}, error)) (interface{}, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	filter := bson.M{"_id": objectID}
-	result, err := repository.client.Database(repository.database).Collection(repository.collection_hotel).UpdateOne(ctx, filter, bson.M{"$set": update})
+	session, err := repository.client.StartSession()
 	if err != nil {
-		return fmt.Errorf("error updating document: %w", err)
+		return nil, err
 	}
-	if result.MatchedCount == 0 {
-		return fmt.Errorf("hotel %s: %w", hotel.ID, hotelsDomain.ErrHotelNotFound)
-	}
-
-	return nil
+	defer session.EndSession(context.Background())
+	return session.WithTransaction(ctx, fn, options.Transaction().SetReadConcern(readconcern.Snapshot()).SetWriteConcern(writeconcern.Majority()))
 }
 
-// Elimina un hotel de MongoDB
-func (repository Mongo) Delete(ctx context.Context, id string) error {
-	// Convert hotel ID to MongoDB ObjectID (hex inválido = not-found tipado, RV14)
+// lockHotel coordina TODAS las escrituras de capacidad, reservas y borrado.
+// Una lectura snapshot por sí sola no evitaría write skew entre documentos.
+func (repository Mongo) lockHotel(ctx mongo.SessionContext, id string) (hotelsDAO.Hotel, error) {
 	objectID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		return fmt.Errorf("invalid hotel id %q: %w", id, hotelsDomain.ErrHotelNotFound)
+		return hotelsDAO.Hotel{}, hotelsDomain.ErrHotelNotFound
 	}
+	var hotel hotelsDAO.Hotel
+	err = repository.client.Database(repository.database).Collection(repository.collection_hotel).
+		FindOneAndUpdate(ctx, bson.M{"_id": objectID}, bson.M{"$inc": bson.M{"booking_version": 1}}, options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&hotel)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return hotel, hotelsDomain.ErrHotelNotFound
+	}
+	return hotel, err
+}
 
-	// Elimina el documento de MongoDB (deadline por operación, R2)
-	ctx, cancel := opCtx(ctx)
-	defer cancel()
-	filter := bson.M{"_id": objectID}
-	result, err := repository.client.Database(repository.database).Collection(repository.collection_hotel).DeleteOne(ctx, filter)
+// PUT reemplaza todos los campos públicos, incluidos cero y listas vacías.
+// Se conservan _id y booking_version internos. No se destruye historial.
+func (repository Mongo) Update(ctx context.Context, hotel hotelsDAO.Hotel) error {
+	canonicalID, err := canonicalHotelID(hotel.ID)
 	if err != nil {
-		return fmt.Errorf("error deleting document: %w", err)
+		return err
 	}
-	if result.DeletedCount == 0 {
-		return fmt.Errorf("hotel %s: %w", id, hotelsDomain.ErrHotelNotFound)
-	}
+	hotel.ID = canonicalID
+	_, err = repository.transaction(ctx, func(sc mongo.SessionContext) (interface{}, error) {
+		if _, err := repository.lockHotel(sc, hotel.ID); err != nil {
+			return nil, err
+		}
+		inventory := repository.client.Database(repository.database).Collection(repository.collection_inventory)
+		count, err := inventory.CountDocuments(sc, bson.M{"hotel_id": hotel.ID, "booked": bson.M{"$gt": hotel.AvailableRooms}})
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return nil, hotelsDomain.ErrCapacityConflict
+		}
+		raw, err := bson.Marshal(hotel)
+		if err != nil {
+			return nil, err
+		}
+		var fields bson.M
+		if err := bson.Unmarshal(raw, &fields); err != nil {
+			return nil, err
+		}
+		delete(fields, "_id")
+		id, _ := primitive.ObjectIDFromHex(hotel.ID)
+		if _, err = repository.client.Database(repository.database).Collection(repository.collection_hotel).UpdateOne(sc, bson.M{"_id": id}, bson.M{"$set": fields}); err != nil {
+			return nil, err
+		}
+		_, err = inventory.UpdateMany(sc, bson.M{"hotel_id": hotel.ID}, bson.M{"$set": bson.M{"capacity": hotel.AvailableRooms}})
+		return nil, err
+	})
+	return err
+}
 
-	return nil
+// Borrar un hotel con historial se rechaza; las reservas nunca desaparecen
+// detrás de un DELETE administrativo. Hotel e inventario se borran juntos.
+func (repository Mongo) Delete(ctx context.Context, id string) error {
+	canonicalID, err := canonicalHotelID(id)
+	if err != nil {
+		return err
+	}
+	id = canonicalID
+	_, err = repository.transaction(ctx, func(sc mongo.SessionContext) (interface{}, error) {
+		if _, err := repository.lockHotel(sc, id); err != nil {
+			return nil, err
+		}
+		db := repository.client.Database(repository.database)
+		count, err := db.Collection(repository.collection_reservation).CountDocuments(sc, bson.M{"hotel_id": id})
+		if err != nil {
+			return nil, err
+		}
+		if count != 0 {
+			return nil, hotelsDomain.ErrHotelHasReservations
+		}
+		objectID, _ := primitive.ObjectIDFromHex(id)
+		if _, err = db.Collection(repository.collection_hotel).DeleteOne(sc, bson.M{"_id": objectID}); err != nil {
+			return nil, err
+		}
+		_, err = db.Collection(repository.collection_inventory).DeleteMany(sc, bson.M{"hotel_id": id})
+		return nil, err
+	})
+	return err
 }
 
 // nightsBetween devuelve las noches ocupadas por el rango en formato canónico
@@ -378,136 +390,104 @@ func (repository Mongo) hotelCapacity(ctx context.Context, hotelID string) (int,
 	return hotel.AvailableRooms, nil
 }
 
-// claimNight reclama atómicamente `rooms` habitaciones para una noche vía
-// findOneAndUpdate con upsert sobre el índice único {hotel_id, date} (D1).
-// Devuelve (false, nil) si la noche no tiene cupo.
-func (repository Mongo) claimNight(ctx context.Context, collection *mongo.Collection, hotelID, day string, rooms, capacity int) (bool, error) {
-	// Deadline por claim (R2): un claim colgado por timeout es ambiguo (pudo o
-	// no haber impactado) — acotarlo achica esa ventana; ver releaseNights.
-	ctx, cancel := opCtx(ctx)
-	defer cancel()
-	filter := bson.M{"hotel_id": hotelID, "date": day, "booked": bson.M{"$lte": capacity - rooms}}
-	// hotel_id/date NO van en $setOnInsert: ya están en el filtro de igualdad
-	// y duplicarlos da error "conflict" en el upsert.
-	update := bson.M{"$inc": bson.M{"booked": rooms}, "$setOnInsert": bson.M{"capacity": capacity}}
-
-	// SetReturnDocument(After): el default Before devuelve ErrNoDocuments en un
-	// upsert-insert exitoso y parecería fallo.
-	err := collection.FindOneAndUpdate(ctx, filter, update,
-		options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)).Err()
-	if err == nil {
-		return true, nil
-	}
-	if !mongo.IsDuplicateKeyError(err) {
-		return false, fmt.Errorf("error claiming night %s: %w", day, err)
-	}
-
-	// Carrera del upsert: otro request insertó el doc entre el no-match del
-	// filtro y nuestro insert. Reintentar UNA sola vez SIN upsert — el doc ya
-	// existe y el filtro decide: matchea → claim ok; no matchea → noche llena.
-	err = collection.FindOneAndUpdate(ctx, filter, update,
-		options.FindOneAndUpdate().SetReturnDocument(options.After)).Err()
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return false, nil
-	}
-	return false, fmt.Errorf("error claiming night %s (retry): %w", day, err)
-}
-
-// releaseNights libera habitaciones reclamadas (compensación del claim o
-// cancelación). Usa un contexto sin cancelación: si el request original murió
-// a mitad de camino, la compensación tiene que correr igual.
-// Cada noche se reintenta con backoff (RV23): un único intento best-effort
-// dejaba inventario bloqueado para siempre ante un fallo transitorio — y la
-// idempotencia del segundo DELETE impide re-liberar después. Si aun así una
-// noche falla, queda el log estructurado para reconciliación manual: el sesgo
-// es deliberadamente conservador — liberar de más habilitaría overbooking,
-// que acá es peor que una noche bloqueada.
-func (repository Mongo) releaseNights(ctx context.Context, collection *mongo.Collection, hotelID string, nights []string, rooms int) {
-	base := context.WithoutCancel(ctx)
-	for _, night := range nights {
-		if err := repository.releaseNight(base, collection, hotelID, night, rooms); err != nil {
-			slog.Error("error releasing inventory night after retries; requires manual reconciliation",
-				"hotel_id", hotelID, "date", night, "rooms", rooms, "error", err)
-		}
-	}
-}
-
-// releaseNight decrementa el contador de una noche con reintentos acotados y
-// deadline propio por intento (R2/RV23).
-func (repository Mongo) releaseNight(ctx context.Context, collection *mongo.Collection, hotelID, night string, rooms int) error {
-	var lastErr error
-	for attempt := 1; attempt <= releaseMaxAttempts; attempt++ {
-		if attempt > 1 {
-			time.Sleep(time.Duration(attempt-1) * releaseRetryBackoff)
-		}
-		attemptCtx, cancel := opCtx(ctx)
-		_, err := collection.UpdateOne(attemptCtx,
-			bson.M{"hotel_id": hotelID, "date": night},
-			bson.M{"$inc": bson.M{"booked": -rooms}})
-		cancel()
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-	}
-	return lastErr
-}
-
-// Funcion para crear una reserva en MongoDB: primero reclama el inventario de
-// cada noche de forma atómica (D1) y recién entonces inserta la reserva. Si
-// algo falla a mitad de camino, libera lo ya reclamado (compensación).
+// CreateReservation confirma reserva, noches e identidad del intento en una
+// transacción. Un replay se resuelve antes de revalidar capacidad/precio/fecha.
 func (repository Mongo) CreateReservation(ctx context.Context, reservation hotelsDAO.Reservation) (string, error) {
-	capacity, err := repository.hotelCapacity(ctx, reservation.HotelID)
+	canonicalID, err := canonicalHotelID(reservation.HotelID)
 	if err != nil {
 		return "", err
 	}
-	// Guard defensivo: sin él, un pedido de más habitaciones que la capacidad
-	// sobre una noche sin doc de inventario insertaría booked > capacity.
-	if reservation.NumRooms < 1 || reservation.NumRooms > capacity {
-		return "", hotelsDomain.ErrNoAvailability
-	}
-
-	inventory := repository.client.Database(repository.database).Collection(repository.collection_inventory)
-	nights := nightsBetween(reservation.CheckIn, reservation.CheckOut)
-
-	// Reclamar noche por noche; ante la primera que falle, liberar las ya
-	// reclamadas y devolver el sentinel (el controller lo mapea a 409).
-	var claimed []string
-	for _, night := range nights {
-		ok, err := repository.claimNight(ctx, inventory, reservation.HotelID, night, reservation.NumRooms, capacity)
+	reservation.HotelID = canonicalID
+	operation := hotelsDomain.IdempotencyFromContext(ctx)
+	fingerprint := reservationFingerprint(reservation)
+	id := primitive.NewObjectID()
+	result, err := repository.transaction(ctx, func(sc mongo.SessionContext) (interface{}, error) {
+		if operation != nil && operation.Key != "" {
+			existing, err := repository.lookupIdempotency(sc, operation.Key, reservation.UserID, fingerprint)
+			if err != nil {
+				return nil, err
+			}
+			if existing != "" {
+				operation.Replayed = true
+				return existing, nil
+			}
+		}
+		hotel, err := repository.lockHotel(sc, reservation.HotelID)
 		if err != nil {
-			repository.releaseNights(ctx, inventory, reservation.HotelID, claimed, reservation.NumRooms)
-			return "", err
+			return nil, err
 		}
-		if !ok {
-			repository.releaseNights(ctx, inventory, reservation.HotelID, claimed, reservation.NumRooms)
-			return "", hotelsDomain.ErrNoAvailability
+		if math.IsNaN(hotel.PricePerNight) || math.IsInf(hotel.PricePerNight, 0) || hotel.PricePerNight < 0 || hotel.PricePerNight > 1000000 {
+			return nil, hotelsDomain.ErrInvalidHotel
 		}
-		claimed = append(claimed, night)
-	}
-
-	// Con el inventario asegurado, insertar el documento de la reserva
-	// (deadline propio, R2: el ctx del método sigue sin acotar a propósito —
-	// los claims ya se acotaron de a uno)
-	insertCtx, cancel := opCtx(ctx)
-	defer cancel()
-	result, err := repository.client.Database(repository.database).Collection(repository.collection_reservation).InsertOne(insertCtx, reservation)
+		if reservation.NumRooms < 1 || reservation.NumRooms > hotel.AvailableRooms {
+			return nil, hotelsDomain.ErrNoAvailability
+		}
+		nights := nightsBetween(reservation.CheckIn, reservation.CheckOut)
+		if len(nights) == 0 || len(nights) > 366 || reservation.NumGuests < 1 || reservation.CheckIn.Before(normalizeDate(time.Now().UTC())) {
+			return nil, hotelsDomain.ErrInvalidReservation
+		}
+		inventory := repository.client.Database(repository.database).Collection(repository.collection_inventory)
+		for _, night := range nights {
+			filter := bson.M{"hotel_id": reservation.HotelID, "date": night}
+			var entry hotelsDAO.Inventory
+			err := inventory.FindOne(sc, filter).Decode(&entry)
+			if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+				return nil, err
+			}
+			if entry.Booked < 0 {
+				return nil, hotelsDomain.ErrInventoryInconsistent
+			}
+			if entry.Booked+reservation.NumRooms > hotel.AvailableRooms {
+				return nil, hotelsDomain.ErrNoAvailability
+			}
+			if _, err := inventory.UpdateOne(sc, filter, bson.M{"$inc": bson.M{"booked": reservation.NumRooms}, "$set": bson.M{"capacity": hotel.AvailableRooms}}, options.Update().SetUpsert(true)); err != nil {
+				return nil, err
+			}
+		}
+		reservation.HotelName = hotel.Name
+		reservation.TotalPrice = int64(math.Round(hotel.PricePerNight*100)) * int64(len(nights)) * int64(reservation.NumRooms)
+		reservation.Currency = "USD"
+		reservation.Status = hotelsDAO.StatusConfirmed
+		reservation.CreatedAt = time.Now().UTC()
+		raw, err := bson.Marshal(reservation)
+		if err != nil {
+			return nil, err
+		}
+		var doc bson.M
+		if err := bson.Unmarshal(raw, &doc); err != nil {
+			return nil, err
+		}
+		doc["_id"] = id
+		if _, err = repository.client.Database(repository.database).Collection(repository.collection_reservation).InsertOne(sc, doc); err != nil {
+			return nil, err
+		}
+		if operation != nil && operation.Key != "" {
+			_, err = repository.idempotencyCollection().InsertOne(sc, IdempotencyRecord{Key: operation.Key, UserID: reservation.UserID, Fingerprint: fingerprint, ReservationID: id.Hex(), CreatedAt: time.Now().UTC()})
+			if err != nil {
+				return nil, err
+			}
+		}
+		return id.Hex(), nil
+	})
 	if err != nil {
-		repository.releaseNights(ctx, inventory, reservation.HotelID, claimed, reservation.NumRooms)
-		return "", fmt.Errorf("error creating document: %w", err)
+		// Una key concurrente sobre otro hotel puede chocar en el índice único.
+		// También recuperamos commits aplicados cuya respuesta se perdió al vencer
+		// el request: sólo se devuelve éxito si existe la identidad durable.
+		if operation != nil && operation.Key != "" {
+			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mongoOpTimeout)
+			defer cancel()
+			existing, lookupErr := repository.lookupIdempotency(recoveryCtx, operation.Key, reservation.UserID, fingerprint)
+			if lookupErr == nil && existing != "" {
+				operation.Replayed = true
+				return existing, nil
+			}
+			if errors.Is(lookupErr, hotelsDomain.ErrIdempotencyConflict) {
+				return "", lookupErr
+			}
+		}
+		return "", err
 	}
-
-	// Saca el ObjectID del resultado de la insercion
-	objectID, ok := result.InsertedID.(primitive.ObjectID)
-	if !ok {
-		return "", fmt.Errorf("error converting mongo ID to object ID")
-	}
-
-	// Regresa el ID del documento insertado
-	return objectID.Hex(), nil
+	return result.(string), nil
 }
 
 // Funcion para obtener una reserva por ID en MongoDB
@@ -539,56 +519,50 @@ func (repository Mongo) GetReservationByID(ctx context.Context, id string) (hote
 	return reservation, nil
 }
 
-// CancelReservation es un soft-delete idempotente (DM1): marca la reserva
-// como cancelled y libera sus noches del inventario. El filtro por
-// status=confirmed hace la operación idempotente — un segundo cancel no
-// matchea y NO doble-libera. Devuelve la reserva cancelada (el service la usa
-// para la caché y el evento).
+// CancelReservation cambia estado y libera todas las noches en la misma
+// transacción. Repetirla sólo lee cancelled; no vuelve a decrementar.
 func (repository Mongo) CancelReservation(ctx context.Context, id string) (hotelsDAO.Reservation, error) {
-	// Convert reservation ID to MongoDB ObjectID (hex inválido = not-found tipado)
 	objectID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		return hotelsDAO.Reservation{}, fmt.Errorf("invalid reservation id %q: %w", id, hotelsDomain.ErrReservationNotFound)
+		return hotelsDAO.Reservation{}, hotelsDomain.ErrReservationNotFound
 	}
-
-	collection := repository.client.Database(repository.database).Collection(repository.collection_reservation)
-	now := time.Now().UTC()
-
-	// FindOneAndUpdate devuelve la pre-imagen (default Before): de ahí salen
-	// las noches y habitaciones a liberar. Deadline por operación (R2) — la
-	// liberación posterior corre sobre el ctx sin acotar (releaseNights pone
-	// el suyo por intento).
-	var reservation hotelsDAO.Reservation
-	filter := bson.M{"_id": objectID, "status": hotelsDAO.StatusConfirmed}
-	update := bson.M{"$set": bson.M{"status": hotelsDAO.StatusCancelled, "cancelled_at": now}}
-	cancelCtx, cancelOp := opCtx(ctx)
-	defer cancelOp()
-	err = collection.FindOneAndUpdate(cancelCtx, filter, update).Decode(&reservation)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		// Idempotencia: si ya estaba cancelada, devolverla sin re-liberar
-		existing, getErr := repository.GetReservationByID(ctx, id)
-		if getErr != nil {
-			return hotelsDAO.Reservation{}, fmt.Errorf("reservation %s: %w", id, hotelsDomain.ErrReservationNotFound)
+	result, err := repository.transaction(ctx, func(sc mongo.SessionContext) (interface{}, error) {
+		db := repository.client.Database(repository.database)
+		var reservation hotelsDAO.Reservation
+		if err := db.Collection(repository.collection_reservation).FindOne(sc, bson.M{"_id": objectID}).Decode(&reservation); err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				return nil, hotelsDomain.ErrReservationNotFound
+			}
+			return nil, err
 		}
-		if existing.Status == hotelsDAO.StatusCancelled {
-			return existing, nil
+		if reservation.Status == hotelsDAO.StatusCancelled {
+			return reservation, nil
 		}
-		return hotelsDAO.Reservation{}, fmt.Errorf("reservation %s is not cancellable (status %q)", id, existing.Status)
-	}
+		if reservation.Status != hotelsDAO.StatusConfirmed || reservation.NumRooms < 1 {
+			return nil, hotelsDomain.ErrInventoryInconsistent
+		}
+		if _, err := repository.lockHotel(sc, reservation.HotelID); err != nil {
+			return nil, err
+		}
+		for _, night := range nightsBetween(reservation.CheckIn, reservation.CheckOut) {
+			changed, err := db.Collection(repository.collection_inventory).UpdateOne(sc, bson.M{"hotel_id": reservation.HotelID, "date": night, "booked": bson.M{"$gte": reservation.NumRooms}}, bson.M{"$inc": bson.M{"booked": -reservation.NumRooms}})
+			if err != nil {
+				return nil, err
+			}
+			if changed.MatchedCount != 1 {
+				return nil, hotelsDomain.ErrInventoryInconsistent
+			}
+		}
+		now := time.Now().UTC()
+		_, err := db.Collection(repository.collection_reservation).UpdateOne(sc, bson.M{"_id": objectID}, bson.M{"$set": bson.M{"status": hotelsDAO.StatusCancelled, "cancelled_at": now}})
+		reservation.Status = hotelsDAO.StatusCancelled
+		reservation.CancelledAt = &now
+		return reservation, err
+	})
 	if err != nil {
-		return hotelsDAO.Reservation{}, fmt.Errorf("error cancelling reservation: %w", err)
+		return hotelsDAO.Reservation{}, err
 	}
-	reservation.ID = id
-
-	// Liberar las noches de la reserva del inventario
-	inventory := repository.client.Database(repository.database).Collection(repository.collection_inventory)
-	repository.releaseNights(ctx, inventory, reservation.HotelID, nightsBetween(reservation.CheckIn, reservation.CheckOut), reservation.NumRooms)
-
-	// Reflejar el estado post-cancelación en el valor devuelto
-	reservation.Status = hotelsDAO.StatusCancelled
-	reservation.CancelledAt = &now
-
-	return reservation, nil
+	return result.(hotelsDAO.Reservation), nil
 }
 
 // findPageOptions arma la paginación a nivel DB (DB5) con orden estable por _id.
@@ -619,6 +593,11 @@ func (repository Mongo) GetReservationsByUserID(ctx context.Context, userID stri
 
 // Funcion para encontrar las reservas de un usuario en un hotel en MongoDB
 func (repository Mongo) GetReservationsByHotelID(ctx context.Context, hotelID string, limit, offset int64) ([]hotelsDAO.Reservation, error) {
+	canonicalID, err := canonicalHotelID(hotelID)
+	if err != nil {
+		return nil, err
+	}
+	hotelID = canonicalID
 	// Buscar el documento en MongoDB por su ID (deadline por operación, R2)
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
@@ -637,6 +616,11 @@ func (repository Mongo) GetReservationsByHotelID(ctx context.Context, hotelID st
 
 // Funcion para encontrar las reservas de un usuario en un hotel en MongoDB
 func (repository Mongo) GetReservationsByUserAndHotelID(ctx context.Context, hotelID string, userID string, limit, offset int64) ([]hotelsDAO.Reservation, error) {
+	canonicalID, err := canonicalHotelID(hotelID)
+	if err != nil {
+		return nil, err
+	}
+	hotelID = canonicalID
 	// Buscar el documento en MongoDB por su ID (deadline por operación, R2)
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
@@ -651,27 +635,6 @@ func (repository Mongo) GetReservationsByUserAndHotelID(ctx context.Context, hot
 		return nil, fmt.Errorf("error decoding result: %w", err)
 	}
 	return reservations, nil
-}
-
-// Funcion para eliminar todas las reservas de un hotel (y su inventario:
-// sin esto, borrar un hotel dejaría contadores huérfanos)
-func (repository Mongo) DeleteReservationsByHotelID(ctx context.Context, hotelID string) error {
-	// Eliminar todas las reservas que pertenezcan al hotel especificado
-	// (deadline por operación, R2 — cubre los dos DeleteMany)
-	ctx, cancel := opCtx(ctx)
-	defer cancel()
-	result, err := repository.client.Database(repository.database).Collection(repository.collection_reservation).DeleteMany(ctx, bson.M{"hotel_id": hotelID})
-	if err != nil {
-		return fmt.Errorf("error deleting reservations for hotel %s: %w", hotelID, err)
-	}
-
-	if _, err := repository.client.Database(repository.database).Collection(repository.collection_inventory).DeleteMany(ctx, bson.M{"hotel_id": hotelID}); err != nil {
-		return fmt.Errorf("error deleting inventory for hotel %s: %w", hotelID, err)
-	}
-
-	slog.Info("deleted reservations for hotel", "count", result.DeletedCount, "hotel_id", hotelID)
-
-	return nil
 }
 
 // GetAvailability verifica la disponibilidad de múltiples hoteles de forma
@@ -719,6 +682,11 @@ func (repository Mongo) GetAvailability(ctx context.Context, hotelIDs []string, 
 // documento de inventario es una noche libre. Compara contra la capacidad
 // actual del hotel — la misma que usa el filtro del claim.
 func (repository Mongo) IsHotelAvailable(ctx context.Context, hotelID, checkIn, checkOut string) (bool, error) {
+	canonicalID, err := canonicalHotelID(hotelID)
+	if err != nil {
+		return false, err
+	}
+	hotelID = canonicalID
 	// Convertir las fechas
 	checkInTime, err := time.Parse("2006-01-02", checkIn)
 	if err != nil {
@@ -758,9 +726,47 @@ func (repository Mongo) IsHotelAvailable(ctx context.Context, hotelID, checkIn, 
 
 	// Disponible si TODAS las noches del rango tienen cupo
 	for _, entry := range entries {
+		if entry.Booked < 0 {
+			return false, hotelsDomain.ErrInventoryInconsistent
+		}
 		if entry.Booked >= capacity {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// GetHotelsAfter enumera sin offsets inestables ante borrados concurrentes.
+func (repository Mongo) GetHotelsAfter(ctx context.Context, afterID string, limit int64) ([]hotelsDAO.Hotel, error) {
+	ctx, cancel := opCtx(ctx)
+	defer cancel()
+	filter := bson.M{}
+	if afterID != "" {
+		id, err := primitive.ObjectIDFromHex(afterID)
+		if err != nil {
+			return nil, err
+		}
+		filter["_id"] = bson.M{"$gt": id}
+	}
+	cursor, err := repository.client.Database(repository.database).Collection(repository.collection_hotel).Find(ctx, filter, findPageOptions(limit, 0))
+	if err != nil {
+		return nil, err
+	}
+	var result []hotelsDAO.Hotel
+	err = cursor.All(ctx, &result)
+	return result, err
+}
+
+func normalizeDate(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// ObjectIDs accept hexadecimal aliases, but foreign keys must have one
+// spelling or capacity and idempotency could split into distinct inventories.
+func canonicalHotelID(id string) (string, error) {
+	parsed, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return "", hotelsDomain.ErrHotelNotFound
+	}
+	return parsed.Hex(), nil
 }

@@ -1,3 +1,4 @@
+# HISTÓRICO: standalone incompatible con transacciones actuales. Ver README.md.
 # MongoDB como StatefulSet dev con PVC chico (CN1, paso 4).
 # Sigue standalone a propósito: el no-overbooking del plan 04 usa contadores
 # atómicos por hotel-noche, no transacciones multi-documento — no hace falta

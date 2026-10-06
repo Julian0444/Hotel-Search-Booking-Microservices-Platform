@@ -61,7 +61,7 @@ describe('HotelForm', () => {
     expect(body).not.toHaveProperty('total_price');
   });
 
-  it('price 0 o rooms no entero bloquean el submit con summary de errores', async () => {
+  it('price negativo o rooms no entero bloquean el submit con summary de errores', async () => {
     const { user } = renderNewForm();
     await screen.findByRole('heading', { name: /new hotel/i });
 
@@ -69,14 +69,14 @@ describe('HotelForm', () => {
     await user.type(screen.getByLabelText(/address/i), 'X');
     await user.type(screen.getByLabelText(/^city/i), 'X');
     await user.type(screen.getByLabelText(/^country/i), 'X');
-    await user.type(screen.getByLabelText(/price per night/i), '0');
+    await user.type(screen.getByLabelText(/price per night/i), '-1');
     await user.type(screen.getByLabelText(/available rooms/i), '2.5');
 
     await user.click(screen.getByRole('button', { name: /create hotel/i }));
 
     const summary = await screen.findByText(/fix \d+ field/i);
     expect(summary).toBeInTheDocument();
-    expect(screen.getAllByText(/price must be greater than 0/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/price must be 0 or more/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/whole number/i).length).toBeGreaterThan(0);
   });
 

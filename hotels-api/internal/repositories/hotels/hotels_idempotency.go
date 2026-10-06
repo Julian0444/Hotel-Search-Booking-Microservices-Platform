@@ -2,85 +2,59 @@ package hotels
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
+	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels"
+	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// IdempotencyRecord es el registro persistido de un request idempotente (A3):
-// la clave compuesta (key, user_id) tiene índice único y el TTL de created_at
-// lo expira a las 24h. Done distingue "en vuelo" de "completado": un replay
-// mientras el original sigue en vuelo es 409 request_in_flight.
+// Retained for at least 24h (Mongo TTL cleanup is asynchronous). The contract
+// guarantees replay during that window, not indefinite deduplication.
+// There is no persisted in-flight state: the key commits with its reservation.
 type IdempotencyRecord struct {
-	Key       string    `bson:"key"`
-	UserID    string    `bson:"user_id"`
-	Done      bool      `bson:"done"`
-	Status    int       `bson:"status"`
-	Body      []byte    `bson:"body"`
-	CreatedAt time.Time `bson:"created_at"`
+	Key           string    `bson:"key"`
+	UserID        string    `bson:"user_id"`
+	Fingerprint   string    `bson:"payload_hash"`
+	ReservationID string    `bson:"reservation_id"`
+	CreatedAt     time.Time `bson:"created_at"`
 }
 
+func reservationFingerprint(r hotelsDAO.Reservation) string {
+	payload := struct {
+		HotelID   string `json:"hotel_id"`
+		UserID    string `json:"user_id"`
+		CheckIn   string `json:"check_in"`
+		CheckOut  string `json:"check_out"`
+		NumRooms  int    `json:"num_rooms"`
+		NumGuests int    `json:"num_guests"`
+	}{r.HotelID, r.UserID, r.CheckIn.Format(hotelsDomain.DateFormat), r.CheckOut.Format(hotelsDomain.DateFormat), r.NumRooms, r.NumGuests}
+	data, _ := json.Marshal(payload)
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
 func (repository Mongo) idempotencyCollection() *mongo.Collection {
 	return repository.client.Database(repository.database).Collection(repository.collection_idempotency)
 }
-
-// ReserveIdempotencyKey intenta registrar (key, userID) como "en vuelo".
-// Devuelve created=true si este request es el primero; si la clave ya existía
-// (replay o request concurrente), created=false y el registro existente.
-func (repository Mongo) ReserveIdempotencyKey(ctx context.Context, key, userID string) (bool, IdempotencyRecord, error) {
-	record := IdempotencyRecord{
-		Key:       key,
-		UserID:    userID,
-		Done:      false,
-		CreatedAt: time.Now().UTC(),
-	}
-	_, err := repository.idempotencyCollection().InsertOne(ctx, record)
-	if err == nil {
-		return true, record, nil
-	}
-	if !mongo.IsDuplicateKeyError(err) {
-		return false, IdempotencyRecord{}, fmt.Errorf("error reserving idempotency key: %w", err)
-	}
-
-	// La clave ya existe: devolver el registro guardado (replay concurrente:
-	// dos requests con la misma key en vuelo → el segundo insert colisiona acá)
+func (repository Mongo) lookupIdempotency(ctx context.Context, key, userID, fingerprint string) (string, error) {
 	var existing IdempotencyRecord
-	err = repository.idempotencyCollection().
-		FindOne(ctx, bson.M{"key": key, "user_id": userID}).
-		Decode(&existing)
-	if err != nil {
-		// Carrera con el TTL/release: el doc desapareció entre el insert y el
-		// find. Tratarlo como error — el cliente reintenta con la misma key.
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return false, IdempotencyRecord{}, fmt.Errorf("idempotency key vanished between insert and lookup")
-		}
-		return false, IdempotencyRecord{}, fmt.Errorf("error fetching idempotency record: %w", err)
+	err := repository.idempotencyCollection().FindOne(ctx, bson.M{"key": key, "user_id": userID}).Decode(&existing)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return "", nil
 	}
-	return false, existing, nil
-}
-
-// CompleteIdempotencyKey guarda status+body de la primera respuesta: los
-// replays posteriores devuelven exactamente esto.
-func (repository Mongo) CompleteIdempotencyKey(ctx context.Context, key, userID string, status int, body []byte) error {
-	_, err := repository.idempotencyCollection().UpdateOne(ctx,
-		bson.M{"key": key, "user_id": userID},
-		bson.M{"$set": bson.M{"done": true, "status": status, "body": body}})
 	if err != nil {
-		return fmt.Errorf("error completing idempotency key: %w", err)
+		return "", err
 	}
-	return nil
-}
-
-// ReleaseIdempotencyKey borra la reserva de la clave: se usa cuando el request
-// original murió con un 5xx — un fallo transitorio del server no debe dejar la
-// key quemada 24h impidiendo el reintento legítimo del cliente.
-func (repository Mongo) ReleaseIdempotencyKey(ctx context.Context, key, userID string) error {
-	_, err := repository.idempotencyCollection().DeleteOne(ctx, bson.M{"key": key, "user_id": userID})
-	if err != nil {
-		return fmt.Errorf("error releasing idempotency key: %w", err)
+	if existing.Fingerprint == "" || existing.ReservationID == "" {
+		return "", hotelsDomain.ErrLegacyIdempotency
 	}
-	return nil
+	if existing.Fingerprint != fingerprint {
+		return "", hotelsDomain.ErrIdempotencyConflict
+	}
+	return existing.ReservationID, nil
 }

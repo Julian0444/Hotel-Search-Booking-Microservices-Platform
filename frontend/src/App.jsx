@@ -5,8 +5,8 @@
  * admin jamás entra al bundle inicial del visitante.
  */
 
-import { lazy, Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router';
+import { lazy, Suspense, useState } from 'react';
+import { createBrowserRouter, createRoutesFromElements, RouterProvider, Outlet, Route } from 'react-router';
 import { ThemeProvider, CssBaseline } from '@mui/material';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './context/AuthContext';
@@ -32,9 +32,14 @@ const NotFound = lazy(() => import('./pages/NotFound'));
 
 const queryClient = createQueryClient();
 
-const AppRoutes = () => (
-  <Suspense fallback={<RouteFallback />}>
-    <Routes>
+const routerRoutes = (
+    <Route element={
+      <>
+        <SessionExpiredNavigator />
+        <RouteAnnouncer />
+        <Suspense fallback={<RouteFallback />}><Outlet /></Suspense>
+      </>
+    }>
       {/* Public routes with layout */}
       <Route
         path={ROUTES.HOME}
@@ -118,21 +123,17 @@ const AppRoutes = () => (
           </Layout>
         }
       />
-    </Routes>
-  </Suspense>
+    </Route>
 );
 
 function App() {
+  const [router] = useState(() => createBrowserRouter(createRoutesFromElements(routerRoutes)));
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <Router>
-            <SessionExpiredNavigator />
-            <RouteAnnouncer />
-            <AppRoutes />
-          </Router>
+          <RouterProvider router={router} />
         </AuthProvider>
       </QueryClientProvider>
     </ThemeProvider>

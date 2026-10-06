@@ -15,5 +15,8 @@ type HotelNew = contracts.HotelNew
 
 // ErrHotelNotFound tipifica el 404 de hotels-api (RV14): para el consumer un
 // hotel inexistente se descarta (reintentar jamás lo resolvería); cualquier
-// otro fallo del fetch es transitorio y va a retry/DLQ (E1).
+// otro fallo del fetch se reintenta con demora sin descartar el evento válido.
 var ErrHotelNotFound = errors.New("hotel not found in hotels-api")
+
+// ErrInvalidEvent identifica mensajes que ningún reintento puede corregir.
+var ErrInvalidEvent = errors.New("invalid hotel event")

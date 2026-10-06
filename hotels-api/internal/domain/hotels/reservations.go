@@ -44,12 +44,3 @@ type Reservation struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
 }
-
-// ReservationNew se publica en la cola `reservations-news` (distinta de
-// `hotels-news`: search-api espera HotelNew ahí y un ReservationNew rompería
-// su Unmarshal). Hoy nadie la consume; queda disponible como stretch.
-type ReservationNew struct {
-	Operation     string `json:"operation"` // CREATE | CANCEL
-	ReservationID string `json:"reservation_id"`
-	HotelID       string `json:"hotel_id"`
-}

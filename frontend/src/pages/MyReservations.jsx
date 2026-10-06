@@ -7,7 +7,7 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Box, Container, Snackbar, Alert, Grid, Skeleton, Tab, Tabs, Typography } from '@mui/material';
+import { Box, Button, Container, Snackbar, Alert, Grid, Skeleton, Tab, Tabs, Typography } from '@mui/material';
 import { EventNote as EventNoteIcon } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
 import { useMyReservations } from '../hooks/queries';
@@ -33,10 +33,10 @@ const MyReservations = () => {
   const [pendingCancel, setPendingCancel] = useState(null);
   const [cancelledNotice, setCancelledNotice] = useState(false);
 
-  const { data, isPending, isError, error, refetch } = useMyReservations(user?.id);
+  const { data, isPending, isError, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } = useMyReservations(user?.id);
   const cancelMutation = useCancelReservation(user?.id);
 
-  const reservations = useMemo(() => data?.items ?? [], [data]);
+  const reservations = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
   const counts = useMemo(() => reservationCounts(reservations), [reservations]);
 
   const visible = useMemo(() => {
@@ -76,7 +76,7 @@ const MyReservations = () => {
       </Box>
 
       <Container maxWidth="lg" sx={{ py: 4 }}>
-        {isError ? (
+        {isError && !data ? (
           <ErrorState error={error} title="We could not load your reservations" onRetry={refetch} />
         ) : isPending ? (
           <Grid container spacing={2} aria-busy="true">
@@ -96,6 +96,9 @@ const MyReservations = () => {
           />
         ) : (
           <>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              {reservations.length} bookings loaded. Filters and counts apply to loaded bookings.
+            </Typography>
             <Tabs
               value={tab}
               onChange={(_event, value) => setTab(value)}
@@ -122,6 +125,14 @@ const MyReservations = () => {
                   </Grid>
                 ))}
               </Grid>
+            )}
+            {isFetchNextPageError && <Alert severity="error" sx={{ mt: 2 }}>{error.message}</Alert>}
+            {hasNextPage && (
+              <Box sx={{ mt: 3, textAlign: 'center' }}>
+                <Button variant="outlined" disabled={isFetchingNextPage} onClick={() => fetchNextPage()}>
+                  {isFetchingNextPage ? 'Loading…' : isFetchNextPageError ? 'Retry loading more' : 'Load more bookings'}
+                </Button>
+              </Box>
             )}
           </>
         )}

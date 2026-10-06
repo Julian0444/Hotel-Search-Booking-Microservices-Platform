@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 
 	hotelsDAO "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels"
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels"
@@ -20,6 +21,7 @@ type Repository interface {
 	Index(ctx context.Context, hotel hotelsDAO.Hotel) (string, error)
 	Update(ctx context.Context, hotel hotelsDAO.Hotel) error
 	Delete(ctx context.Context, id string) error
+	ListIDs(ctx context.Context) ([]string, error)
 	// Search devuelve la página y el total de matches (numFound) para el
 	// meta del envelope (A5/RV22). sort ya viene whitelisteado del controller;
 	// el repo lo mapea a un sort de Solr (plan 13).
@@ -29,10 +31,13 @@ type Repository interface {
 // Funcion de la API de hoteles
 type ExternalRepository interface {
 	GetHotelByID(ctx context.Context, id string) (hotelsDomain.Hotel, error)
-	GetHotels(ctx context.Context, limit, offset int) ([]hotelsDomain.Hotel, int, error)
+	GetHotelsAfter(ctx context.Context, limit int, after string) ([]hotelsDomain.Hotel, error)
 }
 
 type Service struct {
+	// Canal compartido entre copias del Service: serializa eventos y reindex,
+	// con espera cancelable. Requiere UNA instancia activa de search-api.
+	writer     chan struct{}
 	repository Repository         // Este seria nuestro repositorio de solr
 	hotelsAPI  ExternalRepository // Este seria nuestro repositorio de la API de hoteles
 }
@@ -40,6 +45,7 @@ type Service struct {
 // Funcion para crear un nuevo servicio
 func NewService(repository Repository, hotelsAPI ExternalRepository) Service {
 	return Service{
+		writer:     make(chan struct{}, 1),
 		repository: repository,
 		hotelsAPI:  hotelsAPI,
 	}
@@ -103,94 +109,99 @@ func toHotelDAO(hotel hotelsDomain.Hotel) hotelsDAO.Hotel {
 	}
 }
 
-// HandleHotelNew procesa un evento de hotel. Recibe el context del consumer
-// con un request_id por mensaje (O1) y devuelve error si el evento debe
-// reintentarse (E1: el consumer nackea — 1er fallo requeue, 2º DLQ).
-// Un hotel que ya no existe en hotels-api NO es error (RV14): se descarta el
-// evento y se limpia el doc del índice — reintentarlo jamás lo resolvería.
-func (service Service) HandleHotelNew(ctx context.Context, hotelNew hotelsDomain.HotelNew) error {
-	logger := slog.With(
-		"request_id", utils.RequestIDFromContext(ctx),
-		"operation", hotelNew.Operation,
-		"hotel_id", hotelNew.HotelID,
-	)
-	logger.Info("hotel event received")
-	// Hacemos un switch para manejar las operaciones de creacion, actualizacion y eliminacion
-	switch hotelNew.Operation {
-	// Caso en el que se crea o actualiza un hotel
-	case "CREATE", "UPDATE":
-		// Obtenemos el hotel de la API de hoteles
-		hotel, err := service.hotelsAPI.GetHotelByID(ctx, hotelNew.HotelID)
-		if err != nil {
-			if errors.Is(err, hotelsDomain.ErrHotelNotFound) {
-				logger.Warn("hotel no longer exists in hotels-api, removing stale doc from index")
-				if err := service.repository.Delete(ctx, hotelNew.HotelID); err != nil {
-					logger.Error("error deleting stale hotel from solr", "error", err)
-					return fmt.Errorf("error deleting stale hotel from solr: %w", err)
-				}
-				return nil
-			}
-			logger.Error("error fetching hotel from hotels-api", "error", err)
-			return fmt.Errorf("error fetching hotel from hotels-api: %w", err)
-		}
-		logger.Info("hotel fetched from hotels-api", "hotel_name", hotel.Name)
-
-		hotelDAO := toHotelDAO(hotel)
-
-		// Caso en el que se crea un hotel
-		if hotelNew.Operation == "CREATE" {
-			// Llama al metodo Index del repositorio para indexar el hotel en Solr
-			if _, err := service.repository.Index(ctx, hotelDAO); err != nil {
-				logger.Error("error indexing hotel in solr", "error", err)
-				return fmt.Errorf("error indexing hotel in solr: %w", err)
-			}
-			logger.Info("hotel indexed in solr")
-		} else { // Caso en el que se actualiza un hotel
-			// Llama al metodo Update del repositorio para actualizar el hotel en Solr
-			if err := service.repository.Update(ctx, hotelDAO); err != nil {
-				logger.Error("error updating hotel in solr", "error", err)
-				return fmt.Errorf("error updating hotel in solr: %w", err)
-			}
-			logger.Info("hotel updated in solr")
-		}
+// lockWriter impide que un backfill antiguo pise un evento ya aplicado.
+func (service Service) lockWriter(ctx context.Context) error {
+	select {
+	case service.writer <- struct{}{}:
 		return nil
-	// Caso en el que se elimina un hotel
-	case "DELETE":
-		// Llama al metodo Delete del repositorio para eliminar el hotel de Solr
-		if err := service.repository.Delete(ctx, hotelNew.HotelID); err != nil {
-			logger.Error("error deleting hotel from solr", "error", err)
-			return fmt.Errorf("error deleting hotel from solr: %w", err)
-		}
-		logger.Info("hotel deleted from solr")
-		return nil
-	default:
-		// Operación desconocida = mensaje no procesable: el error lo manda a
-		// la DLQ (tras el retry de rigor) en vez de perderlo en silencio
-		logger.Warn("unknown operation")
-		return fmt.Errorf("unknown hotel event operation %q", hotelNew.Operation)
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
-// Backfill reindexa el catálogo completo paginando GET /hotels de hotels-api
-// (E3): corre al arranque (el índice de Solr es derivado y se reconstruye
-// desde la fuente de verdad) y on-demand vía POST /reindex. Es idempotente:
-// `id` es la uniqueKey del core, re-indexar pisa el documento.
+// HandleHotelNew usa el evento como invalidación. Incluso DELETE consulta la
+// fuente actual: duplicados o eventos fuera de orden no pisarán estado reciente.
+func (service Service) HandleHotelNew(ctx context.Context, event hotelsDomain.HotelNew) error {
+	if event.HotelID == "" || (event.Operation != "CREATE" && event.Operation != "UPDATE" && event.Operation != "DELETE") {
+		return fmt.Errorf("invalid hotel event: %w", hotelsDomain.ErrInvalidEvent)
+	}
+	if err := service.lockWriter(ctx); err != nil {
+		return err
+	}
+	defer func() { <-service.writer }()
+	_, err := service.syncHotel(ctx, event.HotelID)
+	return err
+}
+
+// syncHotel nunca indexa snapshots de una página antigua, solamente el GET
+// fresco del documento. hotels-api lee Mongo directamente, sin caché.
+func (service Service) syncHotel(ctx context.Context, id string) (bool, error) {
+	hotel, err := service.hotelsAPI.GetHotelByID(ctx, id)
+	if errors.Is(err, hotelsDomain.ErrHotelNotFound) {
+		if err := service.repository.Delete(ctx, id); err != nil {
+			return false, fmt.Errorf("deleting stale hotel %s: %w", id, err)
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("fetching hotel %s: %w", id, err)
+	}
+	if _, err := service.repository.Index(ctx, toHotelDAO(hotel)); err != nil {
+		return false, fmt.Errorf("indexing hotel %s: %w", id, err)
+	}
+	return true, nil
+}
+
+// Backfill reconcilia la unión de IDs del catálogo y del índice, sin vaciar el
+// core. Keyset evita saltos al eliminar durante la paginación. Los eventos que
+// llegan durante el recorrido esperan el lock y después consultan estado fresco.
+// No es un snapshot transaccional entre Mongo y Solr: una alta con un ID previo
+// al cursor o una publicación perdida converge en la siguiente pasada periódica.
 func (service Service) Backfill(ctx context.Context) (int, error) {
-	indexed := 0
-	for offset := 0; ; {
-		page, total, err := service.hotelsAPI.GetHotels(ctx, backfillPageSize, offset)
+	if err := service.lockWriter(ctx); err != nil {
+		return 0, err
+	}
+	defer func() { <-service.writer }()
+	ids, err := service.repository.ListIDs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("listing indexed hotels: %w", err)
+	}
+	candidates := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		candidates[id] = struct{}{}
+	}
+	after := ""
+	for {
+		page, err := service.hotelsAPI.GetHotelsAfter(ctx, backfillPageSize, after)
 		if err != nil {
-			return indexed, fmt.Errorf("error fetching hotels page (offset %d): %w", offset, err)
+			return 0, fmt.Errorf("fetching hotels after %q: %w", after, err)
+		}
+		if len(page) == 0 {
+			break
 		}
 		for _, hotel := range page {
-			if _, err := service.repository.Index(ctx, toHotelDAO(hotel)); err != nil {
-				return indexed, fmt.Errorf("error indexing hotel %s: %w", hotel.ID, err)
+			if hotel.ID <= after {
+				return 0, fmt.Errorf("hotels-api returned non-increasing cursor %q after %q", hotel.ID, after)
 			}
-			indexed++
-		}
-		offset += len(page)
-		if len(page) == 0 || offset >= total {
-			return indexed, nil
+			candidates[hotel.ID] = struct{}{}
+			after = hotel.ID
 		}
 	}
+	ids = ids[:0]
+	for id := range candidates {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	indexed := 0
+	for _, id := range ids {
+		exists, err := service.syncHotel(ctx, id)
+		if err != nil {
+			return indexed, err
+		}
+		if exists {
+			indexed++
+		}
+	}
+	slog.Info("catalogue reconciliation complete", "request_id", utils.RequestIDFromContext(ctx), "indexed", indexed, "checked", len(ids))
+	return indexed, nil
 }

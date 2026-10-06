@@ -210,7 +210,7 @@ const HotelForm = () => {
                   <TextField
                     fullWidth
                     label="Hotel name"
-                    {...register('name', { required: 'Hotel name is required' })}
+                    {...register('name', { required: 'Hotel name is required', validate: (value) => !!value.trim() || 'Hotel name is required' })}
                     error={!!errors.name}
                     helperText={errors.name?.message}
                   />
@@ -222,7 +222,7 @@ const HotelForm = () => {
                   <TextField
                     fullWidth
                     label="Address"
-                    {...register('address', { required: 'Address is required' })}
+                    {...register('address', { required: 'Address is required', validate: (value) => !!value.trim() || 'Address is required' })}
                     error={!!errors.address}
                     helperText={errors.address?.message}
                   />
@@ -231,7 +231,7 @@ const HotelForm = () => {
                   <TextField
                     fullWidth
                     label="City"
-                    {...register('city', { required: 'City is required' })}
+                    {...register('city', { required: 'City is required', validate: (value) => !!value.trim() || 'City is required' })}
                     error={!!errors.city}
                     helperText={errors.city?.message}
                   />
@@ -243,7 +243,7 @@ const HotelForm = () => {
                   <TextField
                     fullWidth
                     label="Country"
-                    {...register('country', { required: 'Country is required' })}
+                    {...register('country', { required: 'Country is required', validate: (value) => !!value.trim() || 'Country is required' })}
                     error={!!errors.country}
                     helperText={errors.country?.message}
                   />
@@ -285,7 +285,7 @@ const HotelForm = () => {
                     {...register('price_per_night', {
                       required: 'Price per night is required',
                       validate: (value) =>
-                        (Number(value) > 0 && Number.isFinite(Number(value))) || 'Price must be greater than 0',
+                        (Number(value) >= 0 && Number.isFinite(Number(value))) || 'Price must be 0 or more',
                     })}
                     error={!!errors.price_per_night}
                     helperText={errors.price_per_night?.message}

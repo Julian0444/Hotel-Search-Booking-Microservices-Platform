@@ -19,14 +19,15 @@ assert {
 }
 
 docs {
-  Reconstruye el índice completo on-demand — SOLO admins (audiencia
-  search-api + rol administrador; cliente → 403). Es el mismo backfill del
-  arranque: pagina GET /hotels de hotels-api (fuente de verdad) y re-indexa
-  todo en Solr. Sincrónico a propósito: el 200 con
-  `{"data": {"indexed": N}}` confirma el índice reconstruido.
-
-  Rescate manual para el caso raro de drift entre pipeline de eventos e
-  índice.
+  Reconcilia el índice — SOLO admins. Enumera IDs del catálogo por keyset y
+  del índice por cursor; consulta cada hotel vigente, agrega/actualiza y borra
+  huérfanos sin vaciar el core. Eventos y reconciliación comparten exclusión
+  en una sola instancia; eventos pendientes leen estado actual al continuar.
+  200 con {"data":{"indexed":N}} indica que terminó esta pasada. indexed
+  cuenta hoteles vigentes; los logs checked incluyen también huérfanos.
+  Solr publica por soft-commit (normalmente 1s). Cambios concurrentes cuyo
+  evento se perdió pueden requerir la siguiente pasada periódica (1 minuto
+  después de éxito, 5s después de fallo). No es un snapshot Mongo/Solr.
 }
 
 settings {

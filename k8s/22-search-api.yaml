@@ -1,8 +1,5 @@
-# search-api — delta del template canónico (20-users-api.yaml).
-# 1 réplica: además de servir /search es el consumer de hotels-news; con >1
-# réplica los eventos se reparten (consumidores en competencia) — válido para
-# la sync de Solr, pero innecesario en la demo. El drenaje del consumer en
-# SIGTERM (plan 08) es lo que hace seguro el rolling.
+# Una sola instancia: eventos y reconciliación comparten exclusión local.
+# Recreate impide dos escritores durante un rollout. No escalar este servicio.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,9 +11,7 @@ spec:
     matchLabels:
       app: search-api
   strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
   template:
     metadata:
       labels:
@@ -44,7 +39,7 @@ spec:
                 command: ["sleep", "3"]
           readinessProbe:
             httpGet:
-              path: /readyz # pinguea Solr + RabbitMQ/consumer (planes 05/06)
+              path: /readyz # Solr requerido; broker secundario visible
               port: 8082
             periodSeconds: 10
           livenessProbe:

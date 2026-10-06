@@ -5,8 +5,8 @@
  * conserva la key (hotels-api dedupea); cambiarlo o confirmar rota la key.
  */
 
-import { useRef, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useLocation, useParams } from 'react-router';
 import { useAuth } from './useAuth';
 import { useAvailability } from './queries';
 import { useCreateReservation } from './mutations';
@@ -19,14 +19,20 @@ export const useBooking = (hotel) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAuthenticated, user } = useAuth();
+  const { id: hotelId } = useParams();
+  // Sólo selección civil en el estado de navegación: nunca una key o identidad anterior.
+  const draft = location.state?.bookingDraft?.hotelId === hotelId ? location.state.bookingDraft : null;
 
-  const [checkIn, setCheckIn] = useState('');
-  const [checkOut, setCheckOut] = useState('');
-  const [numRooms, setNumRooms] = useState(1);
-  const [numGuests, setNumGuests] = useState(1);
+  const [checkIn, setCheckIn] = useState(draft?.checkIn ?? '');
+  const [checkOut, setCheckOut] = useState(draft?.checkOut ?? '');
+  const [numRooms, setNumRooms] = useState(draft?.numRooms ?? 1);
+  const [numGuests, setNumGuests] = useState(draft?.numGuests ?? 1);
   const [confirmation, setConfirmation] = useState(null);
 
   const attemptTracker = useRef(createAttemptTracker());
+  useEffect(() => {
+    attemptTracker.current.reset();
+  }, [user?.id]);
 
   const minCheckIn = todayLocal();
   const minCheckOut = checkIn && isValidDateOnly(checkIn) ? addDaysDateOnly(checkIn, 1) : addDaysDateOnly(minCheckIn, 1);
@@ -48,6 +54,7 @@ export const useBooking = (hotel) => {
 
   const canSubmit =
     datesValid &&
+    hotel?.available_rooms > 0 &&
     numRooms >= 1 &&
     numRooms <= maxRooms &&
     numGuests >= 1 &&
@@ -66,7 +73,11 @@ export const useBooking = (hotel) => {
 
   const submit = async () => {
     if (!isAuthenticated) {
-      navigate(ROUTES.LOGIN, { state: { from: location } });
+      navigate(ROUTES.LOGIN, { state: { from: {
+        pathname: location.pathname,
+        search: location.search,
+        state: { bookingDraft: { hotelId, checkIn, checkOut, numRooms, numGuests } },
+      } } });
       return;
     }
     if (!canSubmit) return;
@@ -82,7 +93,7 @@ export const useBooking = (hotel) => {
     try {
       const created = await mutation.mutateAsync({
         request,
-        idempotencyKey: attemptTracker.current.keyFor(request),
+        idempotencyKey: attemptTracker.current.keyFor({ user_id: user.id, ...request }),
       });
       // Intento consumido: el próximo submit (otra reserva igual) es nuevo
       attemptTracker.current.reset();
@@ -134,14 +145,14 @@ export const bookingErrorCopy = (error) => {
     case 'no_availability':
       return {
         severity: 'warning',
-        title: 'Those dates just sold out',
-        message: 'Another guest took the last room for part of that range. Try different dates — nothing was charged.',
+        title: 'Those dates are unavailable',
+        message: 'There are not enough rooms for that range. Try different dates or fewer rooms.',
       };
     case 'request_in_flight':
       return {
         severity: 'info',
         title: 'Still processing your previous attempt',
-        message: 'Give it a few seconds and try again — your booking is not duplicated.',
+        message: 'Give it a few seconds and retry the same selection to recover your result.',
       };
     default:
       return {

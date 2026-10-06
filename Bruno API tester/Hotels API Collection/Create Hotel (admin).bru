@@ -45,14 +45,13 @@ assert {
 }
 
 docs {
-  Crea un hotel — SOLO admins (cliente → 403 `forbidden`). 201 con `Location`
-  y el id creado. Publica un evento CREATE en la cola `hotels-news`:
-  search-api lo indexa en Solr poco después (eventualmente consistente).
-
-  Validación server-side: check_in_time/check_out_time en "HH:mm"
-  (si no → 400 `invalid_body`).
-
-  La request 16 borra este hotel — la corrida completa no deja residuos.
+  Crea un hotel — SOLO admins. 201 con Location e ID asignado por el servidor.
+  Backend valida nombre, dirección, ciudad, país, capacidad 0..10000,
+  precio 0..1000000, rating 0..5 y horarios HH:mm. Rechaza antes de escribir.
+  Después de Mongo intenta publicar CREATE; un fallo de broker mantiene 201
+  y se recupera por reconciliación periódica.
+  Este hotel tendrá una reserva cancelada y queda conservado como historial.
+  Otro hotel descartable demuestra DELETE exitoso al final de la colección.
 }
 
 settings {

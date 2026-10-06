@@ -1,0 +1,29 @@
+2026-10-05T22:32:30-07:00	INFO	[vuln] Vulnerability scanning is enabled
+2026-10-05T22:32:30-07:00	INFO	[secret] Secret scanning is enabled
+2026-10-05T22:32:30-07:00	INFO	[secret] If your scanning is slow, please try '--scanners vuln' to disable secret scanning
+2026-10-05T22:32:30-07:00	INFO	[secret] Please see https://trivy.dev/docs/v0.72/guide/scanner/secret#recommendation for faster secret detection
+2026-10-05T22:32:30-07:00	INFO	Detected OS	family="alpine" version="3.24.2"
+2026-10-05T22:32:30-07:00	WARN	This OS version is not on the EOL list	family="alpine" version="3.24"
+2026-10-05T22:32:30-07:00	INFO	[alpine] Detecting vulnerabilities...	os_version="3.24" repository="3.24" pkg_num=18
+2026-10-05T22:32:30-07:00	INFO	Number of language-specific files	num=1
+2026-10-05T22:32:30-07:00	INFO	[gobinary] Detecting vulnerabilities...
+2026-10-05T22:32:30-07:00	WARN	Using severities from other vendors for some vulnerabilities. Read https://trivy.dev/docs/v0.72/guide/scanner/vulnerability#severity-selection for details.
+
+Report Summary
+
+┌───────────────────────────────────┬──────────┬─────────────────┬─────────┐
+│              Target               │   Type   │ Vulnerabilities │ Secrets │
+├───────────────────────────────────┼──────────┼─────────────────┼─────────┤
+│ search-api:latest (alpine 3.24.2) │  alpine  │        0        │    -    │
+├───────────────────────────────────┼──────────┼─────────────────┼─────────┤
+│ app/search-api                    │ gobinary │        0        │    -    │
+└───────────────────────────────────┴──────────┴─────────────────┴─────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+
+📣 Notices:
+  - Version 0.75.0 of Trivy is now available, current version is 0.72.0
+
+To suppress version checks, run Trivy scans with the --skip-version-check flag

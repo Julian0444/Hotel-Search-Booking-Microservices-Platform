@@ -14,8 +14,8 @@ docs {
   - Correr la colección EN ORDEN (Run Collection): registra un usuario fresco
     con nombre único, se loguea, lo consulta y lo borra al final — corridas
     repetidas no dejan residuos.
-  - `/login` está rate-limiteado a 5 req/min por IP (burst 3): corridas
-    consecutivas pueden dar 429 `rate_limited` — esperar ~30 s.
+  - `/login` está rate-limiteado a 30 req/min por IP (burst 10): corridas
+    rápidas pueden dar 429 `rate_limited`; OPTIONS no consume el presupuesto de login.
 
   CLI (desde esta carpeta):
   `npx -y @usebruno/cli run --env local --insecure --env-var admin_password=...`

@@ -42,7 +42,7 @@ import BrandMark from '../common/BrandMark';
 const Navbar = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, isAuthenticated, isAdmin, logout } = useAuth();
+  const { user, isAuthenticated, isAdmin } = useAuth();
 
   const [anchorElUser, setAnchorElUser] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -50,10 +50,9 @@ const Navbar = () => {
   const closeDrawer = () => setMobileOpen(false);
 
   const handleLogout = () => {
-    logout();
     setAnchorElUser(null);
     closeDrawer();
-    navigate(ROUTES.HOME, { replace: true });
+    navigate(ROUTES.HOME, { replace: true, state: { signOut: true } });
   };
 
   const navItems = [

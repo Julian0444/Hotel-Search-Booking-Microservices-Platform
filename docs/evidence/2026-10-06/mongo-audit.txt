@@ -1,0 +1,1 @@
+Audit OK: 8 hotels, 7 reservations, 0 proven legacy keys to migrate.

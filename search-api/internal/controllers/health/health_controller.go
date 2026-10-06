@@ -18,14 +18,20 @@ type CheckFunc func(ctx context.Context) error
 const checkTimeout = 3 * time.Second
 
 type Controller struct {
-	service string
-	checks  map[string]CheckFunc
+	service  string
+	checks   map[string]CheckFunc
+	optional map[string]CheckFunc
 }
 
-func NewController(service string, checks map[string]CheckFunc) Controller {
+func NewController(service string, checks map[string]CheckFunc, optional ...map[string]CheckFunc) Controller {
+	var extra map[string]CheckFunc
+	if len(optional) > 0 {
+		extra = optional[0]
+	}
 	return Controller{
-		service: service,
-		checks:  checks,
+		service:  service,
+		checks:   checks,
+		optional: extra,
 	}
 }
 
@@ -45,37 +51,54 @@ func (controller Controller) Readyz(c *gin.Context) {
 	defer cancel()
 
 	var (
-		mu      sync.Mutex
-		wg      sync.WaitGroup
-		results = make(map[string]string, len(controller.checks))
-		healthy = true
+		mu              sync.Mutex
+		wg              sync.WaitGroup
+		results         = make(map[string]string, len(controller.checks))
+		healthy         = true
+		degraded        = false
+		optionalResults = make(map[string]string, len(controller.optional))
 	)
-	for name, check := range controller.checks {
+	run := func(name string, check CheckFunc, required bool) {
 		wg.Add(1)
-		go func(name string, check CheckFunc) {
+		go func() {
 			defer wg.Done()
 			status := "ok"
 			if err := check(ctx); err != nil {
 				status = "down"
-				slog.Warn("readiness check failed", "check", name, "error", err)
+				slog.Warn("dependency check failed", "check", name, "error", err)
 			}
 			mu.Lock()
-			results[name] = status
-			healthy = healthy && status == "ok"
-			mu.Unlock()
-		}(name, check)
+			defer mu.Unlock()
+			if required {
+				results[name] = status
+				healthy = healthy && status == "ok"
+			} else {
+				optionalResults[name] = status
+			}
+			degraded = degraded || status != "ok"
+		}()
+	}
+	for name, check := range controller.checks {
+		run(name, check, true)
+	}
+	for name, check := range controller.optional {
+		run(name, check, false)
 	}
 	wg.Wait()
 
 	statusCode := http.StatusOK
 	statusText := "ok"
+	if degraded {
+		statusText = "degraded"
+	}
 	if !healthy {
 		statusCode = http.StatusServiceUnavailable
 		statusText = "degraded"
 	}
 	c.JSON(statusCode, gin.H{
-		"status":  statusText,
-		"service": controller.service,
-		"checks":  results,
+		"status":          statusText,
+		"service":         controller.service,
+		"checks":          results,
+		"optional_checks": optionalResults,
 	})
 }

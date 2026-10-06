@@ -5,12 +5,13 @@ Modern React frontend for the StayLux hotel search and booking platform.
 ## 🚀 Tech Stack
 
 - **React 19** - UI Library
-- **Vite** - Build tool and dev server
+- **Vite 7** - Build tool and dev server
 - **Material UI v7** - Component library
-- **React Router v6** - Navigation
+- **React Router 8** - Navigation
+- **TanStack Query 5** - Server state (caching, retries, invalidation)
 - **Axios** - HTTP client
 - **React Hook Form** - Form handling
-- **date-fns** - Date utilities
+- **Vitest + MSW + Playwright** - Testing (unit/component + E2E)
 
 ## 📁 Project Structure
 
@@ -25,15 +26,21 @@ frontend/src/
 ├── context/             # React contexts
 │   └── AuthContext.jsx  # Authentication context
 ├── hooks/               # Custom hooks
-│   └── useAuth.js       # Auth hook
+│   ├── queries/         # TanStack Query hooks (search, hotel, reservations, admin)
+│   ├── mutations/       # TanStack Query mutations (booking, cancel, admin CRUD)
+│   ├── useAuth.js       # Auth hook
+│   ├── useBooking.js    # Booking form state (shared desktop/mobile)
+│   ├── useHotelSearchParams.js  # URL as source of truth for search
+│   └── useUnsavedChanges.js     # Unsaved-changes guard for forms
 ├── pages/               # Page components
-│   ├── admin/           # Admin pages
+│   ├── Admin/           # Admin pages (Dashboard, HotelForm)
 │   ├── Home.jsx
 │   ├── Search.jsx
 │   ├── HotelDetail.jsx
 │   ├── Login.jsx
 │   ├── Register.jsx
-│   └── MyReservations.jsx
+│   ├── MyReservations.jsx
+│   └── NotFound.jsx
 ├── services/            # API services
 │   ├── api.js           # Base axios config
 │   ├── auth.service.js  # Auth endpoints
@@ -43,8 +50,14 @@ frontend/src/
 ├── types/               # JSDoc type definitions
 │   └── index.js         # Data types
 ├── utils/               # Utility functions
+│   ├── dateOnly.js      # Civil-date helpers (DST-safe, no timezones)
+│   ├── money.js         # Integer-cents money formatting
+│   ├── idempotency.js   # Per-attempt Idempotency-Key tracker
+│   ├── reservations.js  # Reservation grouping/status helpers
+│   ├── prefetch.js      # Route-chunk prefetch on hover/focus
 │   ├── helpers.js       # Helper functions
 │   └── validators.js    # Validation utilities
+├── test/                # Test infra (MSW server + handlers, fixtures, render helpers)
 ├── theme/               # MUI theme config
 │   └── theme.js
 ├── App.jsx              # Main component
@@ -69,8 +82,8 @@ The application will be available at `http://localhost:5173`
 ### With Docker
 
 ```bash
-# From project root
-docker-compose up -d frontend
+# From project root (the frontend sits behind a Compose profile)
+docker compose --profile frontend up -d --build
 ```
 
 The application will be available at `http://localhost:5173`
@@ -79,23 +92,19 @@ The application will be available at `http://localhost:5173`
 
 ### Environment Variables
 
-Create a `.env` file in the frontend root:
+The default API URL is `/api/v1` on the SPA origin. No frontend `.env` is required.
 
-```env
-VITE_API_URL=https://localhost/api/v1
-```
+- Development: Vite proxies `/api` to the local TLS gateway at `https://localhost`, accepting its local self-signed certificate on the server side.
+- Built SPA: its nginx proxies `/api` to `https://nginx:443` on the Compose network. Browser requests stay on `http://localhost:5173`, avoiding cross-origin preflights and certificate prompts.
+- `VITE_API_URL` remains an optional build-time override for a deliberately configured gateway. A different browser origin requires valid TLS trust and matching CORS configuration.
 
-- `VITE_API_URL`: API Gateway URL (nginx). The gateway serves HTTPS with a
-  local self-signed certificate (see `nginx/certs/README.md` at the repo
-  root) — the browser will warn once until you accept it. In dev you normally
-  don't need this variable at all: the Vite proxy forwards `/api/v1` to the
-  gateway and already tolerates the self-signed cert.
+The root `.env` and local gateway certificates must exist; follow the [main quickstart](../README.md).
 
 ## 📱 Pages
 
 ### Public
 - `/` - Home page with search and featured hotels
-- `/search` - Hotel search with filters
+- `/search` - Hotel search by name, city or country, with sorting and pagination
 - `/hotels/:id` - Hotel details with booking
 - `/login` - User login
 - `/register` - User registration
@@ -119,7 +128,7 @@ The frontend features an elegant design inspired by luxury hotels:
 
 ## 🔌 API Endpoints
 
-The frontend connects to the API Gateway (nginx) which routes to microservices:
+All endpoints below are relative to `/api/v1`. The API gateway routes them to microservices:
 
 | Endpoint | Service | Description |
 |----------|---------|-------------|
@@ -168,6 +177,16 @@ The Dockerfile includes:
 # Manual build
 docker build -t staylux-frontend ./frontend
 
-# Run
-docker run -p 5173:80 staylux-frontend
+# Run with its gateway on the Compose network
+# (the frontend nginx requires the `nginx` service alias)
+docker compose --profile frontend up -d --build
 ```
+
+## Booking and administration
+
+- Login and registration preserve the selected hotel, dates, rooms and guests in router navigation state. Idempotency keys belong to an attempt and are reset when the user changes.
+- Reservations load in pages of 20 through **Load more bookings**, including cancellations. Tabs and counts describe the bookings loaded so far.
+- Booking and cancellation invalidate availability queries. Hotel detail loads inventory from the real API.
+- Hotel editing sends a complete PUT. Capacity, price and rating allow zero; required name/address/city/country and times cannot be empty. Optional text and lists can be cleared. The backend rejects unsafe capacity reductions and deleting a hotel with reservation history.
+- The data router protects dirty forms on internal links, Sign out and browser Back. Reload/close uses the browser's native warning. Successful saves clear the warning.
+- E2E uses the built SPA and real APIs: normal login, registration, destination search, availability, reservation/cancellation, admin editing, pagination and dirty navigation. Search checks use ordinary URLs; no cache-busters or blanket CORS/network exception filters.

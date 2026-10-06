@@ -20,14 +20,10 @@ import {
 
 test.describe('customer: booking completo y cancelación auditable', () => {
   test('recorrido completo', async ({ page }, testInfo) => {
-    test.setTimeout(240_000); // absorbe esperas de rate-limit del login
+    test.setTimeout(90_000);
     const mobile = isMobileProject(testInfo);
     const { customerCredentials, seedHotel } = readAuthState();
-    // El throttling del login_limit (incluido el 429 al preflight, que se ve
-    // como error CORS/red) es deliberado; el helper de login lo reintenta.
-    const consoleErrors = attachConsoleGuard(page, {
-      allow: [/status of 429/, /ERR_FAILED/, /blocked by CORS policy/],
-    });
+    const consoleErrors = attachConsoleGuard(page);
 
     // Login por UI con el cliente demo del run
     await page.goto('/login');

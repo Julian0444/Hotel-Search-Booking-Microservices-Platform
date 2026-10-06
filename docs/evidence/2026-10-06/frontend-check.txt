@@ -1,0 +1,124 @@
+
+> hotel-booking-frontend@1.0.0 check
+> npm run lint && npm run test:coverage && npm run build
+
+
+> hotel-booking-frontend@1.0.0 lint
+> eslint .
+
+
+> hotel-booking-frontend@1.0.0 test:coverage
+> vitest run --coverage
+
+
+ RUN  v4.1.11 /Users/jirustaroure/Desktop/Hotel-Search-Booking-Microservices-Platform/frontend
+      Coverage enabled with v8
+
+
+ Test Files  23 passed (23)
+      Tests  140 passed (140)
+   Start at  22:29:56
+   Duration  18.45s (transform 2.59s, setup 7.75s, import 103.72s, tests 30.98s, environment 26.30s)
+
+ % Coverage report from v8
+-------------------|---------|----------|---------|---------|-------------------
+File               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+-------------------|---------|----------|---------|---------|-------------------
+All files          |   90.08 |    85.08 |   85.11 |   90.95 |
+ src               |   71.42 |      100 |      40 |     100 |
+  App.jsx          |   71.42 |      100 |      40 |     100 |
+ ...ponents/Hotels |    93.1 |       80 |    87.5 |   92.85 |
+  HotelCard.jsx    |     100 |    66.66 |     100 |     100 | 19,110-122
+  HotelGallery.jsx |   84.61 |       70 |      75 |   83.33 | 62,97
+ ...ponents/Layout |   96.29 |      100 |    90.9 |      96 |
+  Navbar.jsx       |   95.45 |      100 |   88.88 |      95 | 227
+ ...omponents/a11y |     100 |       75 |     100 |     100 |
+  ...Announcer.jsx |     100 |       75 |     100 |     100 | 24
+ ...mponents/admin |   73.23 |    85.52 |   82.14 |   73.52 |
+  ...HotelList.jsx |    90.9 |     87.5 |   83.33 |    90.9 | 145
+  ...nUserList.jsx |   85.71 |    96.66 |   85.71 |   84.61 | 40,129
+  ...ageFields.jsx |   53.12 |    68.75 |      70 |   53.33 | ...41,59-60,94-99
+  ...ealthGrid.jsx |   92.85 |    78.57 |     100 |   92.85 | 59
+ ...omponents/auth |      92 |    84.61 |   83.33 |      92 |
+  ...Navigator.jsx |   84.61 |       50 |      75 |   84.61 | 30-31
+ ...onents/booking |   90.62 |    86.48 |   84.21 |      90 |
+  BookingForm.jsx  |     100 |    88.23 |     100 |     100 | 103,142
+  BookingPanel.jsx |   66.66 |       50 |      50 |   66.66 | 66-76
+  ...ngSummary.jsx |     100 |    92.85 |     100 |     100 | 22
+ ...ponents/common |     100 |    95.83 |     100 |     100 |
+  ErrorState.jsx   |     100 |    92.85 |     100 |     100 | 11
+  RouteMeta.jsx    |     100 |       75 |     100 |     100 | 8
+ ...s/reservations |     100 |       75 |     100 |     100 |
+  ...ionDialog.jsx |     100 |    83.33 |     100 |     100 | 41
+  ...ationCard.jsx |     100 |       70 |     100 |     100 | 50-64
+ src/context       |   86.36 |      100 |   77.77 |   86.36 |
+  AuthContext.jsx  |   86.04 |      100 |   77.77 |   86.04 | 41-43,74-75,97
+ src/hooks         |   90.19 |    87.23 |   86.95 |   92.55 |
+  useAuth.js       |      80 |       50 |     100 |      80 | 13
+  useBooking.js    |    92.3 |    92.45 |   85.71 |      94 | 69,138,152
+  ...archParams.js |      90 |    81.08 |    87.5 |   96.15 | 63
+  ...vedChanges.js |   86.66 |      100 |   85.71 |   84.61 | 10-11
+ src/hooks/queries |     100 |    92.85 |     100 |     100 |
+  index.js         |     100 |    92.85 |     100 |     100 | 36
+ src/pages         |   80.14 |    70.42 |   66.66 |   80.76 |
+  Home.jsx         |      90 |       70 |      75 |      90 | 47
+  HotelDetail.jsx  |   88.88 |     82.6 |      75 |   88.88 | 74-79
+  Login.jsx        |   69.23 |    53.57 |      50 |      72 | ...,68-69,103-146
+  ...ervations.jsx |   91.66 |    79.16 |   83.33 |   90.62 | 95,155-157
+  NotFound.jsx     |      75 |        0 |      50 |      75 | 31
+  Register.jsx     |   70.83 |       50 |      50 |   73.91 | ...6,61-62,91-137
+  Search.jsx       |   72.22 |    90.32 |      50 |   72.22 | 55-56,100-113,139
+ src/pages/Admin   |   88.29 |    80.55 |   80.95 |   88.63 |
+  Dashboard.jsx    |   86.84 |    93.33 |      75 |   86.11 | 86-88,183-184
+  HotelForm.jsx    |   89.28 |    75.64 |   83.33 |   90.38 | ...67,191,368-369
+ src/services      |   98.54 |    92.92 |   97.72 |   98.41 |
+  api.js           |   93.33 |    88.88 |     100 |   93.33 | 36
+  apiError.js      |     100 |    96.55 |     100 |     100 | 48
+  envelope.js      |     100 |       85 |     100 |     100 | 24,28-29
+  queryClient.js   |    90.9 |        0 |   88.88 |    90.9 | 25
+  ...ns.service.js |     100 |    88.88 |     100 |     100 | 26
+ src/utils         |   95.28 |    95.83 |   93.54 |   95.69 |
+  helpers.js       |     100 |    93.33 |     100 |     100 | 53
+  prefetch.js      |   28.57 |        0 |       0 |   33.33 | 13-16
+-------------------|---------|----------|---------|---------|-------------------
+
+=============================== Coverage summary ===============================
+Statements   : 90.08% ( 854/948 )
+Branches     : 85.08% ( 673/791 )
+Functions    : 85.11% ( 286/336 )
+Lines        : 90.95% ( 804/884 )
+================================================================================
+
+> hotel-booking-frontend@1.0.0 build
+> vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 11908 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                           1.99 kB │ gzip:  0.87 kB
+dist/assets/index-DoTHBnQa.css            1.19 kB │ gzip:  0.63 kB
+dist/assets/EmptyState-DqwC47y1.js        0.55 kB │ gzip:  0.38 kB
+dist/assets/Close-DFWYCxIP.js             0.84 kB │ gzip:  0.52 kB
+dist/assets/VisibilityOff-C0BHCnwq.js     0.86 kB │ gzip:  0.47 kB
+dist/assets/dateOnly-B_jf6QCC.js          0.98 kB │ gzip:  0.52 kB
+dist/assets/NotFound-6DeOc63e.js          1.11 kB │ gzip:  0.60 kB
+dist/assets/Login-D_QCHddr.js             3.27 kB │ gzip:  1.52 kB
+dist/assets/Register-BRmGRv7b.js          3.39 kB │ gzip:  1.55 kB
+dist/assets/Alert-DccS4MZN.js             5.02 kB │ gzip:  2.02 kB
+dist/assets/MyReservations-8UG-XqC-.js    7.32 kB │ gzip:  2.98 kB
+dist/assets/index-BT-kCT70.js             8.16 kB │ gzip:  2.72 kB
+dist/assets/Pagination-Dtp_UrlH.js        9.44 kB │ gzip:  3.08 kB
+dist/assets/Search-CVZ0Z5V8.js           10.23 kB │ gzip:  3.70 kB
+dist/assets/HotelDetail-C-RZLPcR.js      17.99 kB │ gzip:  6.32 kB
+dist/assets/Person-42kqhi6Y.js           22.81 kB │ gzip:  7.65 kB
+dist/assets/Add-uVLZDyTB.js              23.26 kB │ gzip:  8.80 kB
+dist/assets/index.esm-ZnynSqhm.js        25.95 kB │ gzip:  9.70 kB
+dist/assets/vendor-emotion-Q30LYpsp.js   26.56 kB │ gzip: 11.02 kB
+dist/assets/Dashboard-Bn-v6hCY.js        28.37 kB │ gzip:  8.96 kB
+dist/assets/HotelForm-B-E5PlMK.js        35.11 kB │ gzip: 12.15 kB
+dist/assets/vendor-data-BR6SzlnE.js      88.67 kB │ gzip: 30.07 kB
+dist/assets/index-DTuWKZyH.js           276.89 kB │ gzip: 83.14 kB
+dist/assets/vendor-react-Ct-SrTX6.js    285.06 kB │ gzip: 91.20 kB
+✓ built in 3.65s

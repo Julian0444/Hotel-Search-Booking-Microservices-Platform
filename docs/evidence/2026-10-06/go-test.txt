@@ -1,0 +1,38 @@
+go test -race ./users-api/... ./hotels-api/... ./search-api/... ./platform-contracts/...
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/cmd	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/apperr	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/config	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/controllers/health	(cached)
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/controllers/users	(cached)
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/dao/users	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/domain/users	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/middlewares	(cached)
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/repositories/users	(cached) [no tests to run]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/services/users	(cached)
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/users-api/internal/tokenizers	(cached)
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/cmd	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/apperr	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/clients/queues	(cached)
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/config	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/controllers/health	(cached)
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/controllers/hotels	(cached)
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/controllers/microservices	(cached)
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/dao/hotels	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/middlewares	(cached)
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/repositories/hotels	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/services/hotels	(cached)
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/cmd	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/apperr	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/clients/queues	(cached)
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/config	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/controllers/health	(cached)
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/controllers/search	(cached)
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/dao/hotels	[no test files]
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/domain/hotels	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/middlewares	(cached)
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/repositories/hotels	(cached)
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/services/search	(cached)
+?   	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/search-api/internal/utils	[no test files]
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/platform-contracts	(cached)
+ok  	github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/platform-contracts/cors	(cached)

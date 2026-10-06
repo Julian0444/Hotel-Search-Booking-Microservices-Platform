@@ -1,66 +1,48 @@
 package queues
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	hotelsDomain "github.com/Julian0444/Hotel-Search-Booking-Microservices-Platform/hotels-api/internal/domain/hotels"
 )
 
-func TestRabbitQueuePublishWithoutChannel(t *testing.T) {
-	// Crear un RabbitQueue sin conexión (simula fallo de conexión).
-	// Retries mínimos (RV30): con los defaults este test dormía ~15s de
-	// backoff real; acá solo interesa que Publish falle, no la persistencia
-	// del reintento.
-	rq := &RabbitQueue{
-		config: RabbitConfig{
-			Host:      "invalid-host",
-			Port:      "5672",
-			Username:  "guest",
-			Password:  "guest",
-			QueueName: "test-queue",
-		},
-		connected:             false,
-		channel:               nil,
-		maxConnectRetries:     1,
-		initialConnectBackoff: time.Millisecond,
+func TestDisconnectedPublishDoesNotReconnect(t *testing.T) {
+	rq := &RabbitQueue{publishGate: make(chan struct{}, 1)}
+	start := time.Now()
+	for i := 0; i < 20; i++ {
+		if err := rq.Publish(context.Background(), hotelsDomain.HotelNew{}); err == nil {
+			t.Fatal("expected unavailable")
+		}
 	}
-
-	// Debe fallar porque no hay conexión y el host es inválido
-	err := rq.Publish(hotelsDomain.HotelNew{Operation: "CREATE", HotelID: "1"})
-	if err == nil {
-		t.Fatalf("expected error when channel is nil and cannot reconnect")
+	if time.Since(start) > time.Second {
+		t.Fatal("disconnected requests must not execute connection backoffs")
 	}
-}
-
-func TestRabbitQueueCloseIsSafe(t *testing.T) {
-	rq := &RabbitQueue{} // channel/connection nil
-	// No debe panic
+	if rq.IsConnected() {
+		t.Fatal("unexpected connection")
+	}
 	rq.Close()
 }
 
-func TestRabbitQueueIsConnected(t *testing.T) {
-	rq := &RabbitQueue{
-		connected: false,
-		channel:   nil,
-	}
-
-	if rq.IsConnected() {
-		t.Fatal("expected IsConnected to return false when not connected")
+func TestPublishBudgetIncludesConcurrentWait(t *testing.T) {
+	rq := &RabbitQueue{publishGate: make(chan struct{}, 1)}
+	rq.publishGate <- struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := rq.Publish(ctx, hotelsDomain.HotelNew{}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline, got %v", err)
 	}
 }
 
 func TestMockQueuePublish(t *testing.T) {
 	mq := MockQueue{}
-	if err := mq.Publish(hotelsDomain.HotelNew{Operation: "TEST", HotelID: "123"}); err != nil {
-		t.Fatalf("mock publish should not error: %v", err)
+	if err := mq.Publish(context.Background(), hotelsDomain.HotelNew{Operation: "CREATE", HotelID: "123"}); err != nil {
+		t.Fatal(err)
 	}
-
 	msgs := mq.Messages()
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 message stored, got %d", len(msgs))
-	}
-	if msgs[0].Operation != "TEST" || msgs[0].HotelID != "123" {
-		t.Fatalf("unexpected message stored: %+v", msgs[0])
+	if len(msgs) != 1 || msgs[0].HotelID != "123" {
+		t.Fatalf("unexpected messages: %v", msgs)
 	}
 }
